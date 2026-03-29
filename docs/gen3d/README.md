@@ -121,6 +121,48 @@ The engine provides deterministic “apply-by-reference” tools:
 
 Both tools apply via `apply_draft_ops_v1` with `atomic=true` and `if_assembly_rev` gating.
 
+## Articulation nodes and motion targets
+
+Gen3D plans and component drafts now cooperate on `articulation_nodes[]` inside a single
+component.
+
+At plan time:
+
+- `components[].articulation_nodes[]` reserves generic internal motion handles (`node_id`,
+  optional `parent_node_id`, `pos`, `forward`, `up`)
+- plan JSON is structural only; it does not bind primitive parts and it does not author named
+  motion clips
+
+At component-draft time:
+
+Each articulation node is generic internal rig metadata:
+
+- `node_id`: stable motion handle id
+- `parent_node_id`: optional parent articulation node
+- `pos` + `forward` + `up`: node-local basis in component-local space
+- `bind_part_indices`: explicit primitive-part bindings
+
+This is a Gen3D authoring/edit abstraction, not a new runtime entity type. When motion authoring
+targets an articulation node, Gen3D expands that node-space motion into ordinary per-part animation
+slots before saving/runtime playback.
+
+Motion authoring no longer uses attachment-only `edges[]`. It uses generic `targets[]`:
+
+- `root_edge`
+- `attachment_edge`
+- `articulation_node`
+
+Each authored slot also declares a motion `family`:
+
+- `base`: normal gameplay-selected body motion (`attack`, `action`, `move`, `idle`, `ambient`)
+- `overlay`: a forced named channel that composes on top of `base`
+
+In preview/runtime today, `overlay` is driven by `ForcedAnimationChannel`, so named local expression
+channels like `blink` or `jaw_open` can play without replacing the body’s base motion.
+
+`query_component_parts_v1` now returns both `parts[]` and `articulation_nodes[]` so seeded edits can
+reason about internal rig handles deterministically.
+
 ## Motion slots: per-slot basis + per-edge fallback basis
 
 When a component is attached (`attach_to`), the child’s placement is controlled by:
@@ -145,6 +187,19 @@ When **no** channel slot matches, the edge falls back to:
 ```
 animated_offset = attach_to.offset * attach_to.fallback_basis
 ```
+
+For ordinary part playback, the runtime now evaluates two independent families in order:
+
+1. `base`
+2. `overlay`
+
+So the final sampled transform is:
+
+```
+part_transform(t) = base_transform * selected_base_family_delta(t) * selected_overlay_family_delta(t)
+```
+
+When no overlay slot matches the forced channel, playback falls back to base-only behavior.
 
 ### Why basis exists (stable edits)
 

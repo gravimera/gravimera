@@ -16,10 +16,10 @@ use crate::genfloor::{set_active_world_floor, ActiveWorldFloor};
 use crate::object::registry::{
     AnchorDef, AnchorRef, AttachmentDef, ColliderProfile, MaterialKey, MeleeAttackProfile, MeshKey,
     MobilityDef, MobilityMode, MovementBlockRule, ObjectDef, ObjectInteraction, ObjectLibrary,
-    ObjectPartDef, ObjectPartKind, PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef,
-    PartAnimationSlot, PartAnimationSpec, PrimitiveParams, PrimitiveVisualDef,
-    ProjectileObstacleRule, ProjectileProfile, RangedAttackProfile, UnitAttackKind,
-    UnitAttackProfile,
+    ObjectPartDef, ObjectPartKind, PartAnimationDef, PartAnimationDriver, PartAnimationFamily,
+    PartAnimationKeyframeDef, PartAnimationSlot, PartAnimationSpec, PrimitiveParams,
+    PrimitiveVisualDef, ProjectileObstacleRule, ProjectileProfile, RangedAttackProfile,
+    UnitAttackKind, UnitAttackProfile,
 };
 use crate::object::visuals;
 use crate::types::*;
@@ -447,6 +447,8 @@ struct SceneDatPartAnimationSlot {
     channel: String,
     #[prost(message, optional, tag = "2")]
     animation: Option<SceneDatPartAnimation>,
+    #[prost(enumeration = "SceneDatPartAnimationFamily", tag = "3")]
+    family: i32,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -471,6 +473,12 @@ enum SceneDatPartAnimationDriver {
     MoveDistance = 2,
     AttackTime = 3,
     ActionTime = 4,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Enumeration)]
+enum SceneDatPartAnimationFamily {
+    Base = 0,
+    Overlay = 1,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Enumeration)]
@@ -1391,6 +1399,10 @@ fn part_animation_slot_to_dat(slot: &PartAnimationSlot) -> SceneDatPartAnimation
     SceneDatPartAnimationSlot {
         channel: slot.channel.to_string(),
         animation: Some(part_animation_spec_to_dat(&slot.spec)),
+        family: match slot.family {
+            PartAnimationFamily::Base => SceneDatPartAnimationFamily::Base as i32,
+            PartAnimationFamily::Overlay => SceneDatPartAnimationFamily::Overlay as i32,
+        },
     }
 }
 
@@ -1405,6 +1417,10 @@ fn part_animation_slot_from_dat(slot: &SceneDatPartAnimationSlot) -> Option<Part
         .and_then(part_animation_spec_from_dat)?;
     Some(PartAnimationSlot {
         channel: channel.to_string().into(),
+        family: match SceneDatPartAnimationFamily::try_from(slot.family).ok() {
+            Some(SceneDatPartAnimationFamily::Overlay) => PartAnimationFamily::Overlay,
+            _ => PartAnimationFamily::Base,
+        },
         spec,
     })
 }
@@ -2926,6 +2942,7 @@ mod tests {
                 animations: vec![
                     PartAnimationSlot {
                         channel: "move".to_string().into(),
+                        family: crate::object::registry::PartAnimationFamily::Base,
                         spec: PartAnimationSpec {
                             driver: PartAnimationDriver::MovePhase,
                             speed_scale: 1.25,
@@ -2949,6 +2966,7 @@ mod tests {
                     },
                     PartAnimationSlot {
                         channel: "ambient".to_string().into(),
+                        family: crate::object::registry::PartAnimationFamily::Base,
                         spec: PartAnimationSpec {
                             driver: PartAnimationDriver::Always,
                             speed_scale: 2.0,

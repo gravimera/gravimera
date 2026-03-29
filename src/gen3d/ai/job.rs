@@ -1412,6 +1412,17 @@ pub(super) struct Gen3dAiProgress {
 }
 
 #[derive(Clone, Debug)]
+pub(super) struct Gen3dPlannedArticulationNode {
+    pub(super) node_id: String,
+    pub(super) parent_node_id: Option<String>,
+    /// Local transform relative to the component root, or relative to the parent node when
+    /// `parent_node_id` is present.
+    pub(super) transform: Transform,
+    /// Stable part ids bound to this articulation node.
+    pub(super) bound_part_ids: Vec<u128>,
+}
+
+#[derive(Clone, Debug)]
 pub(super) struct Gen3dPlannedComponent {
     pub(super) display_name: String,
     pub(super) name: String,
@@ -1425,6 +1436,7 @@ pub(super) struct Gen3dPlannedComponent {
     pub(super) actual_size: Option<Vec3>,
     pub(super) anchors: Vec<crate::object::registry::AnchorDef>,
     pub(super) contacts: Vec<AiContactJson>,
+    pub(super) articulation_nodes: Vec<Gen3dPlannedArticulationNode>,
     /// Animation slots applied on the implicit draft-root -> root-component object_ref edge.
     /// Only meaningful for the root component (`attach_to=None`).
     pub(super) root_animations: Vec<PartAnimationSlot>,

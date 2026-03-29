@@ -161,7 +161,7 @@ pub(super) fn poll_agent_component_batch(
                     }
                 };
 
-                let component_def = match job
+                let converted = match job
                     .planned_components
                     .get(idx)
                     .ok_or_else(|| {
@@ -204,10 +204,12 @@ pub(super) fn poll_agent_component_batch(
                         continue;
                     }
                 };
+                let component_def = converted.def;
 
                 if let Some(comp) = job.planned_components.get_mut(idx) {
                     comp.actual_size = Some(component_def.size);
                     comp.anchors = component_def.anchors.clone();
+                    comp.articulation_nodes = converted.articulation_nodes;
                 }
 
                 // Replace component def in-place, preserving existing object refs.

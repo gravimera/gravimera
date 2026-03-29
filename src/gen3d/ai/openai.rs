@@ -1358,6 +1358,56 @@ fn mock_generate_text_via_openai(
         out
     }
 
+    fn parse_root_component_from_motion_authoring_user_text(user_text: &str) -> Option<String> {
+        for line in user_text.lines().map(|l| l.trim()) {
+            let Some(rest) = line.strip_prefix("- kind=root_edge component=") else {
+                continue;
+            };
+            let Some(name) = rest.split_whitespace().next() else {
+                continue;
+            };
+            let name = name.trim();
+            if !name.is_empty() {
+                return Some(name.to_string());
+            }
+        }
+        None
+    }
+
+    fn parse_articulation_targets_from_motion_authoring_user_text(
+        user_text: &str,
+    ) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = Vec::new();
+        for line in user_text.lines().map(|l| l.trim()) {
+            let Some(rest) = line.strip_prefix("- kind=articulation_node component=") else {
+                continue;
+            };
+            let mut component: Option<String> = None;
+            let mut node_id: Option<String> = None;
+            for part in rest.split_whitespace() {
+                if let Some(value) = part.strip_prefix("node_id=") {
+                    let value = value.trim();
+                    if !value.is_empty() {
+                        node_id = Some(value.to_string());
+                    }
+                    break;
+                }
+                if component.is_none() {
+                    let value = part.trim();
+                    if !value.is_empty() {
+                        component = Some(value.to_string());
+                    }
+                }
+            }
+            if let (Some(component), Some(node_id)) = (component, node_id) {
+                out.push((component, node_id));
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
     fn parse_required_anchor_names_from_component_user_text(user_text: &str) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
         let mut in_required = false;
@@ -1624,6 +1674,7 @@ fn mock_generate_text_via_openai(
         // All components use the same small primitive set; the engine maps them into the current
         // planned component via its object_id.
         let required_anchor_names = parse_required_anchor_names_from_component_user_text(user_text);
+        let lower = user_text.to_ascii_lowercase();
         let anchors: Vec<serde_json::Value> = required_anchor_names
             .iter()
             .map(|name| {
@@ -1635,10 +1686,36 @@ fn mock_generate_text_via_openai(
                 })
             })
             .collect();
+        let mut articulation_nodes: Vec<serde_json::Value> = Vec::new();
+        if lower.contains("articulation")
+            || lower.contains("eyelid")
+            || lower.contains("jaw")
+            || lower.contains("brow")
+            || lower.contains("mouth")
+            || lower.contains("robot head")
+        {
+            articulation_nodes.push(serde_json::json!({
+                "node_id": "jaw",
+                "parent_node_id": null,
+                "pos": [0.0, -0.15, 0.25],
+                "forward": [0.0, 0.0, 1.0],
+                "up": [0.0, 1.0, 0.0],
+                "bind_part_indices": [0],
+            }));
+            articulation_nodes.push(serde_json::json!({
+                "node_id": "visor",
+                "parent_node_id": null,
+                "pos": [0.0, 0.2, 0.35],
+                "forward": [0.0, 0.0, 1.0],
+                "up": [0.0, 1.0, 0.0],
+                "bind_part_indices": [1],
+            }));
+        }
         serde_json::json!({
             "version": 2,
             "collider": null,
             "anchors": anchors,
+            "articulation_nodes": articulation_nodes,
             "parts": [
                 {
                     "primitive": "cuboid",
@@ -1688,21 +1765,28 @@ fn mock_generate_text_via_openai(
                 "mock://gen3d: motion authoring user_text missing target_channel".to_string()
             })?;
 
-        let children = parse_child_components_from_motion_authoring_user_text(user_text);
-        let targets: Vec<String> = if children.is_empty() {
-            Vec::new()
-        } else {
-            children.into_iter().take(8).collect()
-        };
+        let articulation_targets =
+            parse_articulation_targets_from_motion_authoring_user_text(user_text);
+        let attachment_targets: Vec<String> =
+            parse_child_components_from_motion_authoring_user_text(user_text)
+                .into_iter()
+                .take(8)
+                .collect();
+        let root_target = parse_root_component_from_motion_authoring_user_text(user_text);
+        let use_overlay = !matches!(
+            target_channel.as_str(),
+            "attack" | "action" | "move" | "idle" | "ambient"
+        ) && !articulation_targets.is_empty();
 
-        if targets.is_empty() {
+        if articulation_targets.is_empty() && attachment_targets.is_empty() && root_target.is_none()
+        {
             serde_json::json!({
               "version": 1,
               "applies_to": { "run_id": run_id, "attempt": attempt, "plan_hash": plan_hash, "assembly_rev": assembly_rev },
               "decision": "regen_geometry_required",
-              "reason": "Mock: no attachment edges available to animate.",
+              "reason": "Mock: no motion targets available to animate.",
               "replace_channels": [],
-              "edges": [],
+              "targets": [],
               "notes_text": null
             })
             .to_string()
@@ -1746,34 +1830,83 @@ fn mock_generate_text_via_openai(
                 ),
             };
 
-            let mut edges: Vec<serde_json::Value> = Vec::new();
-            for (idx, child) in targets.iter().enumerate() {
-                let phase = idx as f32 * 0.08;
-                edges.push(serde_json::json!({
-                    "component": child,
-                    "slots": [
-                        {
-                            "channel": target_channel.as_str(),
-                            "driver": driver,
-                            "speed_scale": 1.0,
-                            "time_offset_units": phase,
-                            "clip": {
-                                "kind": "loop",
-                                "duration_units": duration_units,
-                                "keyframes": keyframes.clone(),
+            let mut targets: Vec<serde_json::Value> = Vec::new();
+            if use_overlay {
+                for (idx, (component, node_id)) in articulation_targets.iter().enumerate() {
+                    let phase = idx as f32 * 0.08;
+                    targets.push(serde_json::json!({
+                        "kind": "articulation_node",
+                        "component": component,
+                        "node_id": node_id,
+                        "slots": [
+                            {
+                                "channel": target_channel.as_str(),
+                                "family": "overlay",
+                                "driver": driver,
+                                "speed_scale": 1.0,
+                                "time_offset_units": phase,
+                                "clip": {
+                                    "kind": "loop",
+                                    "duration_units": duration_units,
+                                    "keyframes": keyframes.clone(),
+                                }
                             }
-                        }
-                    ]
-                }));
+                        ]
+                    }));
+                }
+            } else {
+                if let Some(component) = root_target.as_ref() {
+                    targets.push(serde_json::json!({
+                        "kind": "root_edge",
+                        "component": component,
+                        "node_id": null,
+                        "slots": [
+                            {
+                                "channel": target_channel.as_str(),
+                                "family": "base",
+                                "driver": driver,
+                                "speed_scale": 1.0,
+                                "time_offset_units": 0.0,
+                                "clip": {
+                                    "kind": "loop",
+                                    "duration_units": duration_units,
+                                    "keyframes": keyframes.clone(),
+                                }
+                            }
+                        ]
+                    }));
+                }
+                for (idx, child) in attachment_targets.iter().enumerate() {
+                    let phase = idx as f32 * 0.08;
+                    targets.push(serde_json::json!({
+                        "kind": "attachment_edge",
+                        "component": child,
+                        "node_id": null,
+                        "slots": [
+                            {
+                                "channel": target_channel.as_str(),
+                                "family": "base",
+                                "driver": driver,
+                                "speed_scale": 1.0,
+                                "time_offset_units": phase,
+                                "clip": {
+                                    "kind": "loop",
+                                    "duration_units": duration_units,
+                                    "keyframes": keyframes.clone(),
+                                }
+                            }
+                        ]
+                    }));
+                }
             }
 
             serde_json::json!({
               "version": 1,
               "applies_to": { "run_id": run_id, "attempt": attempt, "plan_hash": plan_hash, "assembly_rev": assembly_rev },
               "decision": "author_clips",
-              "reason": format!("Mock: bake simple per-edge `{}` loops.", target_channel.as_str()),
+              "reason": format!("Mock: bake simple target clips for `{}`.", target_channel.as_str()),
               "replace_channels": [target_channel.as_str()],
-              "edges": edges,
+              "targets": targets,
               "notes_text": null
             })
             .to_string()

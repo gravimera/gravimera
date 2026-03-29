@@ -4,8 +4,8 @@ use uuid::Uuid;
 
 use crate::object::registry::{
     builtin_object_id, MeshKey, ObjectDef, ObjectPartDef, ObjectPartKind, PartAnimationDef,
-    PartAnimationDriver, PartAnimationKeyframeDef, PartAnimationSlot, PartAnimationSpec,
-    PrimitiveParams, PrimitiveVisualDef,
+    PartAnimationDriver, PartAnimationFamily, PartAnimationKeyframeDef, PartAnimationSlot,
+    PartAnimationSpec, PrimitiveParams, PrimitiveVisualDef,
 };
 
 use super::super::state::Gen3dDraft;
@@ -85,6 +85,8 @@ struct PrimitiveSpecJsonV1 {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AnimationSlotSpecJsonV1 {
+    #[serde(default)]
+    family: super::schema::AiAnimationFamilyJsonV1,
     driver: AiAnimationDriverJsonV1,
     speed_scale: f32,
     #[serde(default)]
@@ -539,6 +541,10 @@ fn animation_slot_from_spec(
 
     Ok(PartAnimationSlot {
         channel: channel.to_string().into(),
+        family: match slot.family {
+            super::schema::AiAnimationFamilyJsonV1::Overlay => PartAnimationFamily::Overlay,
+            _ => PartAnimationFamily::Base,
+        },
         spec: PartAnimationSpec {
             driver,
             speed_scale: slot.speed_scale,
@@ -1488,6 +1494,46 @@ pub(super) fn query_component_parts_v1(
         .iter()
         .position(|c| c.name == component)
         .map(|idx| idx as u32);
+    let articulation_nodes = job
+        .planned_components
+        .iter()
+        .find(|c| c.name == component)
+        .map(|planned| {
+            planned
+                .articulation_nodes
+                .iter()
+                .map(|node| {
+                    serde_json::json!({
+                        "node_id": node.node_id,
+                        "parent_node_id": node.parent_node_id,
+                        "transform": {
+                            "pos": [
+                                node.transform.translation.x,
+                                node.transform.translation.y,
+                                node.transform.translation.z,
+                            ],
+                            "rot_quat_xyzw": [
+                                node.transform.rotation.x,
+                                node.transform.rotation.y,
+                                node.transform.rotation.z,
+                                node.transform.rotation.w,
+                            ],
+                            "scale": [
+                                node.transform.scale.x,
+                                node.transform.scale.y,
+                                node.transform.scale.z,
+                            ],
+                        },
+                        "bound_part_id_uuids": node
+                            .bound_part_ids
+                            .iter()
+                            .map(|id| Uuid::from_u128(*id).to_string())
+                            .collect::<Vec<_>>(),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
 
     let mut recipes: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
     let recolor_sample_total = recolor_samples.len();
@@ -1532,6 +1578,7 @@ pub(super) fn query_component_parts_v1(
         "active_workspace": job.active_workspace_id(),
         "assembly_rev": job.assembly_rev(),
         "parts": out_parts,
+        "articulation_nodes": articulation_nodes,
         "truncated": truncated,
         "editability": {
             "primitives_with_part_id_total": primitives_with_part_id_total,
@@ -1787,6 +1834,7 @@ mod tests {
                     transform: Transform::from_translation(Vec3::new(0.0, 1.0, 0.0)),
                 }],
                 contacts: Vec::new(),
+                articulation_nodes: Vec::new(),
                 root_animations: Vec::new(),
                 attach_to: if idx == 0 {
                     None
@@ -1987,6 +2035,7 @@ mod tests {
         let att = child.attach_to.as_mut().unwrap();
         let slot = PartAnimationSlot {
             channel: "move".into(),
+            family: crate::object::registry::PartAnimationFamily::Base,
             spec: PartAnimationSpec {
                 driver: PartAnimationDriver::MovePhase,
                 speed_scale: 1.0,

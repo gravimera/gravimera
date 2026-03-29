@@ -53,6 +53,8 @@ pub(crate) struct AiDraftJsonV1 {
     pub(crate) collider: Option<AiColliderJson>,
     #[serde(default)]
     pub(crate) anchors: Vec<AiAnchorJson>,
+    #[serde(default)]
+    pub(crate) articulation_nodes: Vec<AiArticulationNodeJson>,
     pub(crate) parts: Vec<AiPartJson>,
 }
 
@@ -60,6 +62,30 @@ pub(crate) struct AiDraftJsonV1 {
 #[serde(deny_unknown_fields)]
 pub(crate) struct AiAnchorJson {
     pub(crate) name: String,
+    pub(crate) pos: [f32; 3],
+    pub(crate) forward: [f32; 3],
+    pub(crate) up: [f32; 3],
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AiArticulationNodeJson {
+    pub(crate) node_id: String,
+    #[serde(default)]
+    pub(crate) parent_node_id: Option<String>,
+    pub(crate) pos: [f32; 3],
+    pub(crate) forward: [f32; 3],
+    pub(crate) up: [f32; 3],
+    #[serde(default)]
+    pub(crate) bind_part_indices: Vec<usize>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AiPlanArticulationNodeJson {
+    pub(crate) node_id: String,
+    #[serde(default)]
+    pub(crate) parent_node_id: Option<String>,
     pub(crate) pos: [f32; 3],
     pub(crate) forward: [f32; 3],
     pub(crate) up: [f32; 3],
@@ -318,6 +344,8 @@ pub(crate) struct AiPlanComponentJson {
     pub(crate) anchors: Vec<AiAnchorJson>,
     #[serde(default)]
     pub(crate) contacts: Vec<AiContactJson>,
+    #[serde(default)]
+    pub(crate) articulation_nodes: Vec<AiPlanArticulationNodeJson>,
     #[serde(default)]
     pub(crate) attach_to: Option<AiPlanAttachmentJson>,
 }
@@ -655,6 +683,16 @@ pub(crate) enum AiAnimationDriverJsonV1 {
     Unknown,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AiAnimationFamilyJsonV1 {
+    #[default]
+    Base,
+    Overlay,
+    #[serde(other)]
+    Unknown,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AiAnimationDeltaTransformJsonV1 {
@@ -717,16 +755,31 @@ pub(crate) enum AiAnimationClipJsonV1 {
 #[serde(deny_unknown_fields)]
 pub(crate) struct AiAuthoredAnimationSlotJsonV1 {
     pub(crate) channel: String,
+    #[serde(default)]
+    pub(crate) family: AiAnimationFamilyJsonV1,
     pub(crate) driver: AiAnimationDriverJsonV1,
     pub(crate) speed_scale: f32,
     pub(crate) time_offset_units: f32,
     pub(crate) clip: AiAnimationClipJsonV1,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AiMotionTargetKindJsonV1 {
+    RootEdge,
+    AttachmentEdge,
+    ArticulationNode,
+    #[serde(other)]
+    Unknown,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct AiAuthoredAnimationEdgeJsonV1 {
+pub(crate) struct AiAuthoredAnimationTargetJsonV1 {
+    pub(crate) kind: AiMotionTargetKindJsonV1,
     pub(crate) component: String,
+    #[serde(default)]
+    pub(crate) node_id: Option<String>,
     #[serde(default)]
     pub(crate) slots: Vec<AiAuthoredAnimationSlotJsonV1>,
 }
@@ -743,7 +796,7 @@ pub(crate) struct AiMotionAuthoringJsonV1 {
     #[serde(default)]
     pub(crate) replace_channels: Vec<String>,
     #[serde(default)]
-    pub(crate) edges: Vec<AiAuthoredAnimationEdgeJsonV1>,
+    pub(crate) targets: Vec<AiAuthoredAnimationTargetJsonV1>,
     #[serde(default, alias = "notes")]
     pub(crate) notes_text: Option<String>,
 }

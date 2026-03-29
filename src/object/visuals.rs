@@ -9,8 +9,9 @@ use crate::object::depth_bias::{
 };
 use crate::object::registry::{
     AttachmentDef, MaterialKey, MeshKey, ObjectLibrary, ObjectPartKind, PartAnimationDef,
-    PartAnimationDriver, PartAnimationKeyframeDef, PartAnimationSlot, PartAnimationSpec,
-    PartAnimationSpinAxisSpace, PrimitiveParams, PrimitiveVisualDef, UnitAttackKind,
+    PartAnimationDriver, PartAnimationFamily, PartAnimationKeyframeDef, PartAnimationSlot,
+    PartAnimationSpec, PartAnimationSpinAxisSpace, PrimitiveParams, PrimitiveVisualDef,
+    UnitAttackKind,
 };
 use crate::object::types::characters;
 use crate::types::{
@@ -826,6 +827,7 @@ pub(crate) fn update_part_animations(
 
     fn choose_spec_for_channel<'a>(
         animations: &'a [PartAnimationSlot],
+        family: PartAnimationFamily,
         channel: &str,
         root_entity: Entity,
         clock: Option<&AttackClock>,
@@ -838,13 +840,13 @@ pub(crate) fn update_part_animations(
         if channel != "attack" {
             return animations
                 .iter()
-                .find(|slot| slot.channel.as_ref() == channel)
+                .find(|slot| slot.family == family && slot.channel.as_ref() == channel)
                 .map(|slot| &slot.spec);
         }
 
         let mut matches = animations
             .iter()
-            .filter(|slot| slot.channel.as_ref() == "attack");
+            .filter(|slot| slot.family == family && slot.channel.as_ref() == "attack");
         let first = matches.next()?;
         let Some(second) = matches.next() else {
             return Some(&first.spec);
@@ -873,52 +875,49 @@ pub(crate) fn update_part_animations(
         let move_active = active.moving;
         let idle_active = !attack_active && !action_active && !move_active;
 
-        let mut chosen: Option<&PartAnimationSpec> = None;
+        let mut chosen_base: Option<&PartAnimationSpec> = None;
+        let mut chosen_overlay: Option<&PartAnimationSpec> = None;
         let attack_clock = attacks.get(player.root_entity).ok();
 
-        // If the root entity has a forced channel override, prefer it when this part has a
-        // matching slot.
         let forced_channel = forced
             .get(player.root_entity)
             .ok()
             .map(|c| c.channel.trim())
             .filter(|c| !c.is_empty());
         if let Some(channel) = forced_channel {
-            chosen = choose_spec_for_channel(
+            chosen_overlay = choose_spec_for_channel(
                 &player.animations,
+                PartAnimationFamily::Overlay,
                 channel,
                 player.root_entity,
                 attack_clock,
             );
         }
 
-        if chosen.is_none() {
-            for channel in ["attack", "action", "move", "idle", "ambient"] {
-                let channel_active = match channel {
-                    "attack" => attack_active,
-                    "action" => action_active,
-                    "move" => move_active,
-                    "idle" => idle_active,
-                    // Ambient is always active (fallback animation like fans/spinners).
-                    "ambient" => true,
-                    _ => false,
-                };
-                if !channel_active {
-                    continue;
-                }
-                if let Some(spec) = choose_spec_for_channel(
-                    &player.animations,
-                    channel,
-                    player.root_entity,
-                    attack_clock,
-                ) {
-                    chosen = Some(spec);
-                    break;
-                }
+        for channel in ["attack", "action", "move", "idle", "ambient"] {
+            let channel_active = match channel {
+                "attack" => attack_active,
+                "action" => action_active,
+                "move" => move_active,
+                "idle" => idle_active,
+                // Ambient is always active (fallback animation like fans/spinners).
+                "ambient" => true,
+                _ => false,
+            };
+            if !channel_active {
+                continue;
+            }
+            if let Some(spec) = choose_spec_for_channel(
+                &player.animations,
+                PartAnimationFamily::Base,
+                channel,
+                player.root_entity,
+                attack_clock,
+            ) {
+                chosen_base = Some(spec);
+                break;
             }
         }
-
-        let spec = chosen;
 
         let allow_aim_yaw = if player.apply_aim_yaw {
             // Melee units look better when they *only* apply attention yaw during the active
@@ -984,19 +983,26 @@ pub(crate) fn update_part_animations(
             base.rotation = aim_quat * base.rotation;
         }
 
-        let (basis, delta) = if let Some(spec) = spec {
+        fn sample_spec(
+            spec: &PartAnimationSpec,
+            wall_time: f32,
+            locomotion: &Query<&LocomotionClock>,
+            attacks: &Query<&AttackClock>,
+            actions: &Query<&ActionClock>,
+            root_entity: Entity,
+        ) -> (Transform, Transform) {
             let driver_time = match spec.driver {
                 PartAnimationDriver::Always => wall_time,
                 PartAnimationDriver::MovePhase => locomotion
-                    .get(player.root_entity)
+                    .get(root_entity)
                     .map(|clock| clock.t)
                     .unwrap_or(0.0),
                 PartAnimationDriver::MoveDistance => locomotion
-                    .get(player.root_entity)
+                    .get(root_entity)
                     .map(|clock| move_distance_units_for_clip(&spec.clip, clock))
                     .unwrap_or(0.0),
                 PartAnimationDriver::AttackTime => attacks
-                    .get(player.root_entity)
+                    .get(root_entity)
                     .map(|clock| {
                         if clock.duration_secs > 0.0 {
                             (wall_time - clock.started_at_secs).max(0.0)
@@ -1006,7 +1012,7 @@ pub(crate) fn update_part_animations(
                     })
                     .unwrap_or(0.0),
                 PartAnimationDriver::ActionTime => actions
-                    .get(player.root_entity)
+                    .get(root_entity)
                     .map(|clock| {
                         if clock.duration_secs > 0.0 {
                             (wall_time - clock.started_at_secs).max(0.0)
@@ -1022,21 +1028,51 @@ pub(crate) fn update_part_animations(
                 t += spec.time_offset_units;
             }
             (spec.basis, sample_part_animation(&spec.clip, t))
-        } else {
-            (player.fallback_basis, Transform::IDENTITY)
-        };
-        let mut basis = basis;
-        if !basis.translation.is_finite() || !basis.rotation.is_finite() || !basis.scale.is_finite()
-        {
-            basis = Transform::IDENTITY;
         }
-        let base_with_basis = mul_transform(&base, &basis);
-        let animated_base = match (spec, player.attachment.as_ref()) {
-            (Some(spec), Some(attachment)) => match &spec.clip {
-                PartAnimationDef::Spin {
-                    axis_space: PartAnimationSpinAxisSpace::ChildLocal,
-                    ..
-                } => {
+
+        fn apply_family_sample(
+            base: Transform,
+            player: &PartAnimationPlayer,
+            library: &ObjectLibrary,
+            spec: Option<&PartAnimationSpec>,
+            fallback_basis: Transform,
+            wall_time: f32,
+            locomotion: &Query<&LocomotionClock>,
+            attacks: &Query<&AttackClock>,
+            actions: &Query<&ActionClock>,
+        ) -> Transform {
+            let (basis, delta) = if let Some(spec) = spec {
+                sample_spec(
+                    spec,
+                    wall_time,
+                    locomotion,
+                    attacks,
+                    actions,
+                    player.root_entity,
+                )
+            } else {
+                (fallback_basis, Transform::IDENTITY)
+            };
+            let mut basis = basis;
+            if !basis.translation.is_finite()
+                || !basis.rotation.is_finite()
+                || !basis.scale.is_finite()
+            {
+                basis = Transform::IDENTITY;
+            }
+            let base_with_basis = mul_transform(&base, &basis);
+            match (spec, player.attachment.as_ref()) {
+                (
+                    Some(PartAnimationSpec {
+                        clip:
+                            PartAnimationDef::Spin {
+                                axis_space: PartAnimationSpinAxisSpace::ChildLocal,
+                                ..
+                            },
+                        ..
+                    }),
+                    Some(attachment),
+                ) => {
                     let child_anchor = player
                         .child_object_id
                         .and_then(|object_id| library.get(object_id))
@@ -1049,9 +1085,31 @@ pub(crate) fn update_part_animations(
                     )
                 }
                 _ => mul_transform(&base_with_basis, &delta),
-            },
-            _ => mul_transform(&base_with_basis, &delta),
-        };
+            }
+        }
+
+        let animated_base = apply_family_sample(
+            base,
+            player,
+            &library,
+            chosen_base,
+            player.fallback_basis,
+            wall_time,
+            &locomotion,
+            &attacks,
+            &actions,
+        );
+        let animated_base = apply_family_sample(
+            animated_base,
+            player,
+            &library,
+            chosen_overlay,
+            Transform::IDENTITY,
+            wall_time,
+            &locomotion,
+            &attacks,
+            &actions,
+        );
 
         if let Some(attachment) = player.attachment.as_ref() {
             let Some(parent_def) = library.get(player.parent_object_id) else {
@@ -1446,6 +1504,7 @@ mod tests {
 
         let slot = PartAnimationSlot {
             channel: "idle".into(),
+            family: crate::object::registry::PartAnimationFamily::Base,
             spec: PartAnimationSpec {
                 driver: PartAnimationDriver::Always,
                 speed_scale: 1.0,
@@ -1589,6 +1648,7 @@ mod tests {
 
         let slot = PartAnimationSlot {
             channel: "idle".into(),
+            family: crate::object::registry::PartAnimationFamily::Base,
             spec: PartAnimationSpec {
                 driver: PartAnimationDriver::Always,
                 speed_scale: 1.0,
@@ -1904,6 +1964,7 @@ mod tests {
                     fallback_basis: Transform::IDENTITY,
                     animations: vec![PartAnimationSlot {
                         channel: "idle".into(),
+                        family: crate::object::registry::PartAnimationFamily::Base,
                         spec,
                     }],
                     apply_aim_yaw: false,
@@ -1982,6 +2043,7 @@ mod tests {
                     fallback_basis: Transform::IDENTITY,
                     animations: vec![PartAnimationSlot {
                         channel: "move".into(),
+                        family: crate::object::registry::PartAnimationFamily::Base,
                         spec,
                     }],
                     apply_aim_yaw: false,
@@ -2001,6 +2063,108 @@ mod tests {
             (transform.translation.y - 1.0).abs() < 1e-4,
             "expected time_offset_units to phase-shift sampling, got translation={:?}",
             transform.translation
+        );
+    }
+
+    #[test]
+    fn overlay_channel_composes_on_top_of_base_family() {
+        use crate::object::registry::{
+            PartAnimationDef, PartAnimationDriver, PartAnimationFamily, PartAnimationKeyframeDef,
+            PartAnimationSlot, PartAnimationSpec,
+        };
+        use crate::types::ForcedAnimationChannel;
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(ObjectLibrary::default());
+        app.add_systems(Update, update_part_animations);
+
+        let root = app
+            .world_mut()
+            .spawn((
+                AnimationChannelsActive {
+                    moving: false,
+                    acting: false,
+                    attacking_primary: false,
+                },
+                ForcedAnimationChannel {
+                    channel: "blink".to_string(),
+                },
+            ))
+            .id();
+
+        let base_spec = PartAnimationSpec {
+            driver: PartAnimationDriver::Always,
+            speed_scale: 1.0,
+            time_offset_units: 0.0,
+            basis: Transform::IDENTITY,
+            clip: PartAnimationDef::Loop {
+                duration_secs: 1.0,
+                keyframes: vec![PartAnimationKeyframeDef {
+                    time_secs: 0.0,
+                    delta: Transform::from_translation(Vec3::new(0.0, 1.0, 0.0)),
+                }],
+            },
+        };
+        let overlay_spec = PartAnimationSpec {
+            driver: PartAnimationDriver::Always,
+            speed_scale: 1.0,
+            time_offset_units: 0.0,
+            basis: Transform::IDENTITY,
+            clip: PartAnimationDef::Loop {
+                duration_secs: 1.0,
+                keyframes: vec![PartAnimationKeyframeDef {
+                    time_secs: 0.0,
+                    delta: Transform::from_rotation(Quat::from_rotation_z(0.5)),
+                }],
+            },
+        };
+
+        let part_entity = app
+            .world_mut()
+            .spawn((
+                Transform::IDENTITY,
+                PartAnimationPlayer {
+                    root_entity: root,
+                    parent_object_id: 0,
+                    child_object_id: None,
+                    attachment: None,
+                    base_transform: Transform::IDENTITY,
+                    fallback_basis: Transform::IDENTITY,
+                    animations: vec![
+                        PartAnimationSlot {
+                            channel: "idle".into(),
+                            family: PartAnimationFamily::Base,
+                            spec: base_spec,
+                        },
+                        PartAnimationSlot {
+                            channel: "blink".into(),
+                            family: PartAnimationFamily::Overlay,
+                            spec: overlay_spec,
+                        },
+                    ],
+                    apply_aim_yaw: false,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let transform = app
+            .world()
+            .get::<Transform>(part_entity)
+            .copied()
+            .expect("part entity has Transform");
+        assert!(
+            (transform.translation.y - 1.0).abs() < 1e-4,
+            "expected base family translation to remain active, got {:?}",
+            transform.translation
+        );
+        let expected_rot = Quat::from_rotation_z(0.5);
+        assert!(
+            transform.rotation.angle_between(expected_rot) < 1e-4,
+            "expected overlay family rotation to compose on top of base, got {:?}",
+            transform.rotation
         );
     }
 }

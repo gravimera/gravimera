@@ -15,7 +15,7 @@ use super::super::state::Gen3dDraft;
 use super::super::{gen3d_draft_object_id, gen3d_draft_projectile_object_id, GEN3D_MAX_COMPONENTS};
 use super::artifacts::append_gen3d_jsonl_artifact;
 use super::schema::*;
-use super::{Gen3dPlannedAttachment, Gen3dPlannedComponent};
+use super::{Gen3dPlannedArticulationNode, Gen3dPlannedAttachment, Gen3dPlannedComponent};
 
 fn rotated_half_extents(half: Vec3, rotation: Quat) -> Vec3 {
     let abs = Mat3::from_quat(rotation).abs();
@@ -502,6 +502,109 @@ fn anchors_from_ai(
             name: name.to_string().into(),
             transform: Transform::from_translation(pos).with_rotation(rot),
         });
+    }
+
+    Ok(out)
+}
+
+fn planned_articulation_nodes_from_plan(
+    component_name: &str,
+    ai_nodes: &[AiPlanArticulationNodeJson],
+) -> Result<Vec<Gen3dPlannedArticulationNode>, String> {
+    let mut out: Vec<Gen3dPlannedArticulationNode> = Vec::with_capacity(ai_nodes.len());
+    let mut node_index: HashMap<String, usize> = HashMap::new();
+
+    for (idx, node) in ai_nodes.iter().enumerate() {
+        let node_id = node.node_id.trim();
+        if node_id.is_empty() {
+            return Err(format!(
+                "AI plan: component `{component_name}` articulation_nodes[{idx}] is missing required `node_id`."
+            ));
+        }
+
+        let parent_node_id = node
+            .parent_node_id
+            .as_ref()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        if parent_node_id.as_deref() == Some(node_id) {
+            return Err(format!(
+                "AI plan: component `{component_name}` articulation node `{node_id}` cannot parent itself."
+            ));
+        }
+
+        let rotation = plan_rotation_from_forward_up_strict(ai_vec3(node.forward), ai_vec3(node.up))
+            .map_err(|err| {
+                format!(
+                    "AI plan articulation node `{node_id}` on component `{component_name}` has invalid forward/up basis: {err}"
+                )
+            })?;
+
+        if node_index.insert(node_id.to_string(), idx).is_some() {
+            return Err(format!(
+                "AI plan: component `{component_name}` contains duplicate articulation node `{node_id}`."
+            ));
+        }
+
+        out.push(Gen3dPlannedArticulationNode {
+            node_id: node_id.to_string(),
+            parent_node_id,
+            transform: Transform::from_translation(ai_vec3(node.pos)).with_rotation(rotation),
+            bound_part_ids: Vec::new(),
+        });
+    }
+
+    let mut visiting = vec![false; out.len()];
+    let mut visited = vec![false; out.len()];
+
+    fn dfs(
+        idx: usize,
+        nodes: &[Gen3dPlannedArticulationNode],
+        node_index: &HashMap<String, usize>,
+        visiting: &mut [bool],
+        visited: &mut [bool],
+        component_name: &str,
+    ) -> Result<(), String> {
+        if visited[idx] {
+            return Ok(());
+        }
+        if visiting[idx] {
+            return Err(format!(
+                "AI plan: component `{component_name}` articulation nodes contain a parent cycle involving `{}`.",
+                nodes[idx].node_id
+            ));
+        }
+        visiting[idx] = true;
+        if let Some(parent) = nodes[idx].parent_node_id.as_ref() {
+            let Some(&parent_idx) = node_index.get(parent) else {
+                return Err(format!(
+                    "AI plan: component `{component_name}` articulation node `{}` references missing parent_node_id `{parent}`.",
+                    nodes[idx].node_id
+                ));
+            };
+            dfs(
+                parent_idx,
+                nodes,
+                node_index,
+                visiting,
+                visited,
+                component_name,
+            )?;
+        }
+        visiting[idx] = false;
+        visited[idx] = true;
+        Ok(())
+    }
+
+    for idx in 0..out.len() {
+        dfs(
+            idx,
+            &out,
+            &node_index,
+            &mut visiting,
+            &mut visited,
+            component_name,
+        )?;
     }
 
     Ok(out)
@@ -1002,6 +1105,8 @@ pub(super) fn ai_plan_to_initial_draft_defs(
             }
             out
         };
+        let articulation_nodes =
+            planned_articulation_nodes_from_plan(&comp.name, &comp.articulation_nodes)?;
 
         let attach_to = match comp.attach_to.as_ref() {
             None => None,
@@ -1065,6 +1170,7 @@ pub(super) fn ai_plan_to_initial_draft_defs(
             actual_size: None,
             anchors,
             contacts,
+            articulation_nodes,
             root_animations: Vec::new(),
             attach_to,
         });
@@ -2629,11 +2735,64 @@ pub(super) fn apply_ai_review_delta_actions(
     Ok(result)
 }
 
+#[derive(Clone, Debug)]
+pub(super) struct ConvertedComponentDef {
+    pub(super) def: ObjectDef,
+    pub(super) articulation_nodes: Vec<Gen3dPlannedArticulationNode>,
+}
+
+fn planned_articulation_nodes_from_ai(
+    component_name: &str,
+    ai_nodes: &[AiArticulationNodeJson],
+    parts: &[ObjectPartDef],
+) -> Result<Vec<Gen3dPlannedArticulationNode>, String> {
+    let mut out: Vec<Gen3dPlannedArticulationNode> = Vec::with_capacity(ai_nodes.len());
+    for node in ai_nodes.iter() {
+        let rotation = plan_rotation_from_forward_up_strict(ai_vec3(node.forward), ai_vec3(node.up))
+            .map_err(|err| {
+                format!(
+                    "AI draft articulation node `{}` on component `{component_name}` has invalid forward/up basis: {err}",
+                    node.node_id
+                )
+            })?;
+
+        let mut bound_part_ids: Vec<u128> = Vec::with_capacity(node.bind_part_indices.len());
+        for &part_idx in node.bind_part_indices.iter() {
+            let Some(part) = parts.get(part_idx) else {
+                return Err(format!(
+                    "AI draft articulation node `{}` on component `{component_name}` references missing part index {}.",
+                    node.node_id, part_idx
+                ));
+            };
+            let Some(part_id) = part.part_id else {
+                return Err(format!(
+                    "Internal error: component `{component_name}` part[{part_idx}] is missing part_id for articulation node `{}`.",
+                    node.node_id
+                ));
+            };
+            bound_part_ids.push(part_id);
+        }
+
+        out.push(Gen3dPlannedArticulationNode {
+            node_id: node.node_id.trim().to_string(),
+            parent_node_id: node
+                .parent_node_id
+                .as_ref()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty()),
+            transform: Transform::from_translation(ai_vec3(node.pos)).with_rotation(rotation),
+            bound_part_ids,
+        });
+    }
+
+    Ok(out)
+}
+
 pub(super) fn ai_to_component_def(
     component: &Gen3dPlannedComponent,
     mut ai: AiDraftJsonV1,
     run_dir: Option<&Path>,
-) -> Result<ObjectDef, String> {
+) -> Result<ConvertedComponentDef, String> {
     if ai.version == 0 {
         ai.version = 2;
     }
@@ -2728,8 +2887,17 @@ pub(super) fn ai_to_component_def(
         parts.push(part_def);
     }
 
+    let mut articulation_nodes =
+        planned_articulation_nodes_from_ai(component_name, &ai.articulation_nodes, &parts)?;
+
     validate_component_part_transforms(component_name, &parts)?;
-    canonicalize_component_parts(component_name, &mut parts, &mut anchors, run_dir);
+    canonicalize_component_parts(
+        component_name,
+        &mut parts,
+        &mut anchors,
+        &mut articulation_nodes,
+        run_dir,
+    );
     override_required_anchor_rotations_from_plan(
         component_name,
         &component.anchors,
@@ -2741,23 +2909,26 @@ pub(super) fn ai_to_component_def(
     error_if_component_axis_permutation(component_name, component.planned_size, size)?;
     let collider = collider_profile_from_ai(ai.collider.clone(), size)?;
 
-    Ok(ObjectDef {
-        object_id,
-        label: format!("gen3d_component_{}", component_name).into(),
-        size,
-        ground_origin_y: None,
-        collider,
-        interaction: ObjectInteraction::none(),
-        aim: None,
-        mobility: None,
-        anchors,
-        parts,
-        minimap_color: None,
-        health_bar_offset_y: None,
-        enemy: None,
-        muzzle: None,
-        projectile: None,
-        attack: None,
+    Ok(ConvertedComponentDef {
+        def: ObjectDef {
+            object_id,
+            label: format!("gen3d_component_{}", component_name).into(),
+            size,
+            ground_origin_y: None,
+            collider,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors,
+            parts,
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        },
+        articulation_nodes,
     })
 }
 
@@ -2878,6 +3049,7 @@ fn canonicalize_component_parts(
     component_name: &str,
     parts: &mut [ObjectPartDef],
     anchors: &mut [crate::object::registry::AnchorDef],
+    articulation_nodes: &mut [Gen3dPlannedArticulationNode],
     run_dir: Option<&Path>,
 ) {
     const CENTER_EPS: f32 = 0.001;
@@ -2897,6 +3069,9 @@ fn canonicalize_component_parts(
         }
         for anchor in anchors.iter_mut() {
             anchor.transform.translation -= center;
+        }
+        for node in articulation_nodes.iter_mut() {
+            node.transform.translation -= center;
         }
         debug!(
             "Gen3D: recentered component {component_name} by [{:.3},{:.3},{:.3}]",
@@ -3076,6 +3251,7 @@ mod tests {
                 transform: Transform::from_translation(Vec3::new(1.0, 0.0, 0.0)),
             }],
             contacts: Vec::new(),
+            articulation_nodes: Vec::new(),
             root_animations: Vec::new(),
             attach_to: None,
         };
@@ -3089,6 +3265,7 @@ mod tests {
                 forward: [0.0, 0.0, 1.0],
                 up: [0.0, 1.0, 0.0],
             }],
+            articulation_nodes: Vec::new(),
             parts: vec![AiPartJson {
                 primitive: AiPrimitiveJson::Cuboid,
                 params: None,
@@ -3103,12 +3280,14 @@ mod tests {
 
         let def = ai_to_component_def(&planned, ai, None).expect("component def should build");
         let part = def
+            .def
             .parts
             .iter()
             .find(|p| matches!(p.kind, ObjectPartKind::Primitive { .. }))
             .expect("primitive part");
         assert!(part.transform.translation.length() < 1e-3);
         let anchor = def
+            .def
             .anchors
             .iter()
             .find(|a| a.name.as_ref() == "mount")
@@ -3129,6 +3308,7 @@ mod tests {
             actual_size: None,
             anchors: Vec::new(),
             contacts: Vec::new(),
+            articulation_nodes: Vec::new(),
             root_animations: Vec::new(),
             attach_to: None,
         };
@@ -3137,6 +3317,7 @@ mod tests {
             version: 2,
             collider: None,
             anchors: Vec::new(),
+            articulation_nodes: Vec::new(),
             parts: vec![AiPartJson {
                 primitive: AiPrimitiveJson::Cuboid,
                 params: None,
@@ -3151,11 +3332,12 @@ mod tests {
 
         let def = ai_to_component_def(&planned, ai, None).expect("component def should build");
         assert!(
-            def.parts
+            def.def
+                .parts
                 .iter()
                 .all(|p| !matches!(p.kind, ObjectPartKind::Primitive { .. })),
             "expected nearly invisible primitives to be dropped, got {:?}",
-            def.parts
+            def.def.parts
         );
     }
 
@@ -3172,6 +3354,7 @@ mod tests {
             actual_size: None,
             anchors: Vec::new(),
             contacts: Vec::new(),
+            articulation_nodes: Vec::new(),
             root_animations: Vec::new(),
             attach_to: None,
         };
@@ -3181,6 +3364,7 @@ mod tests {
             version: 2,
             collider: None,
             anchors: Vec::new(),
+            articulation_nodes: Vec::new(),
             parts: vec![AiPartJson {
                 primitive: AiPrimitiveJson::Cylinder,
                 params: None,
@@ -3194,6 +3378,7 @@ mod tests {
         };
         let def = ai_to_component_def(&planned, ai, None).expect("component def should build");
         let part = def
+            .def
             .parts
             .iter()
             .find(|p| matches!(p.kind, ObjectPartKind::Primitive { .. }))
@@ -3210,6 +3395,7 @@ mod tests {
             version: 2,
             collider: None,
             anchors: Vec::new(),
+            articulation_nodes: Vec::new(),
             parts: vec![AiPartJson {
                 primitive: AiPrimitiveJson::Cuboid,
                 params: None,
@@ -3223,6 +3409,7 @@ mod tests {
         };
         let def = ai_to_component_def(&planned, ai, None).expect("component def should build");
         let part = def
+            .def
             .parts
             .iter()
             .find(|p| matches!(p.kind, ObjectPartKind::Primitive { .. }))
@@ -3253,6 +3440,7 @@ mod tests {
                 transform: Transform::IDENTITY,
             }],
             contacts: Vec::new(),
+            articulation_nodes: Vec::new(),
             root_animations: Vec::new(),
             attach_to: None,
         };
@@ -3267,6 +3455,7 @@ mod tests {
                 forward: [0.0, 0.0, 1.0],
                 up: [0.0, 1.0, 0.0],
             }],
+            articulation_nodes: Vec::new(),
             parts: vec![AiPartJson {
                 primitive: AiPrimitiveJson::Cuboid,
                 params: None,
@@ -3304,6 +3493,7 @@ mod tests {
                     .with_rotation(plan_rotation_from_forward_up_lossy(Vec3::X, Some(Vec3::Y))),
             }],
             contacts: Vec::new(),
+            articulation_nodes: Vec::new(),
             root_animations: Vec::new(),
             attach_to: Some(Gen3dPlannedAttachment {
                 parent: "tail_boom".into(),
@@ -3314,6 +3504,7 @@ mod tests {
                 joint: None,
                 animations: vec![PartAnimationSlot {
                     channel: "idle".into(),
+                    family: crate::object::registry::PartAnimationFamily::Base,
                     spec: PartAnimationSpec {
                         driver: PartAnimationDriver::Always,
                         speed_scale: 1.0,
@@ -3340,6 +3531,7 @@ mod tests {
                 forward: [1.0, 0.0, 0.0],
                 up: [0.0, 1.0, 0.0],
             }],
+            articulation_nodes: Vec::new(),
             parts: vec![AiPartJson {
                 primitive: AiPrimitiveJson::Cuboid,
                 params: None,
@@ -3354,11 +3546,12 @@ mod tests {
 
         let def = ai_to_component_def(&planned, ai, None).expect("component def should build");
         assert!(
-            def.size.z < def.size.x && def.size.z < def.size.y,
+            def.def.size.z < def.def.size.x && def.def.size.z < def.def.size.y,
             "expected component to remain thin along +Z (no auto-alignment); size={:?}",
-            def.size
+            def.def.size
         );
         let anchor = def
+            .def
             .anchors
             .iter()
             .find(|a| a.name.as_ref() == "root_attach")
@@ -3389,6 +3582,7 @@ mod tests {
                 transform: Transform::from_translation(Vec3::new(0.0, 0.5, 0.0)),
             }],
             contacts: Vec::new(),
+            articulation_nodes: Vec::new(),
             root_animations: Vec::new(),
             attach_to: None,
         };
@@ -3402,6 +3596,7 @@ mod tests {
                 forward: [0.0, -1.0, 0.0],
                 up: [0.0, 0.0, 1.0],
             }],
+            articulation_nodes: Vec::new(),
             parts: vec![AiPartJson {
                 primitive: AiPrimitiveJson::Cuboid,
                 params: None,
@@ -3416,6 +3611,7 @@ mod tests {
 
         let def = ai_to_component_def(&planned, ai, None).expect("component def should build");
         let anchor = def
+            .def
             .anchors
             .iter()
             .find(|a| a.name.as_ref() == "hand_grip")
@@ -3822,6 +4018,7 @@ mod tests {
         };
         att.animations.push(PartAnimationSlot {
             channel: "move".into(),
+            family: crate::object::registry::PartAnimationFamily::Base,
             spec: PartAnimationSpec {
                 driver: PartAnimationDriver::MoveDistance,
                 speed_scale: 1.0,

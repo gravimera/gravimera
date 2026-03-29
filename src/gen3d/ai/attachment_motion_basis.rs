@@ -142,6 +142,7 @@ mod tests {
     fn base_slot_with_basis(basis: Transform) -> PartAnimationSlot {
         PartAnimationSlot {
             channel: LEGACY_INTERNAL_BASE_CHANNEL.into(),
+            family: crate::object::registry::PartAnimationFamily::Base,
             spec: PartAnimationSpec {
                 driver: PartAnimationDriver::Always,
                 speed_scale: 1.0,
@@ -164,6 +165,7 @@ mod tests {
         let mut animations = vec![
             PartAnimationSlot {
                 channel: "move".into(),
+                family: crate::object::registry::PartAnimationFamily::Base,
                 spec: PartAnimationSpec {
                     driver: PartAnimationDriver::MovePhase,
                     speed_scale: 1.0,
@@ -227,6 +229,7 @@ mod tests {
         let mut fallback_basis = fallback_old;
         let mut animations = vec![PartAnimationSlot {
             channel: "idle".into(),
+            family: crate::object::registry::PartAnimationFamily::Base,
             spec: PartAnimationSpec {
                 driver: PartAnimationDriver::Always,
                 speed_scale: 1.0,

@@ -4,12 +4,15 @@ use std::path::Path;
 use uuid::Uuid;
 
 use crate::object::registry::{
-    AnchorDef, PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef, PartAnimationSlot,
-    PartAnimationSpec,
+    AnchorDef, PartAnimationDef, PartAnimationDriver, PartAnimationFamily,
+    PartAnimationKeyframeDef, PartAnimationSlot, PartAnimationSpec,
 };
 
 use super::schema::{AiColliderJson, AiContactJson, AiJointJson, AiMotionAuthoringJsonV1};
-use super::{Gen3dAgentWorkspace, Gen3dAiJob, Gen3dPlannedAttachment, Gen3dPlannedComponent};
+use super::{
+    Gen3dAgentWorkspace, Gen3dAiJob, Gen3dPlannedArticulationNode, Gen3dPlannedAttachment,
+    Gen3dPlannedComponent,
+};
 
 const GEN3D_EDIT_BUNDLE_FORMAT_VERSION: u32 = 1;
 
@@ -61,6 +64,8 @@ pub(crate) struct Gen3dPlannedComponentBundleV1 {
     pub(crate) anchors: Vec<AnchorDefBundleV1>,
     #[serde(default)]
     pub(crate) contacts: Vec<AiContactJson>,
+    #[serde(default)]
+    pub(crate) articulation_nodes: Vec<Gen3dPlannedArticulationNodeBundleV1>,
     /// Animation slots applied on the implicit draft-root -> root-component object_ref edge.
     /// Only meaningful for the root component (`attach_to=None`).
     #[serde(default)]
@@ -85,6 +90,18 @@ pub(crate) struct Gen3dPlannedAttachmentBundleV1 {
     pub(crate) joint: Option<AiJointJson>,
     #[serde(default)]
     pub(crate) animations: Vec<PartAnimationSlotBundleV1>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(crate) struct Gen3dPlannedArticulationNodeBundleV1 {
+    #[serde(default)]
+    pub(crate) node_id: String,
+    #[serde(default)]
+    pub(crate) parent_node_id: Option<String>,
+    #[serde(default)]
+    pub(crate) transform: TransformBundleV1,
+    #[serde(default)]
+    pub(crate) bound_part_id_uuids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -114,6 +131,8 @@ pub(crate) struct PartAnimationSlotBundleV1 {
     #[serde(default)]
     pub(crate) channel: String,
     #[serde(default)]
+    pub(crate) family: PartAnimationFamilyBundleV1,
+    #[serde(default)]
     pub(crate) spec: PartAnimationSpecBundleV1,
 }
 
@@ -140,6 +159,14 @@ pub(crate) enum PartAnimationDriverBundleV1 {
     MoveDistance,
     AttackTime,
     ActionTime,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PartAnimationFamilyBundleV1 {
+    #[default]
+    Base,
+    Overlay,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
@@ -400,6 +427,11 @@ impl Gen3dPlannedComponentBundleV1 {
                 .map(AnchorDefBundleV1::from_anchor)
                 .collect(),
             contacts: c.contacts.clone(),
+            articulation_nodes: c
+                .articulation_nodes
+                .iter()
+                .map(Gen3dPlannedArticulationNodeBundleV1::from_node)
+                .collect(),
             root_animations: c
                 .root_animations
                 .iter()
@@ -444,6 +476,11 @@ impl Gen3dPlannedComponentBundleV1 {
                 .map(AnchorDefBundleV1::to_anchor)
                 .collect::<Result<Vec<_>, _>>()?,
             contacts: self.contacts.clone(),
+            articulation_nodes: self
+                .articulation_nodes
+                .iter()
+                .map(Gen3dPlannedArticulationNodeBundleV1::to_node)
+                .collect::<Result<Vec<_>, _>>()?,
             root_animations: self
                 .root_animations
                 .iter()
@@ -479,6 +516,7 @@ mod tests {
         let mut object_ref = ObjectPartDef::object_ref(child_object_id, Transform::IDENTITY);
         object_ref.animations.push(PartAnimationSlot {
             channel: Cow::Borrowed("move"),
+            family: crate::object::registry::PartAnimationFamily::Base,
             spec: PartAnimationSpec {
                 driver: PartAnimationDriver::MovePhase,
                 speed_scale: 1.0,
@@ -541,6 +579,7 @@ mod tests {
             actual_size: Some(Vec3::ONE),
             anchors: Vec::new(),
             contacts: Vec::new(),
+            articulation_nodes: Vec::new(),
             root_animations: Vec::new(),
             attach_to: Some(Gen3dPlannedAttachment {
                 parent: parent_name.into(),
@@ -582,6 +621,44 @@ impl AnchorDefBundleV1 {
         Ok(AnchorDef {
             name: name.to_string().into(),
             transform: self.transform.to_transform(),
+        })
+    }
+}
+
+impl Gen3dPlannedArticulationNodeBundleV1 {
+    fn from_node(node: &Gen3dPlannedArticulationNode) -> Self {
+        Self {
+            node_id: node.node_id.clone(),
+            parent_node_id: node.parent_node_id.clone(),
+            transform: TransformBundleV1::from_transform(node.transform),
+            bound_part_id_uuids: node
+                .bound_part_ids
+                .iter()
+                .map(|id| Uuid::from_u128(*id).to_string())
+                .collect(),
+        }
+    }
+
+    fn to_node(&self) -> Result<Gen3dPlannedArticulationNode, String> {
+        let mut bound_part_ids: Vec<u128> = Vec::new();
+        for raw in self.bound_part_id_uuids.iter() {
+            let raw = raw.trim();
+            if raw.is_empty() {
+                continue;
+            }
+            let uuid = Uuid::parse_str(raw)
+                .map_err(|err| format!("Invalid articulation node part id UUID: {err}"))?;
+            bound_part_ids.push(uuid.as_u128());
+        }
+        Ok(Gen3dPlannedArticulationNode {
+            node_id: self.node_id.trim().to_string(),
+            parent_node_id: self
+                .parent_node_id
+                .as_ref()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty()),
+            transform: self.transform.to_transform(),
+            bound_part_ids,
         })
     }
 }
@@ -668,6 +745,7 @@ impl PartAnimationSlotBundleV1 {
     fn from_slot(slot: &PartAnimationSlot) -> Self {
         Self {
             channel: slot.channel.to_string(),
+            family: PartAnimationFamilyBundleV1::from_family(slot.family),
             spec: PartAnimationSpecBundleV1::from_spec(&slot.spec),
         }
     }
@@ -679,8 +757,25 @@ impl PartAnimationSlotBundleV1 {
         }
         Ok(PartAnimationSlot {
             channel: channel.to_string().into(),
+            family: self.family.to_family(),
             spec: self.spec.to_spec()?,
         })
+    }
+}
+
+impl PartAnimationFamilyBundleV1 {
+    fn from_family(family: PartAnimationFamily) -> Self {
+        match family {
+            PartAnimationFamily::Base => Self::Base,
+            PartAnimationFamily::Overlay => Self::Overlay,
+        }
+    }
+
+    fn to_family(self) -> PartAnimationFamily {
+        match self {
+            Self::Base => PartAnimationFamily::Base,
+            Self::Overlay => PartAnimationFamily::Overlay,
+        }
     }
 }
 

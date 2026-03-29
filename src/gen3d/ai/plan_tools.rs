@@ -932,6 +932,7 @@ mod tests {
             actual_size: None,
             anchors: Vec::new(),
             contacts: Vec::new(),
+            articulation_nodes: Vec::new(),
             root_animations: Vec::new(),
             attach_to: parent.map(|p| super::super::job::Gen3dPlannedAttachment {
                 parent: p.to_string(),
@@ -978,6 +979,7 @@ mod tests {
                     size: [1.0, 1.0, 1.0],
                     anchors: Vec::new(),
                     contacts: Vec::new(),
+                    articulation_nodes: Vec::new(),
                     attach_to: None,
                 },
                 AiPlanComponentJson {
@@ -987,6 +989,7 @@ mod tests {
                     size: [1.0, 1.0, 1.0],
                     anchors: Vec::new(),
                     contacts: Vec::new(),
+                    articulation_nodes: Vec::new(),
                     attach_to: Some(AiPlanAttachmentJson {
                         parent: "dragon_neck".into(),
                         parent_anchor: "origin".into(),
@@ -1051,6 +1054,7 @@ mod tests {
                     size: [1.0, 1.0, 1.0],
                     anchors: Vec::new(),
                     contacts: Vec::new(),
+                    articulation_nodes: Vec::new(),
                     attach_to: None,
                 },
                 AiPlanComponentJson {
@@ -1060,6 +1064,7 @@ mod tests {
                     size: [1.0, 1.0, 1.0],
                     anchors: Vec::new(),
                     contacts: Vec::new(),
+                    articulation_nodes: Vec::new(),
                     attach_to: Some(AiPlanAttachmentJson {
                         parent: "body".into(),
                         parent_anchor: "neck_mount".into(),
@@ -1115,6 +1120,7 @@ mod tests {
                     size: [1.0, 1.0, 1.0],
                     anchors: Vec::new(),
                     contacts: Vec::new(),
+                    articulation_nodes: Vec::new(),
                     attach_to: None,
                 },
                 AiPlanComponentJson {
@@ -1124,6 +1130,7 @@ mod tests {
                     size: [1.0, 1.0, 1.0],
                     anchors: Vec::new(),
                     contacts: Vec::new(),
+                    articulation_nodes: Vec::new(),
                     attach_to: Some(AiPlanAttachmentJson {
                         parent: "neck".into(),
                         parent_anchor: "origin".into(),
@@ -1195,6 +1202,7 @@ mod tests {
                     size: [1.0, 1.0, 1.0],
                     anchors: Vec::new(),
                     contacts: Vec::new(),
+                    articulation_nodes: Vec::new(),
                     attach_to: None,
                 },
                 AiPlanComponentJson {
@@ -1204,6 +1212,7 @@ mod tests {
                     size: [0.2, 0.2, 0.6],
                     anchors: Vec::new(),
                     contacts: Vec::new(),
+                    articulation_nodes: Vec::new(),
                     attach_to: Some(AiPlanAttachmentJson {
                         parent: "arm_lower_r".into(),
                         parent_anchor: "origin".into(),
@@ -1244,6 +1253,7 @@ mod tests {
                 size: [1.0, 1.0, 1.0],
                 anchors: Vec::new(),
                 contacts: Vec::new(),
+                articulation_nodes: Vec::new(),
                 attach_to: None,
             }],
             Some("body"),
@@ -1281,6 +1291,7 @@ mod tests {
                 size: [1.0, 1.0, 1.0],
                 anchors: Vec::new(),
                 contacts: Vec::new(),
+                articulation_nodes: Vec::new(),
                 attach_to: None,
             }],
             Some("body"),
@@ -1323,6 +1334,7 @@ mod tests {
                     size: [1.0, 1.0, 1.0],
                     anchors: Vec::new(),
                     contacts: Vec::new(),
+                    articulation_nodes: Vec::new(),
                     attach_to: None,
                 },
                 AiPlanComponentJson {
@@ -1332,6 +1344,7 @@ mod tests {
                     size: [0.2, 0.2, 0.2],
                     anchors: Vec::new(),
                     contacts: Vec::new(),
+                    articulation_nodes: Vec::new(),
                     attach_to: Some(AiPlanAttachmentJson {
                         parent: "torso".into(),
                         parent_anchor: "origin".into(),

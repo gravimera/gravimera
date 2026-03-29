@@ -551,6 +551,7 @@ mod tests {
         let mut child_ref = ObjectPartDef::object_ref(child_id, Transform::IDENTITY);
         child_ref.animations.push(PartAnimationSlot {
             channel: "move".into(),
+            family: crate::object::registry::PartAnimationFamily::Base,
             spec: PartAnimationSpec {
                 driver: PartAnimationDriver::MovePhase,
                 speed_scale: 1.0,

@@ -3540,6 +3540,7 @@ mod tests {
         app.init_resource::<FloorLibraryUiState>();
         app.init_resource::<crate::genfloor::GenFloorWorkshop>();
         app.init_resource::<crate::genfloor::GenFloorAiJob>();
+        app.init_resource::<FloorLibraryUiState>();
 
         let mut job = app
             .world_mut()

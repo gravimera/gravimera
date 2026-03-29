@@ -148,6 +148,13 @@ pub(crate) enum PartAnimationDriver {
     ActionTime,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(crate) enum PartAnimationFamily {
+    #[default]
+    Base,
+    Overlay,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct PartAnimationSpec {
     pub(crate) driver: PartAnimationDriver,
@@ -170,6 +177,7 @@ pub(crate) struct PartAnimationSpec {
 #[derive(Clone, Debug)]
 pub(crate) struct PartAnimationSlot {
     pub(crate) channel: Cow<'static, str>,
+    pub(crate) family: PartAnimationFamily,
     pub(crate) spec: PartAnimationSpec,
 }
 
@@ -249,10 +257,12 @@ impl ObjectPartDef {
     pub(crate) fn with_animation_slot(
         mut self,
         channel: impl Into<Cow<'static, str>>,
+        family: PartAnimationFamily,
         spec: PartAnimationSpec,
     ) -> Self {
         self.animations.push(PartAnimationSlot {
             channel: channel.into(),
+            family,
             spec,
         });
         self

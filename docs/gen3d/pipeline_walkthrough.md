@@ -36,6 +36,29 @@ The pipeline issues “tool calls” by creating a `Gen3dToolCallJsonV1` and exe
 
 Even though these live under `agent_*` modules, they are simply the **tool runtime** now (shared plumbing for LLM calls, artifacts, structured-output enforcement, etc.).
 
+## Contract highlights for articulation + layered motion
+
+Two structural rules matter when reading planning/component artifacts:
+
+- Plans may reserve internal handles at `components[].articulation_nodes[]`.
+  - These plan-time nodes carry only `node_id`, optional `parent_node_id`, and a local basis
+    (`pos`/`forward`/`up`).
+  - Plans do not bind primitive parts yet and do not author named motion objects.
+- Component drafts later emit `articulation_nodes[]` again, now with `bind_part_indices` that bind
+  those handles to concrete primitive parts in that component draft.
+
+Two recent contract changes matter when reading Gen3D artifacts:
+
+- Component drafts may include `articulation_nodes[]` inside one component. These are generic
+  internal motion handles bound explicitly to primitive parts.
+- Motion authoring now uses `targets[]` instead of attachment-only `edges[]`.
+  - `root_edge`
+  - `attachment_edge`
+  - `articulation_node`
+- Every authored slot also carries `family="base" | "overlay"`.
+  - `base` is the gameplay-selected body family.
+  - `overlay` is a forced named family that composes on top of base instead of replacing it.
+
 ## What happens in a run (whole-picture flow)
 
 At a high level, there are two common flows:
@@ -84,6 +107,7 @@ Pipeline stages (simplified):
    - Tool: `llm_generate_components_v1` (missing-only)
 4. DraftOps-first in-place edits:
    - `EditQueryComponentParts` (tool: `query_component_parts_v1` for each scoped component)
+     - Snapshot payloads now include both `parts[]` and `articulation_nodes[]`.
    - `EditSuggestDraftOps` (tool: `llm_generate_draft_ops_v1` with `scope_components`)
    - `EditApplyDraftOps` (tool: `apply_draft_ops_v1` with `atomic=true` and `if_assembly_rev=<current>`)
 5. `Qa` → optional render/review-delta → `Finish`
@@ -113,8 +137,9 @@ This list matches the deterministic calls in `src/gen3d/ai/pipeline_orchestrator
 - Seeded edit: part snapshots + DraftOps
   - `query_component_parts_v1`
     - Args: `{ "component": "<component name>", "max_parts": 128 }`
-  - `llm_generate_draft_ops_v1`
-    - Args: `{ "prompt": "<edit prompt>", "scope_components": ["..."], "max_ops": 24, "strategy": "conservative" }`
+    - Result highlights: `parts[]`, `articulation_nodes[]`, and sample `apply_draft_ops_v1` recipes
+- `llm_generate_draft_ops_v1`
+  - Args: `{ "prompt": "<edit prompt>", "scope_components": ["..."], "max_ops": 24, "strategy": "conservative" }`
       - If `scope_components=[]` (or omitted), the tool defaults to “all components”, which is more expensive and may truncate snapshots.
   - `apply_draft_ops_v1`
     - Args (pipeline): `{ "version": 1, "atomic": true, "if_assembly_rev": <u32>, "ops": [...] }`
@@ -162,6 +187,11 @@ The tool implementations build prompts here:
 - Motions: `src/gen3d/ai/agent_tool_dispatch.rs` (`TOOL_ID_LLM_GENERATE_MOTIONS`)
   - System: `build_gen3d_motion_authoring_system_instructions()`
   - User: `build_gen3d_motion_authoring_user_text(...)`
+  - Important context in the user text:
+    - root-edge summary
+    - attachment-edge summaries
+    - articulation-node summaries
+    - family guidance (`base` vs `overlay`)
 - Review delta: `src/gen3d/ai/agent_review_delta.rs` (`start_agent_llm_review_delta_call(...)`)
   - System: `build_gen3d_review_delta_system_instructions(...)`
   - User: `build_gen3d_review_delta_user_text(...)`

@@ -2701,10 +2701,15 @@ pub(super) fn poll_agent_tool(
                             ai,
                             job.step_dir.as_deref(),
                         ) {
-                            Ok(def) => {
-                                let object_id = def.object_id;
-                                job.planned_components[component_idx].actual_size = Some(def.size);
-                                job.planned_components[component_idx].anchors = def.anchors.clone();
+                            Ok(converted) => {
+                                let mut component_def = converted.def;
+                                let object_id = component_def.object_id;
+                                job.planned_components[component_idx].actual_size =
+                                    Some(component_def.size);
+                                job.planned_components[component_idx].anchors =
+                                    component_def.anchors.clone();
+                                job.planned_components[component_idx].articulation_nodes =
+                                    converted.articulation_nodes;
                                 job.agent.pending_llm_repair_attempt = 0;
 
                                 if let Some(existing) =
@@ -2721,11 +2726,10 @@ pub(super) fn poll_agent_tool(
                                         })
                                         .cloned()
                                         .collect();
-                                    let mut new_def = def;
-                                    new_def.parts.extend(preserved_refs);
-                                    *existing = new_def;
+                                    component_def.parts.extend(preserved_refs);
+                                    *existing = component_def;
                                 } else {
-                                    draft.defs.push(def);
+                                    draft.defs.push(component_def);
                                 }
 
                                 if let Some(root_idx) = job
@@ -2867,11 +2871,6 @@ pub(super) fn poll_agent_tool(
                     }
                 }
                 super::Gen3dAgentLlmToolKind::GenerateMotion => {
-                    use crate::object::registry::{
-                        PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef,
-                        PartAnimationSlot, PartAnimationSpec,
-                    };
-
                     let expected_channel = call
                         .args
                         .get("channel")
@@ -2896,326 +2895,14 @@ pub(super) fn poll_agent_tool(
 
                     match super::parse::parse_ai_motion_authoring_from_text(&text) {
                         Ok(authored) => {
-                            let expected_run_id =
-                                job.run_id.map(|id| id.to_string()).unwrap_or_default();
-                            let mut issues: Vec<String> = Vec::new();
-                            if !expected_run_id.trim().is_empty()
-                                && authored.applies_to.run_id.trim() != expected_run_id.trim()
-                            {
-                                issues.push(format!(
-                                    "applies_to.run_id mismatch (got {}, expected {})",
-                                    authored.applies_to.run_id.trim(),
-                                    expected_run_id.trim()
-                                ));
-                            }
-                            if authored.applies_to.attempt != job.attempt
-                                || authored.applies_to.plan_hash.trim() != job.plan_hash.trim()
-                                || authored.applies_to.assembly_rev != job.assembly_rev
-                            {
-                                issues.push(format!(
-                                    "applies_to mismatch (got attempt={} plan_hash={} assembly_rev={}, expected attempt={} plan_hash={} assembly_rev={})",
-                                    authored.applies_to.attempt,
-                                    authored.applies_to.plan_hash.trim(),
-                                    authored.applies_to.assembly_rev,
-                                    job.attempt,
-                                    job.plan_hash.trim(),
-                                    job.assembly_rev,
-                                ));
-                            }
-
-                            if issues.is_empty() {
-                                match authored.decision {
-                                    super::schema::AiMotionAuthoringDecisionJsonV1::RegenGeometryRequired => {
-                                        if !authored.replace_channels.is_empty()
-                                            || !authored.edges.is_empty()
-                                        {
-                                            issues.push("decision=regen_geometry_required must set replace_channels=[] and edges=[] (do not author clips).".to_string());
-                                        }
-                                        if authored.reason.trim().is_empty() {
-                                            issues.push("decision=regen_geometry_required must include a non-empty `reason`.".to_string());
-                                        }
-                                    }
-                                    super::schema::AiMotionAuthoringDecisionJsonV1::AuthorClips => {
-                                        if expected_channel.is_empty() {
-                                            issues.push("Missing required arg: channel".into());
-                                        } else if authored.replace_channels.len() != 1
-                                            || authored.replace_channels[0].as_str()
-                                                != expected_channel.as_str()
-                                        {
-                                            issues.push(format!(
-                                                "replace_channels must be exactly [\"{expected_channel}\"] for single-channel motion authoring (got {:?})",
-                                                authored.replace_channels
-                                            ));
-                                        }
-                                        if authored.edges.is_empty() {
-                                            issues.push(
-                                                "edges must be non-empty when decision=author_clips"
-                                                    .to_string(),
-                                            );
-                                        }
-                                        for edge in authored.edges.iter() {
-                                            let component = edge.component.trim();
-                                            for slot in edge.slots.iter() {
-                                                if slot.channel.as_str() != expected_channel.as_str()
-                                                {
-                                                    issues.push(format!(
-                                                        "slot.channel must be {expected_channel:?} for component `{component}` (got `{}`)",
-                                                        slot.channel.as_str()
-                                                    ));
-                                                }
-                                            }
-                                        }
-                                    }
-                                    _ => {
-                                        issues.push("AI motion-authoring has invalid `decision` value (expected `author_clips` or `regen_geometry_required`).".to_string());
-                                    }
-                                }
-                            }
-
-                            if issues.is_empty()
-                                && matches!(
-                                    authored.decision,
-                                    super::schema::AiMotionAuthoringDecisionJsonV1::AuthorClips
-                                )
-                            {
-
-                                let mut name_to_idx: std::collections::HashMap<String, usize> =
-                                    std::collections::HashMap::new();
-                                for (idx, c) in job.planned_components.iter().enumerate() {
-                                    name_to_idx.insert(c.name.clone(), idx);
-                                }
-
-                                let replace: std::collections::HashSet<&str> = authored
-                                    .replace_channels
-                                    .iter()
-                                    .map(|s| s.as_str())
-                                    .collect();
-
-                                fn driver_from_ai(
-                                    driver: super::schema::AiAnimationDriverJsonV1,
-                                ) -> Option<PartAnimationDriver> {
-                                    match driver {
-                                        super::schema::AiAnimationDriverJsonV1::Always => {
-                                            Some(PartAnimationDriver::Always)
-                                        }
-                                        super::schema::AiAnimationDriverJsonV1::MovePhase => {
-                                            Some(PartAnimationDriver::MovePhase)
-                                        }
-                                        super::schema::AiAnimationDriverJsonV1::MoveDistance => {
-                                            Some(PartAnimationDriver::MoveDistance)
-                                        }
-                                        super::schema::AiAnimationDriverJsonV1::AttackTime => {
-                                            Some(PartAnimationDriver::AttackTime)
-                                        }
-                                        super::schema::AiAnimationDriverJsonV1::ActionTime => {
-                                            Some(PartAnimationDriver::ActionTime)
-                                        }
-                                        super::schema::AiAnimationDriverJsonV1::Unknown => None,
-                                    }
-                                }
-
-                                fn transform_from_delta(
-                                    delta: &super::schema::AiAnimationDeltaTransformJsonV1,
-                                ) -> Transform {
-                                    let translation = delta
-                                        .pos
-                                        .unwrap_or([0.0, 0.0, 0.0])
-                                        .map(|v| if v.is_finite() { v } else { 0.0 });
-                                    let translation = Vec3::new(
-                                        translation[0],
-                                        translation[1],
-                                        translation[2],
-                                    );
-
-                                    let scale = delta
-                                        .scale
-                                        .unwrap_or([1.0, 1.0, 1.0])
-                                        .map(|v| if v.is_finite() { v } else { 1.0 });
-                                    let scale = Vec3::new(scale[0], scale[1], scale[2]);
-
-                                    let rotation = match delta.rot_quat_xyzw {
-                                        Some([x, y, z, w]) => {
-                                            let q = Quat::from_xyzw(x, y, z, w);
-                                            if q.is_finite() {
-                                                q.normalize()
-                                            } else {
-                                                Quat::IDENTITY
-                                            }
-                                        }
-                                        _ => Quat::IDENTITY,
-                                    };
-
-                                    Transform {
-                                        translation,
-                                        rotation,
-                                        scale,
-                                    }
-                                }
-
-                                for edge in authored.edges.iter() {
-                                    let name = edge.component.trim();
-                                    if name.is_empty() {
-                                        continue;
-                                    }
-                                    let Some(&component_idx) = name_to_idx.get(name) else {
-                                        issues.push(format!("Unknown component: {name}"));
-                                        continue;
-                                    };
-                                    if job.planned_components[component_idx].attach_to.is_none() {
-                                        issues.push(format!(
-                                            "Component {name} is the root (no attach_to); cannot author edge motion"
-                                        ));
-                                        continue;
-                                    }
-
-                                    let mut replacement_slots: Vec<PartAnimationSlot> = Vec::new();
-                                    let mut channels_seen: std::collections::HashSet<&str> =
-                                        std::collections::HashSet::new();
-                                    for slot in edge.slots.iter() {
-                                        let channel = slot.channel.trim();
-                                        if channel.is_empty() {
-                                            continue;
-                                        }
-                                        if channel != "attack"
-                                            && !channels_seen.insert(channel)
-                                        {
-                                            issues.push(format!(
-                                                "Duplicate channel `{channel}` for component `{name}` (only attack may have multiple variants)"
-                                            ));
-                                            continue;
-                                        }
-
-                                        let Some(driver) = driver_from_ai(slot.driver) else {
-                                            issues.push(format!(
-                                                "Unknown driver for component `{name}` channel `{channel}`"
-                                            ));
-                                            continue;
-                                        };
-
-                                        let speed_scale = slot.speed_scale.abs().max(1e-3);
-                                        let time_offset_units = slot.time_offset_units;
-
-                                        let clip = match &slot.clip {
-                                            super::schema::AiAnimationClipJsonV1::Loop {
-                                                duration_units,
-                                                keyframes,
-                                            } => PartAnimationDef::Loop {
-                                                duration_secs: duration_units.abs().max(1e-3),
-                                                keyframes: keyframes
-                                                    .iter()
-                                                    .map(|kf| PartAnimationKeyframeDef {
-                                                        time_secs: kf.t_units,
-                                                        delta: transform_from_delta(&kf.delta),
-                                                    })
-                                                    .collect(),
-                                            },
-                                            super::schema::AiAnimationClipJsonV1::Once {
-                                                duration_units,
-                                                keyframes,
-                                            } => PartAnimationDef::Once {
-                                                duration_secs: duration_units.abs().max(1e-3),
-                                                keyframes: keyframes
-                                                    .iter()
-                                                    .map(|kf| PartAnimationKeyframeDef {
-                                                        time_secs: kf.t_units,
-                                                        delta: transform_from_delta(&kf.delta),
-                                                    })
-                                                    .collect(),
-                                            },
-                                            super::schema::AiAnimationClipJsonV1::PingPong {
-                                                duration_units,
-                                                keyframes,
-                                            } => PartAnimationDef::PingPong {
-                                                duration_secs: duration_units.abs().max(1e-3),
-                                                keyframes: keyframes
-                                                    .iter()
-                                                    .map(|kf| PartAnimationKeyframeDef {
-                                                        time_secs: kf.t_units,
-                                                        delta: transform_from_delta(&kf.delta),
-                                                    })
-                                                    .collect(),
-                                            },
-                                            super::schema::AiAnimationClipJsonV1::Spin {
-                                                axis,
-                                                radians_per_unit,
-                                                axis_space,
-                                            } => PartAnimationDef::Spin {
-                                                axis: Vec3::new(axis[0], axis[1], axis[2]),
-                                                radians_per_unit: *radians_per_unit,
-                                                axis_space: axis_space.to_space(),
-                                            },
-                                        };
-
-                                        replacement_slots.push(PartAnimationSlot {
-                                            channel: channel.to_string().into(),
-                                            spec: PartAnimationSpec {
-                                                driver,
-                                                speed_scale,
-                                                time_offset_units,
-                                                basis: Transform::IDENTITY,
-                                                clip,
-                                            },
-                                        });
-                                    }
-
-	                                    if let Some(att) =
-	                                        job.planned_components[component_idx].attach_to.as_mut()
-	                                    {
-	                                        att.animations.retain(|slot| {
-	                                            !replace.contains(slot.channel.as_ref())
-	                                        });
-	                                        att.animations.extend(replacement_slots);
-	                                        super::attachment_motion_basis::normalize_attachment_motion(
-	                                            &mut att.fallback_basis,
-	                                            &mut att.animations,
-	                                        );
-	                                    }
-	                                }
-
-                                if issues.is_empty() {
-                                    let movable = draft
-                                        .root_def()
-                                        .and_then(|def| def.mobility.as_ref())
-                                        .is_some();
-                                    if movable && expected_channel.as_str() == "move" {
-                                        let has_move = job.planned_components.iter().any(|c| {
-                                            c.attach_to.as_ref().is_some_and(|att| {
-                                                att.animations
-                                                    .iter()
-                                                    .any(|slot| slot.channel.as_ref() == "move")
-                                            })
-                                        });
-                                        if !has_move {
-                                            issues.push("decision=author_clips must produce at least one `move` animation slot for movable drafts.".to_string());
-                                        }
-                                    }
-                                    if movable && expected_channel.as_str() == "action" {
-                                        let has_action = job.planned_components.iter().any(|c| {
-                                            c.attach_to.as_ref().is_some_and(|att| {
-                                                att.animations.iter().any(|slot| {
-                                                    slot.channel.as_ref() == "action"
-                                                })
-                                            })
-                                        });
-                                        if !has_action {
-                                            issues.push("decision=author_clips must produce at least one `action` animation slot for movable drafts.".to_string());
-                                        }
-                                    }
-                                }
-                            }
-
-                            if !issues.is_empty() {
-                                issues.sort();
-                                issues.dedup();
-                                Gen3dToolResultJsonV1::err(
-                                    call.call_id,
-                                    call.tool_id,
-                                    format!(
-                                        "motion-authoring validation failed:\n- {}",
-                                        issues.join("\n- ")
-                                    ),
-                                )
-                            } else {
+                            match super::agent_motion_batch::apply_motion_authoring_for_channel(
+                                workshop,
+                                job,
+                                draft,
+                                &authored,
+                                &expected_channel,
+                            ) {
+                                Ok(summary) => {
                                 if let Some(dir) = job.step_dir.as_deref() {
                                     write_gen3d_json_artifact(
                                         Some(dir),
@@ -3224,28 +2911,6 @@ pub(super) fn poll_agent_tool(
                                             .unwrap_or(serde_json::Value::Null),
                                     );
                                 }
-
-                                if matches!(
-                                    authored.decision,
-                                    super::schema::AiMotionAuthoringDecisionJsonV1::AuthorClips
-                                ) {
-                                    if let Err(err) = super::convert::sync_attachment_tree_to_defs(
-                                        &job.planned_components,
-                                        draft,
-                                    ) {
-                                        return fail_job(
-                                            workshop,
-                                            job,
-                                            format!("Failed to apply motion-authoring: {err}"),
-                                        );
-                                    }
-                                    write_gen3d_assembly_snapshot(
-                                        job.step_dir.as_deref(),
-                                        &job.planned_components,
-                                    );
-                                }
-
-                                job.motion_authoring = Some(authored.clone());
                                 job.agent.pending_llm_repair_attempt = 0;
 
                                 Gen3dToolResultJsonV1::ok(
@@ -3259,9 +2924,15 @@ pub(super) fn poll_agent_tool(
                                             super::schema::AiMotionAuthoringDecisionJsonV1::RegenGeometryRequired => "regen_geometry_required",
                                             _ => "unknown",
                                         },
-                                        "edges": authored.edges.len(),
+                                        "targets": summary.targets,
                                     }),
                                 )
+                            }
+                                Err(err) => Gen3dToolResultJsonV1::err(
+                                    call.call_id,
+                                    call.tool_id,
+                                    err,
+                                ),
                             }
                         }
                         Err(err) => match (job.ai.clone(), job.step_dir.clone()) {
@@ -4044,6 +3715,7 @@ mod tests {
                         transform: Transform::IDENTITY,
                     }],
                     contacts: Vec::new(),
+                    articulation_nodes: Vec::new(),
                     root_animations: Vec::new(),
                     attach_to: if idx == 0 {
                         None

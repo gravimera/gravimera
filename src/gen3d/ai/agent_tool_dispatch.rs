@@ -8792,6 +8792,7 @@ mod tests {
             actual_size: Some(Vec3::ONE),
             anchors: Vec::new(),
             contacts: Vec::new(),
+            articulation_nodes: Vec::new(),
             root_animations: Vec::new(),
             attach_to: None,
         }];
@@ -8869,6 +8870,7 @@ mod tests {
                     transform: Transform::IDENTITY,
                 }],
                 contacts: Vec::new(),
+                articulation_nodes: Vec::new(),
                 root_animations: Vec::new(),
                 attach_to: None,
             },
@@ -8883,6 +8885,7 @@ mod tests {
                 actual_size: Some(Vec3::ONE),
                 anchors: vec![],
                 contacts: Vec::new(),
+                articulation_nodes: Vec::new(),
                 root_animations: Vec::new(),
                 attach_to: Some(Gen3dPlannedAttachment {
                     parent: "root".into(),
@@ -8952,6 +8955,7 @@ mod tests {
                     transform: Transform::from_translation(Vec3::new(0.0, 1.0, 0.0)),
                 }],
                 contacts: Vec::new(),
+                articulation_nodes: Vec::new(),
                 root_animations: Vec::new(),
                 attach_to: None,
             },
@@ -8969,6 +8973,7 @@ mod tests {
                     transform: Transform::from_translation(Vec3::new(0.0, 1.0, 0.0)),
                 }],
                 contacts: Vec::new(),
+                articulation_nodes: Vec::new(),
                 root_animations: Vec::new(),
                 attach_to: Some(super::super::job::Gen3dPlannedAttachment {
                     parent: "root".into(),
@@ -8985,6 +8990,7 @@ mod tests {
                     }),
                     animations: vec![PartAnimationSlot {
                         channel: "move".into(),
+                        family: crate::object::registry::PartAnimationFamily::Base,
                         spec: PartAnimationSpec {
                             driver: PartAnimationDriver::MovePhase,
                             speed_scale: 1.0,
@@ -9120,6 +9126,7 @@ mod tests {
             actual_size: Some(Vec3::ONE),
             anchors: Vec::new(),
             contacts: Vec::new(),
+            articulation_nodes: Vec::new(),
             root_animations: Vec::new(),
             attach_to: None,
         }];

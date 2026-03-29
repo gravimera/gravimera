@@ -547,6 +547,7 @@ mod tests {
                 transform: Transform::IDENTITY,
             }],
             contacts: Vec::new(),
+            articulation_nodes: Vec::new(),
             root_animations: Vec::new(),
             attach_to: None,
         }

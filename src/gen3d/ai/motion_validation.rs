@@ -2,8 +2,8 @@ use bevy::prelude::*;
 use uuid::Uuid;
 
 use crate::object::registry::{
-    builtin_object_id, PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef,
-    PartAnimationSlot, PartAnimationSpinAxisSpace,
+    builtin_object_id, PartAnimationDef, PartAnimationDriver, PartAnimationFamily,
+    PartAnimationKeyframeDef, PartAnimationSlot, PartAnimationSpinAxisSpace,
 };
 
 use super::schema::{AiContactKindJson, AiJointKindJson};
@@ -1100,7 +1100,9 @@ fn component_id_uuid_for_name(name: &str) -> String {
 fn find_move_slot(
     att: &Gen3dPlannedAttachment,
 ) -> Option<&crate::object::registry::PartAnimationSlot> {
-    att.animations.iter().find(|s| s.channel.as_ref() == "move")
+    att.animations
+        .iter()
+        .find(|s| s.family == PartAnimationFamily::Base && s.channel.as_ref() == "move")
 }
 
 fn sample_move_delta(
@@ -2014,9 +2016,9 @@ fn validate_attack_self_intersection(
 
     let has_attack = components.iter().any(|c| {
         c.attach_to.as_ref().is_some_and(|att| {
-            att.animations
-                .iter()
-                .any(|slot| slot.channel.as_ref() == "attack")
+            att.animations.iter().any(|slot| {
+                slot.family == PartAnimationFamily::Base && slot.channel.as_ref() == "attack"
+            })
         })
     });
     if !has_attack {
@@ -2042,9 +2044,9 @@ fn validate_attack_self_intersection(
         .iter()
         .map(|c| {
             c.attach_to.as_ref().is_some_and(|att| {
-                att.animations
-                    .iter()
-                    .any(|slot| slot.channel.as_ref() == "attack")
+                att.animations.iter().any(|slot| {
+                    slot.family == PartAnimationFamily::Base && slot.channel.as_ref() == "attack"
+                })
             })
         })
         .collect();
@@ -2160,10 +2162,11 @@ fn validate_attack_self_intersection(
 
         idle_world = compute_world_transforms_for_channels(
             components, &children, root_idx, t_secs, 0.0, 0.0, 0.0, 0.0, false, false, false, true,
+            None,
         );
         attack_world = compute_world_transforms_for_channels(
             components, &children, root_idx, t_secs, 0.0, 0.0, t_secs, 0.0, true, false, false,
-            false,
+            false, None,
         );
 
         for idx in 0..n {
@@ -2301,6 +2304,7 @@ fn compute_world_transforms_for_channels(
     acting: bool,
     moving: bool,
     idle: bool,
+    overlay_channel: Option<&str>,
 ) -> Vec<Transform> {
     let mut world: Vec<Transform> = vec![Transform::IDENTITY; components.len()];
     let mut visiting = vec![false; components.len()];
@@ -2308,6 +2312,16 @@ fn compute_world_transforms_for_channels(
     world[root_idx] = Transform::IDENTITY;
 
     fn choose_slot<'a>(
+        att: &'a Gen3dPlannedAttachment,
+        family: PartAnimationFamily,
+        channel: &str,
+    ) -> Option<&'a PartAnimationSlot> {
+        att.animations
+            .iter()
+            .find(|slot| slot.family == family && slot.channel.as_ref() == channel)
+    }
+
+    fn choose_base_slot<'a>(
         att: &'a Gen3dPlannedAttachment,
         attacking_primary: bool,
         acting: bool,
@@ -2326,11 +2340,7 @@ fn compute_world_transforms_for_channels(
             if !active {
                 continue;
             }
-            if let Some(slot) = att
-                .animations
-                .iter()
-                .find(|slot| slot.channel.as_ref() == channel)
-            {
+            if let Some(slot) = choose_slot(att, PartAnimationFamily::Base, channel) {
                 return Some(slot);
             }
         }
@@ -2374,6 +2384,7 @@ fn compute_world_transforms_for_channels(
         acting: bool,
         moving: bool,
         idle: bool,
+        overlay_channel: Option<&str>,
         world: &mut [Transform],
         visiting: &mut [bool],
         visited: &mut [bool],
@@ -2394,20 +2405,22 @@ fn compute_world_transforms_for_channels(
             let child_anchor =
                 anchor_transform_from_component(&components[child_idx], att.child_anchor.as_str());
 
-            let (clip, mut basis, delta) =
-                if let Some(slot) = choose_slot(att, attacking_primary, acting, moving, idle) {
-                    let delta = sample_slot_delta_runtime(
-                        slot,
-                        wall_time_secs,
-                        move_phase_m,
-                        move_distance_m,
-                        attack_elapsed_secs,
-                        action_elapsed_secs,
-                    );
-                    (Some(&slot.spec.clip), slot.spec.basis, delta)
-                } else {
-                    (None, att.fallback_basis, Transform::IDENTITY)
-                };
+            let base_slot = choose_base_slot(att, attacking_primary, acting, moving, idle);
+            let overlay_slot = overlay_channel
+                .and_then(|channel| choose_slot(att, PartAnimationFamily::Overlay, channel));
+            let (base_clip, mut basis, base_delta) = if let Some(slot) = base_slot {
+                let delta = sample_slot_delta_runtime(
+                    slot,
+                    wall_time_secs,
+                    move_phase_m,
+                    move_distance_m,
+                    attack_elapsed_secs,
+                    action_elapsed_secs,
+                );
+                (Some(&slot.spec.clip), slot.spec.basis, delta)
+            } else {
+                (None, att.fallback_basis, Transform::IDENTITY)
+            };
             if !basis.translation.is_finite()
                 || !basis.rotation.is_finite()
                 || !basis.scale.is_finite()
@@ -2415,17 +2428,38 @@ fn compute_world_transforms_for_channels(
                 basis = Transform::IDENTITY;
             }
             let base_with_basis = mul_transform(&att.offset, &basis);
-            let animated_offset = match clip {
+            let mut animated_offset = match base_clip {
                 Some(PartAnimationDef::Spin {
                     axis_space: PartAnimationSpinAxisSpace::ChildLocal,
                     ..
                 }) => apply_child_local_delta_to_attachment_offset(
                     base_with_basis,
                     child_anchor,
-                    delta,
+                    base_delta,
                 ),
-                _ => mul_transform(&base_with_basis, &delta),
+                _ => mul_transform(&base_with_basis, &base_delta),
             };
+            if let Some(slot) = overlay_slot {
+                let overlay_delta = sample_slot_delta_runtime(
+                    slot,
+                    wall_time_secs,
+                    move_phase_m,
+                    move_distance_m,
+                    attack_elapsed_secs,
+                    action_elapsed_secs,
+                );
+                animated_offset = match &slot.spec.clip {
+                    PartAnimationDef::Spin {
+                        axis_space: PartAnimationSpinAxisSpace::ChildLocal,
+                        ..
+                    } => apply_child_local_delta_to_attachment_offset(
+                        animated_offset,
+                        child_anchor,
+                        overlay_delta,
+                    ),
+                    _ => mul_transform(&animated_offset, &overlay_delta),
+                };
+            }
 
             let inv_child = child_anchor.to_matrix().inverse();
             let composed = parent_world.to_matrix()
@@ -2448,6 +2482,7 @@ fn compute_world_transforms_for_channels(
                 acting,
                 moving,
                 idle,
+                overlay_channel,
                 world,
                 visiting,
                 visited,
@@ -2471,6 +2506,7 @@ fn compute_world_transforms_for_channels(
         acting,
         moving,
         idle,
+        overlay_channel,
         &mut world,
         &mut visiting,
         &mut visited,
@@ -2620,6 +2656,7 @@ mod tests {
             actual_size: Some(Vec3::ONE),
             anchors,
             contacts: Vec::new(),
+            articulation_nodes: Vec::new(),
             root_animations: Vec::new(),
             attach_to: None,
         }
@@ -2678,6 +2715,7 @@ mod tests {
             joint: None,
             animations: vec![PartAnimationSlot {
                 channel: "move".into(),
+                family: PartAnimationFamily::Base,
                 spec: move_spec,
             }],
         });
@@ -2761,6 +2799,7 @@ mod tests {
             joint: None,
             animations: vec![PartAnimationSlot {
                 channel: "move".into(),
+                family: PartAnimationFamily::Base,
                 spec: move_spec,
             }],
         });
@@ -2809,6 +2848,7 @@ mod tests {
             joint: None,
             animations: vec![PartAnimationSlot {
                 channel: "move".into(),
+                family: PartAnimationFamily::Base,
                 spec: move_spec,
             }],
         });
@@ -3000,6 +3040,7 @@ mod tests {
             }),
             animations: vec![PartAnimationSlot {
                 channel: "move".into(),
+                family: PartAnimationFamily::Base,
                 spec: move_spec,
             }],
         });
@@ -3074,6 +3115,7 @@ mod tests {
             }),
             animations: vec![PartAnimationSlot {
                 channel: "idle".into(),
+                family: PartAnimationFamily::Base,
                 spec: idle_spec,
             }],
         });
@@ -3149,6 +3191,7 @@ mod tests {
             }),
             animations: vec![PartAnimationSlot {
                 channel: "idle".into(),
+                family: PartAnimationFamily::Base,
                 spec: idle_spec,
             }],
         });
@@ -3217,6 +3260,7 @@ mod tests {
             }),
             animations: vec![PartAnimationSlot {
                 channel: "idle".into(),
+                family: PartAnimationFamily::Base,
                 spec: idle_spec,
             }],
         });
@@ -3286,6 +3330,7 @@ mod tests {
             joint: None,
             animations: vec![PartAnimationSlot {
                 channel: "move".into(),
+                family: PartAnimationFamily::Base,
                 spec: move_spec,
             }],
         });
@@ -3355,6 +3400,7 @@ mod tests {
             joint: None,
             animations: vec![PartAnimationSlot {
                 channel: "move".into(),
+                family: PartAnimationFamily::Base,
                 spec: move_spec,
             }],
         });
@@ -3403,6 +3449,7 @@ mod tests {
             joint: None,
             animations: vec![PartAnimationSlot {
                 channel: "move".into(),
+                family: PartAnimationFamily::Base,
                 spec: PartAnimationSpec {
                     driver: PartAnimationDriver::MoveDistance,
                     speed_scale: 1.0,
@@ -3484,6 +3531,7 @@ mod tests {
             joint: None,
             animations: vec![PartAnimationSlot {
                 channel: "attack".into(),
+                family: PartAnimationFamily::Base,
                 spec: attack_spec,
             }],
         });
@@ -3556,6 +3604,7 @@ mod tests {
             joint: None,
             animations: vec![PartAnimationSlot {
                 channel: "attack".into(),
+                family: PartAnimationFamily::Base,
                 spec: attack_spec,
             }],
         });
@@ -3580,6 +3629,86 @@ mod tests {
                 i.get("kind").and_then(|v| v.as_str()) == Some("attack_self_intersection")
             }),
             "expected no attack_self_intersection issues, got {issues:?}"
+        );
+    }
+
+    #[test]
+    fn layered_overlay_composes_after_base_in_validation_simulation() {
+        let root = stub_component("root", vec![anchor("mount", Vec3::ZERO)]);
+        let mut child = stub_component("child", vec![anchor("mount", Vec3::ZERO)]);
+        child.attach_to = Some(Gen3dPlannedAttachment {
+            parent: "root".into(),
+            parent_anchor: "mount".into(),
+            child_anchor: "mount".into(),
+            offset: Transform::IDENTITY,
+            fallback_basis: Transform::IDENTITY,
+            joint: None,
+            animations: vec![
+                PartAnimationSlot {
+                    channel: "idle".into(),
+                    family: PartAnimationFamily::Base,
+                    spec: PartAnimationSpec {
+                        driver: PartAnimationDriver::Always,
+                        speed_scale: 1.0,
+                        time_offset_units: 0.0,
+                        basis: Transform::IDENTITY,
+                        clip: PartAnimationDef::Loop {
+                            duration_secs: 1.0,
+                            keyframes: vec![PartAnimationKeyframeDef {
+                                time_secs: 0.0,
+                                delta: Transform::from_translation(Vec3::new(0.0, 1.0, 0.0)),
+                            }],
+                        },
+                    },
+                },
+                PartAnimationSlot {
+                    channel: "blink".into(),
+                    family: PartAnimationFamily::Overlay,
+                    spec: PartAnimationSpec {
+                        driver: PartAnimationDriver::Always,
+                        speed_scale: 1.0,
+                        time_offset_units: 0.0,
+                        basis: Transform::IDENTITY,
+                        clip: PartAnimationDef::Loop {
+                            duration_secs: 1.0,
+                            keyframes: vec![PartAnimationKeyframeDef {
+                                time_secs: 0.0,
+                                delta: Transform::from_rotation(Quat::from_rotation_z(0.5)),
+                            }],
+                        },
+                    },
+                },
+            ],
+        });
+
+        let components = vec![root, child];
+        let children = vec![vec![1usize], vec![]];
+        let world = compute_world_transforms_for_channels(
+            &components,
+            &children,
+            0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            false,
+            false,
+            false,
+            true,
+            Some("blink"),
+        );
+        let child_world = world[1];
+        assert!(
+            (child_world.translation.y - 1.0).abs() < 1e-4,
+            "expected base-family translation to remain active, got {:?}",
+            child_world.translation
+        );
+        let expected_rot = Quat::from_rotation_z(0.5);
+        assert!(
+            child_world.rotation.angle_between(expected_rot) < 1e-4,
+            "expected overlay-family rotation to compose after base, got {:?}",
+            child_world.rotation
         );
     }
 }

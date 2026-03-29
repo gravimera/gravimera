@@ -1,6 +1,7 @@
 use bevy::log::{debug, warn};
 use bevy::prelude::*;
 use std::sync::{Arc, Mutex};
+use uuid::Uuid;
 
 use crate::config::AppConfig;
 use crate::gen3d::agent::Gen3dToolResultJsonV1;
@@ -21,7 +22,136 @@ use super::{
 #[derive(Clone, Debug)]
 pub(super) struct ApplyMotionAuthoringSummary {
     pub(super) decision: &'static str,
-    pub(super) edges: usize,
+    pub(super) targets: usize,
+}
+
+fn component_object_id_for_name(name: &str) -> u128 {
+    crate::object::registry::builtin_object_id(&format!("gravimera/gen3d/component/{name}"))
+}
+
+fn driver_from_ai(
+    driver: super::schema::AiAnimationDriverJsonV1,
+) -> Option<crate::object::registry::PartAnimationDriver> {
+    use crate::object::registry::PartAnimationDriver;
+    match driver {
+        super::schema::AiAnimationDriverJsonV1::Always => Some(PartAnimationDriver::Always),
+        super::schema::AiAnimationDriverJsonV1::MovePhase => Some(PartAnimationDriver::MovePhase),
+        super::schema::AiAnimationDriverJsonV1::MoveDistance => {
+            Some(PartAnimationDriver::MoveDistance)
+        }
+        super::schema::AiAnimationDriverJsonV1::AttackTime => Some(PartAnimationDriver::AttackTime),
+        super::schema::AiAnimationDriverJsonV1::ActionTime => Some(PartAnimationDriver::ActionTime),
+        super::schema::AiAnimationDriverJsonV1::Unknown => None,
+    }
+}
+
+fn family_from_ai(
+    family: super::schema::AiAnimationFamilyJsonV1,
+) -> Option<crate::object::registry::PartAnimationFamily> {
+    use crate::object::registry::PartAnimationFamily;
+    match family {
+        super::schema::AiAnimationFamilyJsonV1::Base => Some(PartAnimationFamily::Base),
+        super::schema::AiAnimationFamilyJsonV1::Overlay => Some(PartAnimationFamily::Overlay),
+        super::schema::AiAnimationFamilyJsonV1::Unknown => None,
+    }
+}
+
+fn transform_from_delta(delta: &super::schema::AiAnimationDeltaTransformJsonV1) -> Transform {
+    let translation = delta
+        .pos
+        .unwrap_or([0.0, 0.0, 0.0])
+        .map(|v| if v.is_finite() { v } else { 0.0 });
+    let translation = Vec3::new(translation[0], translation[1], translation[2]);
+
+    let scale = delta
+        .scale
+        .unwrap_or([1.0, 1.0, 1.0])
+        .map(|v| if v.is_finite() { v } else { 1.0 });
+    let scale = Vec3::new(scale[0], scale[1], scale[2]);
+
+    let rotation = match delta.rot_quat_xyzw {
+        Some([x, y, z, w]) => {
+            let q = Quat::from_xyzw(x, y, z, w);
+            if q.is_finite() {
+                q.normalize()
+            } else {
+                Quat::IDENTITY
+            }
+        }
+        _ => Quat::IDENTITY,
+    };
+
+    Transform {
+        translation,
+        rotation,
+        scale,
+    }
+}
+
+fn part_delta_from_node_delta(
+    part_base: Transform,
+    node_world: Transform,
+    delta: Transform,
+) -> Transform {
+    let part_inv = part_base.to_matrix().inverse();
+    let composed = part_inv
+        * node_world.to_matrix()
+        * delta.to_matrix()
+        * node_world.to_matrix().inverse()
+        * part_base.to_matrix();
+    crate::geometry::mat4_to_transform_allow_degenerate_scale(composed)
+        .unwrap_or(Transform::IDENTITY)
+}
+
+fn articulation_node_world_transforms(
+    component: &super::Gen3dPlannedComponent,
+) -> Result<std::collections::HashMap<String, Transform>, String> {
+    let mut by_name: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (idx, node) in component.articulation_nodes.iter().enumerate() {
+        by_name.insert(node.node_id.as_str(), idx);
+    }
+    let mut out: std::collections::HashMap<String, Transform> = std::collections::HashMap::new();
+    let mut visiting = vec![false; component.articulation_nodes.len()];
+
+    fn dfs(
+        idx: usize,
+        component: &super::Gen3dPlannedComponent,
+        by_name: &std::collections::HashMap<&str, usize>,
+        out: &mut std::collections::HashMap<String, Transform>,
+        visiting: &mut [bool],
+    ) -> Result<Transform, String> {
+        let node = &component.articulation_nodes[idx];
+        if let Some(existing) = out.get(node.node_id.as_str()) {
+            return Ok(*existing);
+        }
+        if visiting[idx] {
+            return Err(format!(
+                "Articulation node cycle detected on component `{}` node `{}`.",
+                component.name, node.node_id
+            ));
+        }
+        visiting[idx] = true;
+        let resolved = if let Some(parent) = node.parent_node_id.as_deref() {
+            let Some(&parent_idx) = by_name.get(parent) else {
+                return Err(format!(
+                    "Articulation node `{}` on component `{}` references missing parent `{}`.",
+                    node.node_id, component.name, parent
+                ));
+            };
+            let parent_world = dfs(parent_idx, component, by_name, out, visiting)?;
+            parent_world.mul_transform(node.transform)
+        } else {
+            node.transform
+        };
+        visiting[idx] = false;
+        out.insert(node.node_id.clone(), resolved);
+        Ok(resolved)
+    }
+
+    for idx in 0..component.articulation_nodes.len() {
+        let _ = dfs(idx, component, &by_name, &mut out, &mut visiting)?;
+    }
+    Ok(out)
 }
 
 pub(super) fn apply_motion_authoring_for_channel(
@@ -32,7 +162,7 @@ pub(super) fn apply_motion_authoring_for_channel(
     expected_channel: &str,
 ) -> Result<ApplyMotionAuthoringSummary, String> {
     use crate::object::registry::{
-        PartAnimationDef, PartAnimationDriver, PartAnimationKeyframeDef, PartAnimationSlot,
+        PartAnimationDef, PartAnimationFamily, PartAnimationKeyframeDef, PartAnimationSlot,
         PartAnimationSpec,
     };
 
@@ -67,9 +197,9 @@ pub(super) fn apply_motion_authoring_for_channel(
 
     match authored.decision {
         super::schema::AiMotionAuthoringDecisionJsonV1::RegenGeometryRequired => {
-            if !authored.replace_channels.is_empty() || !authored.edges.is_empty() {
+            if !authored.replace_channels.is_empty() || !authored.targets.is_empty() {
                 issues.push(
-                    "decision=regen_geometry_required must set replace_channels=[] and edges=[] (do not author clips)."
+                    "decision=regen_geometry_required must set replace_channels=[] and targets=[] (do not author clips)."
                         .to_string(),
                 );
             }
@@ -87,15 +217,15 @@ pub(super) fn apply_motion_authoring_for_channel(
                     authored.replace_channels
                 ));
             }
-            if authored.edges.is_empty() {
-                issues.push("edges must be non-empty when decision=author_clips".to_string());
+            if authored.targets.is_empty() {
+                issues.push("targets must be non-empty when decision=author_clips".to_string());
             }
-            for edge in authored.edges.iter() {
-                for slot in edge.slots.iter() {
+            for target in authored.targets.iter() {
+                for slot in target.slots.iter() {
                     if slot.channel.as_str() != expected_channel {
                         issues.push(format!(
-                            "slot.channel must be {expected_channel:?} for component `{}` (got `{}`)",
-                            edge.component.trim(),
+                            "slot.channel must be {expected_channel:?} for target `{}` (got `{}`)",
+                            target.component.trim(),
                             slot.channel.as_str()
                         ));
                     }
@@ -125,7 +255,7 @@ pub(super) fn apply_motion_authoring_for_channel(
     ) {
         return Ok(ApplyMotionAuthoringSummary {
             decision: "regen_geometry_required",
-            edges: 0,
+            targets: 0,
         });
     }
 
@@ -135,60 +265,6 @@ pub(super) fn apply_motion_authoring_for_channel(
         name_to_idx.insert(c.name.clone(), idx);
     }
 
-    fn driver_from_ai(
-        driver: super::schema::AiAnimationDriverJsonV1,
-    ) -> Option<PartAnimationDriver> {
-        match driver {
-            super::schema::AiAnimationDriverJsonV1::Always => Some(PartAnimationDriver::Always),
-            super::schema::AiAnimationDriverJsonV1::MovePhase => {
-                Some(PartAnimationDriver::MovePhase)
-            }
-            super::schema::AiAnimationDriverJsonV1::MoveDistance => {
-                Some(PartAnimationDriver::MoveDistance)
-            }
-            super::schema::AiAnimationDriverJsonV1::AttackTime => {
-                Some(PartAnimationDriver::AttackTime)
-            }
-            super::schema::AiAnimationDriverJsonV1::ActionTime => {
-                Some(PartAnimationDriver::ActionTime)
-            }
-            super::schema::AiAnimationDriverJsonV1::Unknown => None,
-        }
-    }
-
-    fn transform_from_delta(delta: &super::schema::AiAnimationDeltaTransformJsonV1) -> Transform {
-        let translation =
-            delta
-                .pos
-                .unwrap_or([0.0, 0.0, 0.0])
-                .map(|v| if v.is_finite() { v } else { 0.0 });
-        let translation = Vec3::new(translation[0], translation[1], translation[2]);
-
-        let scale = delta
-            .scale
-            .unwrap_or([1.0, 1.0, 1.0])
-            .map(|v| if v.is_finite() { v } else { 1.0 });
-        let scale = Vec3::new(scale[0], scale[1], scale[2]);
-
-        let rotation = match delta.rot_quat_xyzw {
-            Some([x, y, z, w]) => {
-                let q = Quat::from_xyzw(x, y, z, w);
-                if q.is_finite() {
-                    q.normalize()
-                } else {
-                    Quat::IDENTITY
-                }
-            }
-            _ => Quat::IDENTITY,
-        };
-
-        Transform {
-            translation,
-            rotation,
-            scale,
-        }
-    }
-
     let replace: std::collections::HashSet<&str> = authored
         .replace_channels
         .iter()
@@ -196,39 +272,51 @@ pub(super) fn apply_motion_authoring_for_channel(
         .collect();
     let mut issues: Vec<String> = Vec::new();
 
-    for edge in authored.edges.iter() {
-        let name = edge.component.trim();
-        if name.is_empty() {
-            continue;
-        }
-        let Some(&component_idx) = name_to_idx.get(name) else {
-            issues.push(format!("Unknown component: {name}"));
-            continue;
-        };
-        if job.planned_components[component_idx].attach_to.is_none() {
-            issues.push(format!(
-                "Component {name} is the root (no attach_to); cannot author edge motion"
-            ));
-            continue;
-        }
+    let root_idx = job
+        .planned_components
+        .iter()
+        .position(|c| c.attach_to.is_none())
+        .ok_or_else(|| {
+            "Internal error: missing root component for motion authoring.".to_string()
+        })?;
 
+    for target in authored.targets.iter() {
         let mut replacement_slots: Vec<PartAnimationSlot> = Vec::new();
-        let mut channels_seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
-        for slot in edge.slots.iter() {
+        let mut channels_seen: std::collections::HashSet<(&str, PartAnimationFamily)> =
+            std::collections::HashSet::new();
+        for slot in target.slots.iter() {
             let channel = slot.channel.trim();
             if channel.is_empty() {
                 continue;
             }
-            if channel != "attack" && !channels_seen.insert(channel) {
+            let Some(family) = family_from_ai(slot.family) else {
                 issues.push(format!(
-                    "Duplicate channel `{channel}` for component `{name}` (only attack may have multiple variants)"
+                    "Unknown family for target kind {:?} component `{}` channel `{channel}`",
+                    target.kind, target.component
+                ));
+                continue;
+            };
+            if target.kind != super::schema::AiMotionTargetKindJsonV1::ArticulationNode
+                && family != PartAnimationFamily::Base
+            {
+                issues.push(format!(
+                    "Only articulation_node targets may use family=overlay (target component=`{}` channel=`{channel}`)",
+                    target.component
+                ));
+                continue;
+            }
+            if channel != "attack" && !channels_seen.insert((channel, family)) {
+                issues.push(format!(
+                    "Duplicate channel/family `{channel}`/{:?} for target component `{}`",
+                    family, target.component
                 ));
                 continue;
             }
 
             let Some(driver) = driver_from_ai(slot.driver) else {
                 issues.push(format!(
-                    "Unknown driver for component `{name}` channel `{channel}`"
+                    "Unknown driver for target component `{}` channel `{channel}`",
+                    target.component
                 ));
                 continue;
             };
@@ -289,6 +377,7 @@ pub(super) fn apply_motion_authoring_for_channel(
 
             replacement_slots.push(PartAnimationSlot {
                 channel: channel.to_string().into(),
+                family,
                 spec: PartAnimationSpec {
                     driver,
                     speed_scale,
@@ -299,14 +388,168 @@ pub(super) fn apply_motion_authoring_for_channel(
             });
         }
 
-        if let Some(att) = job.planned_components[component_idx].attach_to.as_mut() {
-            att.animations
-                .retain(|slot| !replace.contains(slot.channel.as_ref()));
-            att.animations.extend(replacement_slots);
-            super::attachment_motion_basis::normalize_attachment_motion(
-                &mut att.fallback_basis,
-                &mut att.animations,
-            );
+        match target.kind {
+            super::schema::AiMotionTargetKindJsonV1::RootEdge => {
+                let root = &mut job.planned_components[root_idx];
+                root.root_animations
+                    .retain(|slot| !replace.contains(slot.channel.as_ref()));
+                root.root_animations.extend(replacement_slots);
+            }
+            super::schema::AiMotionTargetKindJsonV1::AttachmentEdge => {
+                let name = target.component.trim();
+                let Some(&component_idx) = name_to_idx.get(name) else {
+                    issues.push(format!("Unknown component: {name}"));
+                    continue;
+                };
+                let Some(att) = job.planned_components[component_idx].attach_to.as_mut() else {
+                    issues.push(format!(
+                        "Component {name} is the root (no attach_to); cannot author attachment edge motion"
+                    ));
+                    continue;
+                };
+                att.animations
+                    .retain(|slot| !replace.contains(slot.channel.as_ref()));
+                att.animations.extend(replacement_slots);
+                super::attachment_motion_basis::normalize_attachment_motion(
+                    &mut att.fallback_basis,
+                    &mut att.animations,
+                );
+            }
+            super::schema::AiMotionTargetKindJsonV1::ArticulationNode => {
+                let component_name = target.component.trim();
+                let Some(&component_idx) = name_to_idx.get(component_name) else {
+                    issues.push(format!("Unknown component: {component_name}"));
+                    continue;
+                };
+                let Some(node_id) = target.node_id.as_deref() else {
+                    issues.push(format!(
+                        "Articulation target on component `{component_name}` is missing node_id"
+                    ));
+                    continue;
+                };
+                let component = &job.planned_components[component_idx];
+                let Some(node) = component
+                    .articulation_nodes
+                    .iter()
+                    .find(|node| node.node_id == node_id)
+                else {
+                    issues.push(format!(
+                        "Unknown articulation node `{node_id}` on component `{component_name}`"
+                    ));
+                    continue;
+                };
+                let node_worlds = match articulation_node_world_transforms(component) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        issues.push(err);
+                        continue;
+                    }
+                };
+                let Some(node_world) = node_worlds.get(node_id).copied() else {
+                    issues.push(format!(
+                        "Failed to resolve articulation node `{node_id}` on component `{component_name}`"
+                    ));
+                    continue;
+                };
+
+                let object_id = component_object_id_for_name(component_name);
+                let Some(component_def) =
+                    draft.defs.iter_mut().find(|def| def.object_id == object_id)
+                else {
+                    issues.push(format!(
+                        "Missing component def for articulation target `{component_name}`"
+                    ));
+                    continue;
+                };
+
+                for &part_id in node.bound_part_ids.iter() {
+                    let Some(part) = component_def
+                        .parts
+                        .iter_mut()
+                        .find(|part| part.part_id == Some(part_id))
+                    else {
+                        issues.push(format!(
+                            "Articulation node `{node_id}` on component `{component_name}` references missing part_id {}",
+                            Uuid::from_u128(part_id)
+                        ));
+                        continue;
+                    };
+                    let part_base = part.transform;
+                    let mut part_slots: Vec<PartAnimationSlot> = Vec::new();
+                    for slot in replacement_slots.iter() {
+                        let clip = match &slot.spec.clip {
+                            PartAnimationDef::Loop {
+                                duration_secs,
+                                keyframes,
+                            } => PartAnimationDef::Loop {
+                                duration_secs: *duration_secs,
+                                keyframes: keyframes
+                                    .iter()
+                                    .map(|kf| PartAnimationKeyframeDef {
+                                        time_secs: kf.time_secs,
+                                        delta: part_delta_from_node_delta(
+                                            part_base, node_world, kf.delta,
+                                        ),
+                                    })
+                                    .collect(),
+                            },
+                            PartAnimationDef::Once {
+                                duration_secs,
+                                keyframes,
+                            } => PartAnimationDef::Once {
+                                duration_secs: *duration_secs,
+                                keyframes: keyframes
+                                    .iter()
+                                    .map(|kf| PartAnimationKeyframeDef {
+                                        time_secs: kf.time_secs,
+                                        delta: part_delta_from_node_delta(
+                                            part_base, node_world, kf.delta,
+                                        ),
+                                    })
+                                    .collect(),
+                            },
+                            PartAnimationDef::PingPong {
+                                duration_secs,
+                                keyframes,
+                            } => PartAnimationDef::PingPong {
+                                duration_secs: *duration_secs,
+                                keyframes: keyframes
+                                    .iter()
+                                    .map(|kf| PartAnimationKeyframeDef {
+                                        time_secs: kf.time_secs,
+                                        delta: part_delta_from_node_delta(
+                                            part_base, node_world, kf.delta,
+                                        ),
+                                    })
+                                    .collect(),
+                            },
+                            PartAnimationDef::Spin { .. } => {
+                                issues.push(format!(
+                                    "Articulation node `{node_id}` on component `{component_name}` does not support clip.kind=spin yet; use loop/once/ping_pong."
+                                ));
+                                continue;
+                            }
+                        };
+                        part_slots.push(PartAnimationSlot {
+                            channel: slot.channel.clone(),
+                            family: slot.family,
+                            spec: PartAnimationSpec {
+                                driver: slot.spec.driver,
+                                speed_scale: slot.spec.speed_scale,
+                                time_offset_units: slot.spec.time_offset_units,
+                                basis: Transform::IDENTITY,
+                                clip,
+                            },
+                        });
+                    }
+                    part.animations
+                        .retain(|slot| !replace.contains(slot.channel.as_ref()));
+                    part.animations.extend(part_slots);
+                }
+            }
+            super::schema::AiMotionTargetKindJsonV1::Unknown => {
+                issues.push("Unknown motion target kind".to_string());
+            }
         }
     }
 
@@ -368,7 +611,7 @@ pub(super) fn apply_motion_authoring_for_channel(
 
     Ok(ApplyMotionAuthoringSummary {
         decision: "author_clips",
-        edges: authored.edges.len(),
+        targets: authored.targets.len(),
     })
 }
 
@@ -530,7 +773,7 @@ pub(super) fn poll_agent_motion_batch(
                             "ok": true,
                             "channel": channel,
                             "decision": summary.decision,
-                            "edges": summary.edges,
+                            "targets": summary.targets,
                         }),
                     );
                 }

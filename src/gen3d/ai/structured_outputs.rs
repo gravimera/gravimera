@@ -111,6 +111,27 @@ fn schema_anchor() -> serde_json::Value {
     ])
 }
 
+fn schema_articulation_node() -> serde_json::Value {
+    schema_object(vec![
+        ("node_id", schema_string()),
+        ("parent_node_id", schema_nullable(schema_string())),
+        ("pos", schema_vec3()),
+        ("forward", schema_vec3()),
+        ("up", schema_vec3()),
+        ("bind_part_indices", schema_array_of(schema_integer())),
+    ])
+}
+
+fn schema_plan_articulation_node() -> serde_json::Value {
+    schema_object(vec![
+        ("node_id", schema_string()),
+        ("parent_node_id", schema_nullable(schema_string())),
+        ("pos", schema_vec3()),
+        ("forward", schema_vec3()),
+        ("up", schema_vec3()),
+    ])
+}
+
 fn schema_collider() -> serde_json::Value {
     let none = schema_object(vec![("kind", schema_enum(&["none"]))]);
     let circle = schema_object(vec![
@@ -253,6 +274,10 @@ fn schema_plan_component() -> serde_json::Value {
         ("size", schema_vec3()),
         ("anchors", schema_array_of(schema_anchor())),
         ("contacts", schema_array_of(schema_contact())),
+        (
+            "articulation_nodes",
+            schema_array_of(schema_plan_articulation_node()),
+        ),
         ("attach_to", schema_nullable(schema_plan_attachment())),
     ])
 }
@@ -321,9 +346,10 @@ fn schema_plan_op() -> serde_json::Value {
             "modeling_notes": schema_string(),
             "anchors": schema_array_of(schema_anchor()),
             "contacts": schema_array_of(schema_contact()),
+            "articulation_nodes": schema_array_of(schema_plan_articulation_node()),
             "attach_to": schema_nullable(schema_plan_attachment()),
         },
-        "required": ["kind", "name", "size", "purpose", "modeling_notes", "anchors", "contacts", "attach_to"],
+        "required": ["kind", "name", "size", "purpose", "modeling_notes", "anchors", "contacts", "articulation_nodes", "attach_to"],
     });
     let remove_component = json!({
         "type": "object",
@@ -481,6 +507,10 @@ fn schema_component_draft() -> serde_json::Value {
         ("version", schema_integer()),
         ("collider", schema_nullable(schema_collider())),
         ("anchors", schema_array_of(schema_anchor())),
+        (
+            "articulation_nodes",
+            schema_array_of(schema_articulation_node()),
+        ),
         ("parts", schema_array_of(schema_part())),
     ])
 }
@@ -755,6 +785,7 @@ fn schema_motion_authoring() -> serde_json::Value {
 
     let slot = schema_object(vec![
         ("channel", schema_string()),
+        ("family", schema_enum(&["base", "overlay"])),
         (
             "driver",
             schema_enum(&[
@@ -770,8 +801,13 @@ fn schema_motion_authoring() -> serde_json::Value {
         ("clip", clip),
     ]);
 
-    let edge = schema_object(vec![
+    let target = schema_object(vec![
+        (
+            "kind",
+            schema_enum(&["root_edge", "attachment_edge", "articulation_node"]),
+        ),
         ("component", schema_string()),
+        ("node_id", schema_nullable(schema_string())),
         ("slots", schema_array_of(slot)),
     ]);
 
@@ -784,7 +820,7 @@ fn schema_motion_authoring() -> serde_json::Value {
         ),
         ("reason", schema_string()),
         ("replace_channels", schema_array_of(schema_string())),
-        ("edges", schema_array_of(edge)),
+        ("targets", schema_array_of(target)),
         ("notes_text", schema_nullable_string_or_string_array()),
     ])
 }

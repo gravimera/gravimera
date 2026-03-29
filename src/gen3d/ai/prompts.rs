@@ -642,6 +642,34 @@ pub(super) fn build_gen3d_component_user_text(
         ));
     }
 
+    if !component.articulation_nodes.is_empty() {
+        out.push_str(
+            "\nRequired articulation nodes for this component (MUST include all in output JSON with the same node_id values):\n",
+        );
+        out.push_str(
+            "- Bind them in the component output using `bind_part_indices` that reference this component output's `parts[]` array.\n",
+        );
+        for node in component.articulation_nodes.iter() {
+            let forward = node.transform.rotation * Vec3::Z;
+            let up = node.transform.rotation * Vec3::Y;
+            let pos = node.transform.translation;
+            out.push_str(&format!(
+                "- {}: parent_node_id={}, approx pos=[{:.3},{:.3},{:.3}], forward=[{:.2},{:.2},{:.2}], up=[{:.2},{:.2},{:.2}]\n",
+                node.node_id,
+                node.parent_node_id.as_deref().unwrap_or("null"),
+                pos.x,
+                pos.y,
+                pos.z,
+                forward.x,
+                forward.y,
+                forward.z,
+                up.x,
+                up.y,
+                up.z
+            ));
+        }
+    }
+
     let mut children: Vec<&Gen3dPlannedComponent> = components
         .iter()
         .filter(|c| {
@@ -749,6 +777,7 @@ mod tests {
                 actual_size: Some(Vec3::new(4.0, 5.0, 6.0)),
                 anchors: vec![],
                 contacts: vec![],
+                articulation_nodes: vec![],
                 root_animations: vec![],
                 attach_to: None,
             },
@@ -763,6 +792,7 @@ mod tests {
                 actual_size: Some(Vec3::new(1.0, 1.2, 1.4)),
                 anchors: vec![],
                 contacts: vec![],
+                articulation_nodes: vec![],
                 root_animations: vec![],
                 attach_to: Some(super::super::Gen3dPlannedAttachment {
                     parent: "torso".into(),
@@ -809,9 +839,35 @@ mod tests {
         let text = build_gen3d_plan_system_instructions();
         assert!(text.contains("Schema key contract (do not invent extra keys):"));
         assert!(text.contains("top-level: aim, assembly_notes, attack, collider, components"));
-        assert!(text.contains("components[] item: anchors, attach_to, contacts, modeling_notes"));
+        assert!(text.contains("components[] item:"), "{text}");
+        assert!(text.contains("articulation_nodes"), "{text}");
         assert!(text.contains("attach_to.joint: axis_join, kind, limits_degrees"));
         assert!(text.contains("reuse_groups[] item: alignment, alignment_frame, anchors, kind"));
+    }
+
+    #[test]
+    fn gen3d_plan_system_instructions_keep_articulation_nodes_out_of_rig() {
+        let text = build_gen3d_plan_system_instructions();
+        assert!(text.contains("components[].articulation_nodes"), "{text}");
+        assert!(
+            text.contains("rig` is ONLY for locomotion metadata like `move_cycle_m`"),
+            "{text}"
+        );
+        assert!(
+            text.contains("Do NOT include `bind_part_indices` in the PLAN"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn gen3d_component_system_instructions_require_articulation_node_bindings() {
+        let text = build_gen3d_component_system_instructions();
+        assert!(text.contains("`articulation_nodes`: JSON ARRAY"), "{text}");
+        assert!(text.contains("bind_part_indices"), "{text}");
+        assert!(
+            text.contains("same `node_id` values under `articulation_nodes`"),
+            "{text}"
+        );
     }
 
     #[test]
@@ -992,15 +1048,15 @@ fn build_gen3d_motion_authoring_schema_key_contract_text() -> String {
         .map(schema_object_property_keys)
         .unwrap_or_default();
 
-    let edges_schema = schema
+    let targets_schema = schema
         .get("properties")
-        .and_then(|v| v.get("edges"))
+        .and_then(|v| v.get("targets"))
         .and_then(schema_array_items);
-    let edge_keys = edges_schema
+    let target_keys = targets_schema
         .map(schema_object_property_keys)
         .unwrap_or_default();
 
-    let slots_schema = edges_schema
+    let slots_schema = targets_schema
         .and_then(|v| v.get("properties"))
         .and_then(|v| v.get("slots"))
         .and_then(schema_array_items);
@@ -1075,9 +1131,9 @@ fn build_gen3d_motion_authoring_schema_key_contract_text() -> String {
         out.push_str(&applies_to_keys.join(", "));
         out.push('\n');
     }
-    if !edge_keys.is_empty() {
-        out.push_str("- edges[] item: ");
-        out.push_str(&edge_keys.join(", "));
+    if !target_keys.is_empty() {
+        out.push_str("- targets[] item: ");
+        out.push_str(&target_keys.join(", "));
         out.push('\n');
     }
     if !slot_keys.is_empty() {
@@ -1172,8 +1228,19 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
          - `aim.components`: list of component NAMES that should yaw with the attention direction (e.g. `head`, `turret`, `weapon`, `cannon`).\n\
          - If `aim` is omitted for a ranged unit, the engine will aim the muzzle component by default (or its parent component when the muzzle is a nested helper).\n\n\
          Animation policy:\n\
-         - Gen3D currently generates STATIC models only.\n\
-         - Do NOT author any per-edge animation clips in the plan (there is no `attach_to.animations`).\n\n\
+         - Do NOT author animation clips in the component plan.\n\
+         - If a single component needs independent internal motion regions, use `articulation_nodes`.\n\
+         - In the PLAN, `articulation_nodes` live under `components[].articulation_nodes`.\n\
+         - `rig` is ONLY for locomotion metadata like `move_cycle_m`; do NOT put `articulation_nodes`, `named_motions`, `poses`, or other motion data under `rig`.\n\
+         - `articulation_nodes` are generic internal motion handles inside one component.\n\
+         - Each articulation node must:\n\
+           - have a stable `node_id`\n\
+           - optionally name `parent_node_id`\n\
+           - define `pos` + `forward` + `up` in component-local space\n\
+         - Do NOT include `bind_part_indices` in the PLAN; primitive part binding happens later in the component draft output.\n\
+         - If the user names motions (ex: `blink`, `jaw_open`), keep the structure compatible with those motions but do NOT output motion clips, named motion objects, or pose lists in the plan.\n\
+         - Do NOT split the object into extra components only to force small internal motion if a coherent single component plus articulation nodes is cleaner.\n\
+         - Do NOT use face-only special cases or heuristic splitters; articulation nodes are generic and may describe any internal motion region.\n\n\
          Anchor definition:\n\
          - An anchor is a named coordinate frame inside a component.\n\
          - `pos` is anchor origin in component-local coordinates.\n\
@@ -1706,12 +1773,15 @@ Schema (field names are strict):\n\
     - aabb_xz: {\"kind\":\"aabb_xz\",\"half_extents\":[X,Z],\"min\":null,\"max\":null}\n\
       (NOTE: for aabb_xz you MUST include keys half_extents, min, max; set unused ones to null.)\n\
 - `anchors`: JSON ARRAY of {name,pos,forward,up} (use [] if none).\n\
+- `articulation_nodes`: JSON ARRAY of {node_id,parent_node_id,pos,forward,up,bind_part_indices} (use [] if none).\n\
+  - `bind_part_indices` MUST reference indices in THIS output's `parts[]` array.\n\
 - `parts`: JSON ARRAY of parts.\n\
   - Each part MUST include: `primitive` (NOT `type`), `pos`, `scale`, `color`.\n\
 \n\
 Rules:\n\
 - Use ONLY primitives: cuboid, cylinder, sphere, cone.\n\
 - You MUST output `anchors` with the exact names required by the plan.\n\
+- If the plan reserved articulation nodes, you MUST output those same `node_id` values under `articulation_nodes` and bind them to the relevant `parts[]` via `bind_part_indices`.\n\
 - Every part MUST include `color` as [r,g,b,a] in 0..1.\n\
 - Units ~ meters; keep the component centered near the origin.\n\
 - Match the plan's `target_size` per axis in component-local +X/+Y/+Z (do NOT permute axes).\n\
@@ -2282,8 +2352,8 @@ pub(super) fn build_gen3d_motion_authoring_system_instructions() -> String {
     let schema_keys_contract = build_gen3d_motion_authoring_schema_key_contract_text();
     format!(
         "You are the Gravimera Gen3D motion authoring assistant.\n\
-You will be given a generated component graph (components + attachments + anchors + current base offsets).\n\
-Your job is to author explicit per-edge animation clips.\n\
+You will be given a generated component graph (components + attachments + articulation nodes + current base offsets).\n\
+Your job is to author explicit motion clips for generic targets.\n\
 This tool call authors EXACTLY ONE motion channel (the target channel is provided in the user text).\n\
 Return ONLY a single JSON object matching the `gen3d_motion_authoring_v1` schema (no markdown, no prose).\n\
 Schema sanity (VERY IMPORTANT):\n\
@@ -2296,14 +2366,23 @@ Clip schema (IMPORTANT):\n\
 - For `spin`: you MUST provide `axis` + `radians_per_unit` + `axis_space`.\n\n\
 Rules:\n\
 - You MUST copy the provided applies_to values exactly.\n\
-- You MUST NOT invent component names. Target attachment edges by naming the CHILD component in `edges[].component`.\n\
-  - Do NOT include the root component (it has no parent edge).\n\
+- You MUST NOT invent component names or articulation node ids.\n\
+- Each `targets[]` item must use one of these target kinds:\n\
+  - `root_edge`: the implicit draft-root -> root-component edge. Use the root component name in `targets[].component`.\n\
+  - `attachment_edge`: a parent -> child attachment edge. Name the CHILD component in `targets[].component`.\n\
+  - `articulation_node`: an internal motion handle inside one component. Set `targets[].component` to the component name and `targets[].node_id` to the existing articulation node id.\n\
+- Do NOT invent extra target kinds.\n\
 - Single-channel rule (IMPORTANT):\n\
   - The user text provides a `target_channel`.\n\
   - When decision=author_clips:\n\
     - You MUST set replace_channels=[target_channel] (exactly one entry).\n\
     - Every authored slot.channel MUST equal target_channel.\n\
     - Do NOT author any other channels in this tool call.\n\
+- Motion families (IMPORTANT):\n\
+  - Every authored slot MUST set `family` to either `base` or `overlay`.\n\
+  - Use `family=\"base\"` for normal body motion selected from gameplay state (`attack`/`action`/`move`/`idle`/`ambient`).\n\
+  - Use `family=\"overlay\"` only for local overlays that should compose on top of base motion, typically on `articulation_node` targets.\n\
+  - Do NOT use `family=\"overlay\"` on `root_edge` or `attachment_edge` targets.\n\
 - Named motion semantics (IMPORTANT):\n\
   - `action` is the generic default handling/working motion.\n\
   - If the user explicitly named motions and the user text lists them in `explicit_motion_channels`, those motions MUST remain separate channels.\n\
@@ -2311,9 +2390,9 @@ Rules:\n\
   - If `target_channel` is one of the explicit named motions, author that named motion specifically.\n\
   - If `target_channel` is `action` and explicit named motions exist, author a generic default handling/working motion that does NOT collapse those named motions into `action`.\n\
 - Minimize output size:\n\
-  - Only include `edges[]` entries you intend to CHANGE. Omit edges you are not touching.\n\
+  - Only include `targets[]` entries you intend to CHANGE. Omit targets you are not touching.\n\
   - Prefer replacing ONLY the channels you actually author (e.g. if you only author `move`, set replace_channels=[\"move\"]).\n\
-  - Prefer a SMALL number of authored edges. Default target: <= 12 edges unless strictly required.\n\
+  - Prefer a SMALL number of authored targets. Default target: <= 12 targets unless strictly required.\n\
   - Prefer simple loop clips with FEW keyframes (target 3 keyframes at t_units=0.0, 0.5*duration_units, duration_units). Avoid >5 keyframes unless necessary.\n\
   - Prefer using `time_offset_units` to create phase offsets across repeated limbs instead of unique keyframe shapes per limb.\n\
   - Keep deltas small and stable; avoid large translations.\n\
@@ -2323,7 +2402,8 @@ Rules:\n\
   - `move_phase` and `move_distance`: time units are meters traveled.\n\
   - `time_offset_units` and `clip.duration_units` are expressed in the SAME units as the driver.\n\
 - Coordinate frames:\n\
-  - These authored clips animate the ATTACHMENT OFFSET for that edge.\n\
+  - `root_edge` and `attachment_edge` clips animate the corresponding edge offset in JOIN space.\n\
+  - `articulation_node` clips animate the node-local frame described in the user text.\n\
   - JOIN frame axes: +X = join_right, +Y = join_up, +Z = join_forward.\n\
   - For `clip.kind=loop|once|ping_pong`:\n\
     - `delta` transforms are expressed in the PARENT ANCHOR JOIN FRAME (the same frame as `attach_to.offset`).\n\
@@ -2339,10 +2419,10 @@ Rules:\n\
 - Hinge joints (IMPORTANT):\n\
   - If an edge's attachment joint is `kind=hinge`, `axis_join` is expressed in the JOIN frame.\n\
   - Any authored rotation MUST be a pure twist about `axis_join` (no off-axis swing), or motion validation will fail with `hinge_off_axis`.\n\
-  - For hinge edges, prefer `clip.kind=spin` with `axis_space=\"join\"` and `axis` aligned (or anti-aligned) with `axis_join`.\n\
+  - For hinge attachment edges, prefer `clip.kind=spin` with `axis_space=\"join\"` and `axis` aligned (or anti-aligned) with `axis_join`.\n\
 - `replace_channels`:\n\
-  - If decision=author_clips, list the channels you want the engine to REPLACE on targeted edges before adding your slots.\n\
-  - If decision=regen_geometry_required, set replace_channels=[] and edges=[] (do not author clips).\n\
+  - If decision=author_clips, list the channels you want the engine to REPLACE on targeted targets before adding your slots.\n\
+  - If decision=regen_geometry_required, set replace_channels=[] and targets=[] (do not author clips).\n\
 - Across all channels, a movable unit should have at least `idle` + `move` + `action` (and `attack` if the unit has an attack).\n\
   - You may be asked to author these in separate calls; always obey the target_channel.\n\
 - If the prompt implies motion that cannot be achieved with the existing articulation (for example: a snake with only one rigid body component), use decision=regen_geometry_required.\n\
@@ -2439,7 +2519,7 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
     }
 
     let mut out = String::new();
-    out.push_str("Goal: author explicit per-edge animation clips.\n");
+    out.push_str("Goal: author explicit motion clips for generic targets.\n");
     let target_channel = target_channel.trim();
     let target_channel = if target_channel.is_empty() {
         "unknown"
@@ -2647,13 +2727,41 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
         }
         out.push('\n');
         if target_channel == "move" {
-            out.push_str("Authoring guidance: prioritize authoring `move` clips on edges in the contact chains above. Use time_offset_units for phase staggering; keep keyframes minimal.\n\n");
+            out.push_str("Authoring guidance: prioritize authoring `move` clips on attachment targets in the contact chains above. Use time_offset_units for phase staggering; keep keyframes minimal.\n\n");
         } else {
             out.push_str(&format!(
-                "Authoring guidance: for channel `{}`, focus on a small number of meaningful edges; use time_offset_units for phase staggering; keep keyframes minimal.\n\n",
+                "Authoring guidance: for channel `{}`, focus on a small number of meaningful targets; use time_offset_units for phase staggering; keep keyframes minimal.\n\n",
                 target_channel
             ));
         }
+    }
+
+    if let Some(root) = components.iter().find(|c| c.attach_to.is_none()) {
+        let slots: Vec<String> = root
+            .root_animations
+            .iter()
+            .map(|slot| {
+                let kind = match &slot.spec.clip {
+                    crate::object::registry::PartAnimationDef::Loop { .. } => "loop",
+                    crate::object::registry::PartAnimationDef::Once { .. } => "once",
+                    crate::object::registry::PartAnimationDef::PingPong { .. } => "ping_pong",
+                    crate::object::registry::PartAnimationDef::Spin { .. } => "spin",
+                };
+                format!(
+                    "{}:{:?}:{}:{}",
+                    slot.channel.as_ref(),
+                    slot.family,
+                    format!("{:?}", slot.spec.driver).to_ascii_lowercase(),
+                    kind
+                )
+            })
+            .collect();
+        out.push_str("Root edge target:\n");
+        out.push_str(&format!(
+            "- kind=root_edge component={} existing_slots={:?}\n\n",
+            root.name.trim(),
+            slots
+        ));
     }
 
     out.push_str("Attachment edges (child components with attach_to):\n");
@@ -2721,8 +2829,9 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
                     crate::object::registry::PartAnimationDef::Spin { .. } => "spin",
                 };
                 format!(
-                    "{}:{}:{}",
+                    "{}:{:?}:{}:{}",
                     slot.channel.as_ref(),
+                    slot.family,
                     format!("{:?}", slot.spec.driver).to_ascii_lowercase(),
                     kind
                 )
@@ -2765,6 +2874,29 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
             out.push_str(&format!(" ground_contacts={:?}", ground_contacts));
         }
         out.push('\n');
+    }
+
+    out.push_str("\nArticulation node targets:\n");
+    let mut any_articulation_nodes = false;
+    for component in components.iter() {
+        for node in component.articulation_nodes.iter() {
+            any_articulation_nodes = true;
+            out.push_str(&format!(
+                "- kind=articulation_node component={} node_id={} parent_node_id={} node_pos_local={} node_rot_quat_xyzw_local={} bound_part_id_uuids={:?}\n",
+                component.name.trim(),
+                node.node_id.trim(),
+                node.parent_node_id.as_deref().unwrap_or("null"),
+                fmt_vec3(node.transform.translation),
+                fmt_quat_xyzw(node.transform.rotation),
+                node.bound_part_ids
+                    .iter()
+                    .map(|id| uuid::Uuid::from_u128(*id).to_string())
+                    .collect::<Vec<_>>(),
+            ));
+        }
+    }
+    if !any_articulation_nodes {
+        out.push_str("- (none)\n");
     }
 
     out

@@ -7,9 +7,9 @@ use crate::object::registry::{
     AimProfile, AnchorDef, AnchorRef, AttachmentDef, ColliderProfile, MaterialKey,
     MeleeAttackProfile, MobilityDef, MobilityMode, MovementBlockRule, ObjectDef, ObjectInteraction,
     ObjectLibrary, ObjectPartDef, ObjectPartKind, PartAnimationDef, PartAnimationDriver,
-    PartAnimationKeyframeDef, PartAnimationSlot, PartAnimationSpec, PrimitiveParams,
-    PrimitiveVisualDef, ProjectileObstacleRule, ProjectileProfile, RangedAttackProfile,
-    UnitAttackKind, UnitAttackProfile,
+    PartAnimationFamily, PartAnimationKeyframeDef, PartAnimationSlot, PartAnimationSpec,
+    PrimitiveParams, PrimitiveVisualDef, ProjectileObstacleRule, ProjectileProfile,
+    RangedAttackProfile, UnitAttackKind, UnitAttackProfile,
 };
 
 pub(crate) const PREFAB_FILE_FORMAT_VERSION: u32 = 1;
@@ -790,6 +790,8 @@ impl PartAnimationSpecJson {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct PartAnimationSlotJson {
     channel: String,
+    #[serde(default)]
+    family: PartAnimationFamilyJson,
     spec: PartAnimationSpecJson,
 }
 
@@ -797,6 +799,7 @@ impl PartAnimationSlotJson {
     fn from_slot(slot: &PartAnimationSlot) -> Self {
         Self {
             channel: slot.channel.to_string(),
+            family: PartAnimationFamilyJson::from_family(slot.family),
             spec: PartAnimationSpecJson::from_spec(&slot.spec),
         }
     }
@@ -808,8 +811,33 @@ impl PartAnimationSlotJson {
         }
         Ok(PartAnimationSlot {
             channel: channel.to_string().into(),
+            family: self.family.to_family(),
             spec: self.spec.to_spec()?,
         })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PartAnimationFamilyJson {
+    #[default]
+    Base,
+    Overlay,
+}
+
+impl PartAnimationFamilyJson {
+    fn from_family(family: PartAnimationFamily) -> Self {
+        match family {
+            PartAnimationFamily::Base => Self::Base,
+            PartAnimationFamily::Overlay => Self::Overlay,
+        }
+    }
+
+    fn to_family(self) -> PartAnimationFamily {
+        match self {
+            Self::Base => PartAnimationFamily::Base,
+            Self::Overlay => PartAnimationFamily::Overlay,
+        }
     }
 }
 

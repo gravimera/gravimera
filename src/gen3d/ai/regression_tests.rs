@@ -275,9 +275,10 @@ fn gen3d_pipeline_warcar_with_cannon_prompt_smoke() {
         let def = convert::ai_to_component_def(&planned[component_idx], ai, None)
             .expect("draft should convert");
 
-        let object_id = def.object_id;
-        planned[component_idx].actual_size = Some(def.size);
-        planned[component_idx].anchors = def.anchors.clone();
+        let object_id = def.def.object_id;
+        planned[component_idx].actual_size = Some(def.def.size);
+        planned[component_idx].anchors = def.def.anchors.clone();
+        planned[component_idx].articulation_nodes = def.articulation_nodes.clone();
 
         if let Some(existing) = draft.defs.iter_mut().find(|d| d.object_id == object_id) {
             let preserved_refs: Vec<ObjectPartDef> = existing
@@ -286,11 +287,11 @@ fn gen3d_pipeline_warcar_with_cannon_prompt_smoke() {
                 .filter(|p| matches!(p.kind, ObjectPartKind::ObjectRef { .. }))
                 .cloned()
                 .collect();
-            let mut new_def = def;
+            let mut new_def = def.def;
             new_def.parts.extend(preserved_refs);
             *existing = new_def;
         } else {
-            draft.defs.push(def);
+            draft.defs.push(def.def);
         }
 
         if let Some(root_idx) = planned.iter().position(|c| c.attach_to.is_none()) {
@@ -453,6 +454,7 @@ fn gen3d_scene_graph_summary_includes_joint_kind() {
                 transform: Transform::IDENTITY,
             }],
             contacts: vec![],
+            articulation_nodes: vec![],
             root_animations: vec![],
             attach_to: None,
         },
@@ -470,6 +472,7 @@ fn gen3d_scene_graph_summary_includes_joint_kind() {
                 transform: Transform::IDENTITY,
             }],
             contacts: vec![],
+            articulation_nodes: vec![],
             root_animations: vec![],
             attach_to: Some(super::Gen3dPlannedAttachment {
                 parent: "root".into(),

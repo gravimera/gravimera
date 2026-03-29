@@ -3,9 +3,111 @@ use bevy::log::debug;
 use super::super::GEN3D_MAX_PARTS;
 use super::artifacts::write_gen3d_json_artifact;
 use super::schema::{
-    AiDescriptorMetaJsonV1, AiDraftJsonV1, AiMotionAuthoringJsonV1, AiPlanJsonV1,
-    AiPromptIntentJsonV1, AiReviewDeltaJsonV1,
+    AiDescriptorMetaJsonV1, AiDraftJsonV1, AiMotionAuthoringJsonV1, AiMotionTargetKindJsonV1,
+    AiPlanJsonV1, AiPromptIntentJsonV1, AiReviewDeltaJsonV1,
 };
+
+fn sanitize_articulation_nodes(draft: &mut AiDraftJsonV1) -> Result<(), String> {
+    use std::collections::{HashMap, HashSet};
+
+    let parts_len = draft.parts.len();
+    let mut node_index: HashMap<String, usize> = HashMap::new();
+    let mut seen_part_indices: HashSet<usize> = HashSet::new();
+
+    for (idx, node) in draft.articulation_nodes.iter_mut().enumerate() {
+        node.node_id = node.node_id.trim().to_string();
+        if node.node_id.is_empty() {
+            return Err(format!(
+                "AI draft articulation_nodes[{idx}] is missing required `node_id`."
+            ));
+        }
+        node.parent_node_id = node
+            .parent_node_id
+            .as_ref()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        if node.parent_node_id.as_deref() == Some(node.node_id.as_str()) {
+            return Err(format!(
+                "AI draft articulation node `{}` cannot parent itself.",
+                node.node_id
+            ));
+        }
+        if node.bind_part_indices.is_empty() {
+            return Err(format!(
+                "AI draft articulation node `{}` must bind at least one part index.",
+                node.node_id
+            ));
+        }
+        node.bind_part_indices.sort_unstable();
+        node.bind_part_indices.dedup();
+        for &part_idx in node.bind_part_indices.iter() {
+            if part_idx >= parts_len {
+                return Err(format!(
+                    "AI draft articulation node `{}` references out-of-range bind_part_indices entry {} (parts_total={parts_len}).",
+                    node.node_id, part_idx
+                ));
+            }
+            if !seen_part_indices.insert(part_idx) {
+                return Err(format!(
+                    "AI draft articulation node `{}` reuses part index {} that is already bound by another articulation node.",
+                    node.node_id, part_idx
+                ));
+            }
+        }
+        if node_index.insert(node.node_id.clone(), idx).is_some() {
+            return Err(format!(
+                "AI draft articulation_nodes contains duplicate node_id `{}`.",
+                node.node_id
+            ));
+        }
+    }
+
+    let mut visiting = vec![false; draft.articulation_nodes.len()];
+    let mut visited = vec![false; draft.articulation_nodes.len()];
+
+    fn dfs(
+        idx: usize,
+        nodes: &[super::schema::AiArticulationNodeJson],
+        node_index: &HashMap<String, usize>,
+        visiting: &mut [bool],
+        visited: &mut [bool],
+    ) -> Result<(), String> {
+        if visited[idx] {
+            return Ok(());
+        }
+        if visiting[idx] {
+            return Err(format!(
+                "AI draft articulation_nodes contains a parent cycle involving `{}`.",
+                nodes[idx].node_id
+            ));
+        }
+        visiting[idx] = true;
+        if let Some(parent) = nodes[idx].parent_node_id.as_ref() {
+            let Some(&parent_idx) = node_index.get(parent) else {
+                return Err(format!(
+                    "AI draft articulation node `{}` references missing parent_node_id `{}`.",
+                    nodes[idx].node_id, parent
+                ));
+            };
+            dfs(parent_idx, nodes, node_index, visiting, visited)?;
+        }
+        visiting[idx] = false;
+        visited[idx] = true;
+        Ok(())
+    }
+
+    for idx in 0..draft.articulation_nodes.len() {
+        dfs(
+            idx,
+            &draft.articulation_nodes,
+            &node_index,
+            &mut visiting,
+            &mut visited,
+        )?;
+    }
+
+    Ok(())
+}
 
 fn normalize_ai_nullable_string_field_allowing_array(
     json_value: &mut serde_json::Value,
@@ -83,6 +185,233 @@ fn normalize_ai_nullable_string_field_allowing_array(
                 field = trimmed_field_name,
             );
         }
+    }
+}
+
+fn normalize_json_named_object_map_to_array(
+    value: &mut serde_json::Value,
+    item_name_key: &str,
+    context: &str,
+) {
+    match value {
+        serde_json::Value::Null => {
+            *value = serde_json::Value::Array(Vec::new());
+            debug!(
+                "Gen3D: normalized `{context}` null into empty array",
+                context = context.trim(),
+            );
+        }
+        serde_json::Value::Object(_) => {
+            let raw = std::mem::replace(value, serde_json::Value::Null);
+            let serde_json::Value::Object(map) = raw else {
+                unreachable!();
+            };
+
+            let all_values_are_objects = map.values().all(|v| v.is_object());
+            if !all_values_are_objects {
+                *value = serde_json::Value::Array(vec![serde_json::Value::Object(map)]);
+                debug!(
+                    "Gen3D: wrapped `{context}` object into singleton array",
+                    context = context.trim(),
+                );
+                return;
+            }
+
+            let mut entries: Vec<(String, serde_json::Value)> = map.into_iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+            let mut arr: Vec<serde_json::Value> = Vec::with_capacity(entries.len());
+            for (name, mut item) in entries {
+                if let serde_json::Value::Object(item_obj) = &mut item {
+                    if !item_obj.contains_key(item_name_key) && !name.trim().is_empty() {
+                        item_obj.insert(item_name_key.to_string(), serde_json::Value::String(name));
+                    }
+                }
+                arr.push(item);
+            }
+
+            *value = serde_json::Value::Array(arr);
+            debug!(
+                "Gen3D: normalized `{context}` keyed object map into array",
+                context = context.trim(),
+            );
+        }
+        _ => {}
+    }
+}
+
+fn normalize_json_singleton_array_field(value: &mut serde_json::Value, context: &str) {
+    match value {
+        serde_json::Value::Null => {
+            *value = serde_json::Value::Array(Vec::new());
+            debug!(
+                "Gen3D: normalized `{context}` null into empty array",
+                context = context.trim(),
+            );
+        }
+        serde_json::Value::Object(_) => {
+            let raw = std::mem::replace(value, serde_json::Value::Null);
+            *value = serde_json::Value::Array(vec![raw]);
+            debug!(
+                "Gen3D: wrapped `{context}` object into singleton array",
+                context = context.trim(),
+            );
+        }
+        _ => {}
+    }
+}
+
+fn normalize_ai_plan_collection_shapes(json_value: &mut serde_json::Value) {
+    let Some(obj) = json_value.as_object_mut() else {
+        return;
+    };
+
+    if let Some(value) = obj.get_mut("components") {
+        normalize_json_named_object_map_to_array(value, "name", "plan.components");
+    }
+    if let Some(value) = obj.get_mut("reuse_groups") {
+        normalize_json_singleton_array_field(value, "plan.reuse_groups");
+    }
+
+    let Some(components) = obj.get_mut("components").and_then(|v| v.as_array_mut()) else {
+        return;
+    };
+
+    for component in components.iter_mut() {
+        let Some(component_obj) = component.as_object_mut() else {
+            continue;
+        };
+        if let Some(value) = component_obj.get_mut("anchors") {
+            normalize_json_named_object_map_to_array(value, "name", "plan.components[].anchors");
+        }
+        if let Some(value) = component_obj.get_mut("contacts") {
+            normalize_json_named_object_map_to_array(value, "name", "plan.components[].contacts");
+        }
+        if let Some(value) = component_obj.get_mut("articulation_nodes") {
+            normalize_json_named_object_map_to_array(
+                value,
+                "node_id",
+                "plan.components[].articulation_nodes",
+            );
+        }
+    }
+}
+
+fn normalize_ai_plan_rig_motion_fields(json_value: &mut serde_json::Value) {
+    let Some(obj) = json_value.as_object_mut() else {
+        return;
+    };
+
+    let Some(mut rig_value) = obj.remove("rig") else {
+        return;
+    };
+    let Some(rig_obj) = rig_value.as_object_mut() else {
+        obj.insert("rig".to_string(), rig_value);
+        return;
+    };
+
+    if let Some(named_motions) = rig_obj.remove("named_motions") {
+        if !named_motions.is_null() {
+            debug!("Gen3D: dropped unsupported `rig.named_motions` from plan JSON");
+        }
+    }
+
+    if let Some(raw_nodes) = rig_obj.remove("articulation_nodes") {
+        let mut nodes = match raw_nodes {
+            serde_json::Value::Array(arr) => arr,
+            serde_json::Value::Null => Vec::new(),
+            serde_json::Value::Object(map) => vec![serde_json::Value::Object(map)],
+            other => {
+                rig_obj.insert("articulation_nodes".to_string(), other);
+                Vec::new()
+            }
+        };
+
+        if !nodes.is_empty() {
+            let Some(components) = obj.get_mut("components").and_then(|v| v.as_array_mut()) else {
+                rig_obj.insert(
+                    "articulation_nodes".to_string(),
+                    serde_json::Value::Array(nodes),
+                );
+                if !rig_obj.is_empty() {
+                    obj.insert("rig".to_string(), rig_value);
+                }
+                return;
+            };
+
+            let name_to_idx: std::collections::HashMap<String, usize> = components
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, component)| {
+                    component
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .map(|name| (name.trim().to_string(), idx))
+                })
+                .filter(|(name, _)| !name.is_empty())
+                .collect();
+
+            let mut moved = 0usize;
+            let mut leftovers: Vec<serde_json::Value> = Vec::new();
+            for mut node in nodes.drain(..) {
+                let Some(node_obj) = node.as_object_mut() else {
+                    leftovers.push(node);
+                    continue;
+                };
+
+                let component_name = node_obj
+                    .remove("component")
+                    .and_then(|v| v.as_str().map(|s| s.trim().to_string()))
+                    .filter(|s| !s.is_empty());
+                node_obj.remove("bind_part_indices");
+
+                let Some(component_name) = component_name else {
+                    leftovers.push(node);
+                    continue;
+                };
+                let Some(&component_idx) = name_to_idx.get(component_name.as_str()) else {
+                    node_obj.insert(
+                        "component".to_string(),
+                        serde_json::Value::String(component_name),
+                    );
+                    leftovers.push(node);
+                    continue;
+                };
+                let Some(component_obj) = components
+                    .get_mut(component_idx)
+                    .and_then(|value| value.as_object_mut())
+                else {
+                    leftovers.push(node);
+                    continue;
+                };
+                let Some(target_nodes) = component_obj
+                    .entry("articulation_nodes".to_string())
+                    .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+                    .as_array_mut()
+                else {
+                    leftovers.push(node);
+                    continue;
+                };
+                target_nodes.push(node);
+                moved = moved.saturating_add(1);
+            }
+
+            if moved > 0 {
+                debug!(
+                    "Gen3D: hoisted {moved} articulation node(s) from `rig.articulation_nodes` into `components[].articulation_nodes`"
+                );
+            }
+            if !leftovers.is_empty() {
+                rig_obj.insert(
+                    "articulation_nodes".to_string(),
+                    serde_json::Value::Array(leftovers),
+                );
+            }
+        }
+    }
+
+    if !rig_obj.is_empty() {
+        obj.insert("rig".to_string(), rig_value);
     }
 }
 
@@ -230,6 +559,7 @@ pub(super) fn parse_ai_draft_from_text(text: &str) -> Result<AiDraftJsonV1, Stri
 
     let draft: AiDraftJsonV1 =
         serde_json::from_value(json_value).map_err(|err| format!("AI JSON schema error: {err}"))?;
+    let mut draft = draft;
 
     if draft.version != 2 {
         return Err(format!(
@@ -246,6 +576,7 @@ pub(super) fn parse_ai_draft_from_text(text: &str) -> Result<AiDraftJsonV1, Stri
             draft.parts.len()
         ));
     }
+    sanitize_articulation_nodes(&mut draft)?;
     let missing_colors = draft.parts.iter().filter(|p| p.color.is_none()).count();
     if missing_colors > 0 {
         return Err(format!(
@@ -292,6 +623,8 @@ pub(super) fn parse_ai_plan_from_text(text: &str) -> Result<AiPlanJsonV1, String
         return Err("AI plan JSON missing required `version` (expected 8).".into());
     }
 
+    normalize_ai_plan_collection_shapes(&mut json_value);
+    normalize_ai_plan_rig_motion_fields(&mut json_value);
     normalize_ai_plan_component_joint_fields(&mut json_value);
     normalize_ai_plan_top_level_fields(&mut json_value);
 
@@ -550,38 +883,49 @@ pub(super) fn parse_ai_motion_authoring_from_text(
     }
     authored.replace_channels = channels;
 
-    // Sanitize edges/slots.
-    const MAX_EDGES: usize = 64;
-    const MAX_SLOTS_PER_EDGE: usize = 32;
+    // Sanitize targets/slots.
+    const MAX_TARGETS: usize = 64;
+    const MAX_SLOTS_PER_TARGET: usize = 32;
     const MAX_KEYFRAMES: usize = 48;
 
-    if authored.edges.len() > MAX_EDGES {
+    if authored.targets.len() > MAX_TARGETS {
         debug!(
-            "Gen3D: truncating motion-authoring edges from {} to {MAX_EDGES}",
-            authored.edges.len()
+            "Gen3D: truncating motion-authoring targets from {} to {MAX_TARGETS}",
+            authored.targets.len()
         );
-        authored.edges.truncate(MAX_EDGES);
+        authored.targets.truncate(MAX_TARGETS);
     }
 
-    for edge in authored.edges.iter_mut() {
-        edge.component = edge.component.trim().to_string();
-        if edge.slots.len() > MAX_SLOTS_PER_EDGE {
-            edge.slots.truncate(MAX_SLOTS_PER_EDGE);
+    for target in authored.targets.iter_mut() {
+        target.component = target.component.trim().to_string();
+        target.node_id = target
+            .node_id
+            .as_ref()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        if target.slots.len() > MAX_SLOTS_PER_TARGET {
+            target.slots.truncate(MAX_SLOTS_PER_TARGET);
         }
 
-        for slot in edge.slots.iter_mut() {
+        for slot in target.slots.iter_mut() {
             slot.channel = slot.channel.trim().to_ascii_lowercase();
 
             if matches!(slot.driver, super::schema::AiAnimationDriverJsonV1::Unknown) {
                 return Err(format!(
-                    "AI motion-authoring slot has unknown driver for component `{}` channel `{}`",
-                    edge.component, slot.channel
+                    "AI motion-authoring slot has unknown driver for target `{}` channel `{}`",
+                    target.component, slot.channel
+                ));
+            }
+            if matches!(slot.family, super::schema::AiAnimationFamilyJsonV1::Unknown) {
+                return Err(format!(
+                    "AI motion-authoring slot has unknown family for target `{}` channel `{}`",
+                    target.component, slot.channel
                 ));
             }
             if !slot.speed_scale.is_finite() {
                 return Err(format!(
-                    "AI motion-authoring slot speed_scale is non-finite for component `{}` channel `{}`",
-                    edge.component, slot.channel
+                    "AI motion-authoring slot speed_scale is non-finite for target `{}` channel `{}`",
+                    target.component, slot.channel
                 ));
             }
             if !slot.time_offset_units.is_finite() {
@@ -603,8 +947,8 @@ pub(super) fn parse_ai_motion_authoring_from_text(
                 } => {
                     if !duration_units.is_finite() || *duration_units <= 1e-6 {
                         return Err(format!(
-                            "AI motion-authoring clip has invalid duration_units for component `{}` channel `{}`",
-                            edge.component, slot.channel
+                            "AI motion-authoring clip has invalid duration_units for target `{}` channel `{}`",
+                            target.component, slot.channel
                         ));
                     }
                     if keyframes.len() > MAX_KEYFRAMES {
@@ -612,8 +956,8 @@ pub(super) fn parse_ai_motion_authoring_from_text(
                     }
                     if keyframes.is_empty() {
                         return Err(format!(
-                            "AI motion-authoring clip has 0 keyframes for component `{}` channel `{}`",
-                            edge.component, slot.channel
+                            "AI motion-authoring clip has 0 keyframes for target `{}` channel `{}`",
+                            target.component, slot.channel
                         ));
                     }
 
@@ -653,14 +997,44 @@ pub(super) fn parse_ai_motion_authoring_from_text(
                 } => {
                     if axis.iter().any(|v| !v.is_finite()) {
                         return Err(format!(
-                            "AI motion-authoring spin axis is non-finite for component `{}` channel `{}`",
-                            edge.component, slot.channel
+                            "AI motion-authoring spin axis is non-finite for target `{}` channel `{}`",
+                            target.component, slot.channel
                         ));
                     }
                     if !radians_per_unit.is_finite() {
                         *radians_per_unit = 0.0;
                     }
                 }
+            }
+        }
+
+        match target.kind {
+            AiMotionTargetKindJsonV1::RootEdge => {
+                target.node_id = None;
+            }
+            AiMotionTargetKindJsonV1::AttachmentEdge => {
+                if target.component.is_empty() {
+                    return Err(
+                        "AI motion-authoring attachment_edge target is missing `component`.".into(),
+                    );
+                }
+                target.node_id = None;
+            }
+            AiMotionTargetKindJsonV1::ArticulationNode => {
+                if target.component.is_empty() {
+                    return Err(
+                        "AI motion-authoring articulation_node target is missing `component`."
+                            .into(),
+                    );
+                }
+                if target.node_id.is_none() {
+                    return Err(
+                        "AI motion-authoring articulation_node target is missing `node_id`.".into(),
+                    );
+                }
+            }
+            AiMotionTargetKindJsonV1::Unknown => {
+                return Err("AI motion-authoring has unknown target `kind` value.".into());
             }
         }
     }
@@ -854,6 +1228,60 @@ mod tests {
     }
 
     #[test]
+    fn parse_ai_plan_hoists_rig_articulation_nodes_and_normalizes_anchor_maps() {
+        let text = r#"
+        {
+          "version": 8,
+          "mobility": { "kind": "static" },
+          "rig": {
+            "articulation_nodes": [
+              {
+                "component": "head",
+                "node_id": "jaw",
+                "pos": [0.0, -0.1, 0.2],
+                "forward": [0.0, 0.0, 1.0],
+                "up": [0.0, 1.0, 0.0],
+                "bind_part_indices": [2]
+              }
+            ],
+            "named_motions": [
+              { "name": "jaw_open", "poses": [] }
+            ]
+          },
+          "reuse_groups": [],
+          "components": [
+            {
+              "name": "head",
+              "purpose": "",
+              "modeling_notes": "",
+              "size": [1.0, 1.0, 1.0],
+              "anchors": {
+                "look": {
+                  "pos": [0.0, 0.1, 0.2],
+                  "forward": [0.0, 0.0, 1.0],
+                  "up": [0.0, 1.0, 0.0]
+                }
+              },
+              "contacts": [],
+              "attach_to": null
+            }
+          ]
+        }
+        "#;
+
+        let plan = parse_ai_plan_from_text(text).expect("plan should parse");
+        assert!(
+            plan.rig.is_none(),
+            "unsupported rig motion fields should be dropped"
+        );
+        assert_eq!(plan.components.len(), 1);
+        assert_eq!(plan.components[0].anchors.len(), 1);
+        assert_eq!(plan.components[0].anchors[0].name, "look");
+        assert_eq!(plan.components[0].articulation_nodes.len(), 1);
+        assert_eq!(plan.components[0].articulation_nodes[0].node_id, "jaw");
+    }
+
+    #[test]
     fn extracts_last_json_object_when_multiple_present() {
         let text = r#"{"a":1}{"a":2}"#;
         let extracted = extract_json_object(text).expect("should extract JSON object");
@@ -916,12 +1344,15 @@ mod tests {
           "decision": "author_clips",
           "reason": "  test  ",
           "replace_channels": [" MOVE ", "idle", ""],
-          "edges": [
+          "targets": [
             {
+              "kind":"attachment_edge",
               "component":" leg_l ",
+              "node_id": null,
               "slots":[
                 {
                   "channel":"MOVE",
+                  "family":"base",
                   "driver":"move_phase",
                   "speed_scale": 1.0,
                   "time_offset_units": 0.0,
@@ -949,11 +1380,19 @@ mod tests {
             vec!["idle".to_string(), "move".to_string()]
         );
         assert!(authored.notes_text.is_none());
-        assert_eq!(authored.edges.len(), 1);
-        assert_eq!(authored.edges[0].component.as_str(), "leg_l");
-        assert_eq!(authored.edges[0].slots.len(), 1);
-        assert_eq!(authored.edges[0].slots[0].channel.as_str(), "move");
-        match &authored.edges[0].slots[0].clip {
+        assert_eq!(authored.targets.len(), 1);
+        assert_eq!(authored.targets[0].component.as_str(), "leg_l");
+        assert_eq!(
+            authored.targets[0].kind,
+            super::super::schema::AiMotionTargetKindJsonV1::AttachmentEdge
+        );
+        assert_eq!(authored.targets[0].slots.len(), 1);
+        assert_eq!(authored.targets[0].slots[0].channel.as_str(), "move");
+        assert_eq!(
+            authored.targets[0].slots[0].family,
+            super::super::schema::AiAnimationFamilyJsonV1::Base
+        );
+        match &authored.targets[0].slots[0].clip {
             super::super::schema::AiAnimationClipJsonV1::Loop { keyframes, .. } => {
                 assert_eq!(keyframes.len(), 2);
                 assert!(
@@ -977,7 +1416,7 @@ mod tests {
           "decision": "author_clips",
           "reason": "test",
           "replace_channels": ["move"],
-          "edges": [],
+          "targets": [],
           "notes": ["  line 1  ", "", "line 2", 3]
         }"#;
 

@@ -197,6 +197,33 @@ pub(super) fn build_schema_repair_hints(
             {
                 push_once(&mut out, "Set top-level `version` to 8 for Gen3D plans.");
             }
+            if let Some(field) = extract_serde_unknown_field(err) {
+                match field.as_str() {
+                    "articulation_nodes" if err.contains("move_cycle_m") => {
+                        push_once(
+                            &mut out,
+                            "In plans, `rig` only allows `move_cycle_m`. Put articulation nodes under `components[].articulation_nodes`, not under `rig`.",
+                        );
+                        push_once(
+                            &mut out,
+                            "Plan `articulation_nodes` include only `node_id`, `parent_node_id`, `pos`, `forward`, and `up`. Do NOT include `bind_part_indices` until the component draft step.",
+                        );
+                    }
+                    "named_motions" => {
+                        push_once(
+                            &mut out,
+                            "Do NOT output `named_motions` in the plan. Motion channels are authored later; keep only structural assembly data in the plan JSON.",
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            if err.contains("invalid type: map, expected a sequence") {
+                push_once(
+                    &mut out,
+                    "Use JSON arrays for `components`, `anchors`, `contacts`, `articulation_nodes`, and `reuse_groups`, even when there is only one item. Do NOT use keyed objects/maps there.",
+                );
+            }
         }
         Some(Gen3dAiJsonSchemaKind::ComponentDraftV1) => {
             if err.contains("AI draft JSON missing required `version`")

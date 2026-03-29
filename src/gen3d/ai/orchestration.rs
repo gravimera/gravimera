@@ -2290,7 +2290,7 @@ pub(crate) fn gen3d_poll_ai_job(
                             }
                         };
 
-                        let component_def = match convert::ai_to_component_def(
+                        let converted = match convert::ai_to_component_def(
                             &job.planned_components[idx],
                             ai,
                             job.artifact_dir(),
@@ -2302,9 +2302,12 @@ pub(crate) fn gen3d_poll_ai_job(
                                 return;
                             }
                         };
+                        let component_def = converted.def;
 
                         job.planned_components[idx].actual_size = Some(component_def.size);
                         job.planned_components[idx].anchors = component_def.anchors.clone();
+                        job.planned_components[idx].articulation_nodes =
+                            converted.articulation_nodes;
 
                         // Replace component def in-place.
                         let target_id = component_def.object_id;
@@ -3251,7 +3254,7 @@ fn poll_gen3d_parallel_components(
                     }
                 };
 
-                let component_def = match job
+                let converted = match job
                     .planned_components
                     .get(idx)
                     .ok_or_else(|| {
@@ -3284,6 +3287,10 @@ fn poll_gen3d_parallel_components(
                         return;
                     }
                 };
+                let component_def = converted.def;
+                if let Some(comp) = job.planned_components.get_mut(idx) {
+                    comp.articulation_nodes = converted.articulation_nodes;
+                }
 
                 if let Some(comp) = job.planned_components.get_mut(idx) {
                     comp.actual_size = Some(component_def.size);
