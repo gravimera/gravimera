@@ -24,6 +24,7 @@ use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
 
 const PANEL_WIDTH_PX: f32 = 260.0;
 const PANEL_WIDTH_MANAGE_PX: f32 = 320.0;
+const LIST_SCROLLBAR_WIDTH_PX: f32 = 14.0;
 const PANEL_Z_INDEX: i32 = 920;
 const FLOOR_PREVIEW_Z_INDEX: i32 = 1200;
 const FLOOR_PREVIEW_MODAL_Z_INDEX: i32 = FLOOR_PREVIEW_Z_INDEX + 20;
@@ -621,6 +622,7 @@ pub(crate) fn setup_floor_library_ui(
                     column_gap: Val::Px(6.0),
                     flex_grow: 1.0,
                     flex_basis: Val::Px(0.0),
+                    min_width: Val::Px(0.0),
                     min_height: Val::Px(0.0),
                     ..default()
                 },
@@ -631,6 +633,7 @@ pub(crate) fn setup_floor_library_ui(
                     Node {
                         flex_grow: 1.0,
                         flex_basis: Val::Px(0.0),
+                        min_width: Val::Px(0.0),
                         min_height: Val::Px(0.0),
                         overflow: Overflow::scroll_y(),
                         ..default()
@@ -675,7 +678,7 @@ pub(crate) fn setup_floor_library_ui(
 
                 row.spawn((
                     Node {
-                        width: Val::Px(10.0),
+                        width: Val::Px(LIST_SCROLLBAR_WIDTH_PX),
                         flex_direction: FlexDirection::Column,
                         align_items: AlignItems::Stretch,
                         ..default()
@@ -903,8 +906,9 @@ pub(crate) fn floor_library_manage_toggle_button_interactions(
                             state.multi_selected_floors.insert(selected);
                         }
                     }
-                    state.multi_select_anchor_floor_id =
-                        state.selected_floor_id.filter(|floor_id| *floor_id != DEFAULT_FLOOR_ID);
+                    state.multi_select_anchor_floor_id = state
+                        .selected_floor_id
+                        .filter(|floor_id| *floor_id != DEFAULT_FLOOR_ID);
                     close_floor_library_preview(&mut commands, &mut state);
                 } else {
                     state.multi_selected_floors.clear();
@@ -998,7 +1002,8 @@ pub(crate) fn floor_library_manage_select_all_button_interactions(
                     .filter(|floor_id| *floor_id != DEFAULT_FLOOR_ID)
                     .collect();
                 let anchor_valid = state.multi_select_anchor_floor_id.is_some_and(|floor_id| {
-                    floor_id != DEFAULT_FLOOR_ID && state.listed_floors.iter().any(|id| *id == floor_id)
+                    floor_id != DEFAULT_FLOOR_ID
+                        && state.listed_floors.iter().any(|id| *id == floor_id)
                 });
                 if !anchor_valid {
                     state.multi_select_anchor_floor_id = state
@@ -2120,6 +2125,7 @@ pub(crate) fn floor_library_rebuild_list_ui(
                 Button,
                 Node {
                     width: Val::Percent(100.0),
+                    min_width: Val::Px(0.0),
                     padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
                     border: UiRect::all(Val::Px(1.0)),
                     flex_direction: FlexDirection::Row,

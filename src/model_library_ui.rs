@@ -29,6 +29,7 @@ use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
 const PANEL_Z_INDEX: i32 = 930;
 const PANEL_WIDTH_PX: f32 = 260.0;
 const PANEL_WIDTH_MANAGE_PX: f32 = 320.0;
+const LIST_SCROLLBAR_WIDTH_PX: f32 = 14.0;
 const DRAG_START_THRESHOLD_PX: f32 = 6.0;
 const PREFAB_PREVIEW_Z_INDEX: i32 = 1200;
 const PREFAB_PREVIEW_MODAL_Z_INDEX: i32 = PREFAB_PREVIEW_Z_INDEX + 20;
@@ -851,6 +852,7 @@ pub(crate) fn setup_model_library_ui(
                     column_gap: Val::Px(6.0),
                     flex_grow: 1.0,
                     flex_basis: Val::Px(0.0),
+                    min_width: Val::Px(0.0),
                     min_height: Val::Px(0.0),
                     ..default()
                 },
@@ -861,6 +863,7 @@ pub(crate) fn setup_model_library_ui(
                     Node {
                         flex_grow: 1.0,
                         flex_basis: Val::Px(0.0),
+                        min_width: Val::Px(0.0),
                         min_height: Val::Px(0.0),
                         overflow: Overflow::scroll_y(),
                         ..default()
@@ -907,7 +910,7 @@ pub(crate) fn setup_model_library_ui(
 
                 row.spawn((
                     Node {
-                        width: Val::Px(10.0),
+                        width: Val::Px(LIST_SCROLLBAR_WIDTH_PX),
                         flex_direction: FlexDirection::Column,
                         align_items: AlignItems::Stretch,
                         ..default()
@@ -1635,6 +1638,7 @@ pub(crate) fn model_library_rebuild_list_ui(
                 Button,
                 Node {
                     width: Val::Percent(100.0),
+                    min_width: Val::Px(0.0),
                     padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
                     border: UiRect::all(Val::Px(1.0)),
                     flex_direction: FlexDirection::Row,

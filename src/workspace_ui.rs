@@ -13,6 +13,7 @@ const SIDE_PANEL_Z_INDEX: i32 = 930;
 const TOOLBAR_BUTTON_WIDTH_PX: f32 = 132.0;
 const TOOLBAR_BUTTON_HEIGHT_PX: f32 = 34.0;
 const SIDE_PANEL_WIDTH_PX: f32 = 260.0;
+const LIST_SCROLLBAR_WIDTH_PX: f32 = 14.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WorkspaceTab {
@@ -540,6 +541,7 @@ pub(crate) fn setup_workspace_ui(
                     flex_direction: FlexDirection::Row,
                     flex_grow: 1.0,
                     flex_basis: Val::Px(0.0),
+                    min_width: Val::Px(0.0),
                     min_height: Val::Px(0.0),
                     ..default()
                 },
@@ -550,6 +552,7 @@ pub(crate) fn setup_workspace_ui(
                     Node {
                         flex_grow: 1.0,
                         flex_basis: Val::Px(0.0),
+                        min_width: Val::Px(0.0),
                         min_height: Val::Px(0.0),
                         overflow: Overflow::scroll_y(),
                         ..default()
@@ -573,7 +576,7 @@ pub(crate) fn setup_workspace_ui(
 
                 row.spawn((
                     Node {
-                        width: Val::Px(10.0),
+                        width: Val::Px(LIST_SCROLLBAR_WIDTH_PX),
                         flex_direction: FlexDirection::Column,
                         align_items: AlignItems::Stretch,
                         ..default()

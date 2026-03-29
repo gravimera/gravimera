@@ -203,6 +203,7 @@ pub(crate) fn scenes_panel_rebuild_list_ui(
                 Button,
                 Node {
                     width: Val::Percent(100.0),
+                    min_width: Val::Px(0.0),
                     padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
                     border: UiRect::all(Val::Px(1.0)),
                     ..default()
