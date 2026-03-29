@@ -8,9 +8,17 @@ use crate::types::*;
 
 pub(crate) fn camera_zoom_input(
     windows: Query<&Window, With<PrimaryWindow>>,
+    scenes_panel_roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::workspace_ui::ScenesPanelRoot>,
+    >,
     model_panel_roots: Query<
         (&ComputedNode, &UiGlobalTransform, &Visibility),
         With<crate::model_library_ui::ModelLibraryRoot>,
+    >,
+    floor_panel_roots: Query<
+        (&ComputedNode, &UiGlobalTransform, &Visibility),
+        With<crate::floor_library_ui::FloorLibraryRoot>,
     >,
     model_library_preview_roots: Query<
         (&ComputedNode, &UiGlobalTransform, &Visibility),
@@ -28,12 +36,24 @@ pub(crate) fn camera_zoom_input(
         .ok()
         .and_then(|window| window.physical_cursor_position())
         .is_some_and(|cursor| {
-            model_panel_roots
+            scenes_panel_roots
                 .single()
                 .ok()
                 .is_some_and(|(node, transform, vis)| {
                     *vis != Visibility::Hidden && node.contains_point(*transform, cursor)
                 })
+                || model_panel_roots
+                    .single()
+                    .ok()
+                    .is_some_and(|(node, transform, vis)| {
+                        *vis != Visibility::Hidden && node.contains_point(*transform, cursor)
+                    })
+                || floor_panel_roots
+                    .single()
+                    .ok()
+                    .is_some_and(|(node, transform, vis)| {
+                        *vis != Visibility::Hidden && node.contains_point(*transform, cursor)
+                    })
                 || meta_panel_roots
                     .single()
                     .ok()

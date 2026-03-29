@@ -188,11 +188,8 @@ impl Plugin for RenderedUiPlugin {
                     .after(crate::workspace_ui::workspace_toolbar_sync_model_library_open),
                 crate::workspace_ui::workspace_toolbar_update_toggle_button_styles
                     .after(crate::workspace_ui::workspace_toolbar_sync_floor_library_open),
-                crate::workspace_ui::workspace_toolbar_update_scene_builder_button_styles
+                crate::workspace_ui::workspace_toolbar_update_scenes_panel_visibility
                     .after(crate::workspace_ui::workspace_toolbar_update_toggle_button_styles),
-                crate::workspace_ui::workspace_toolbar_update_scenes_panel_visibility.after(
-                    crate::workspace_ui::workspace_toolbar_update_scene_builder_button_styles,
-                ),
             ),
         );
 
@@ -218,8 +215,6 @@ impl Plugin for RenderedUiPlugin {
             Update,
             (
                 crate::workspace_ui::workspace_toolbar_toggle_buttons,
-                crate::workspace_ui::workspace_toolbar_scene_builder_button_interactions
-                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::build::handle_game_mode_toggle_button
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::action_log_ui::handle_action_log_toggle_button,

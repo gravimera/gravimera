@@ -72,31 +72,6 @@ impl SceneAuthoringUiState {
         self.open
     }
 
-    pub(crate) fn set_open(&mut self, open: bool) {
-        if open {
-            if self.open {
-                return;
-            }
-            self.open = true;
-            self.realms_dirty = true;
-            self.scenes_dirty = true;
-            self.error = None;
-            return;
-        }
-
-        if !self.open {
-            return;
-        }
-        self.open = false;
-        self.realm_dropdown_open = false;
-        self.focused_field = SceneUiField::None;
-    }
-
-    pub(crate) fn toggle_open(&mut self) {
-        let open = !self.open;
-        self.set_open(open);
-    }
-
     pub(crate) fn set_status(&mut self, status: impl Into<String>) {
         self.status = status.into();
     }

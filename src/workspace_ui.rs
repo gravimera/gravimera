@@ -12,7 +12,6 @@ const WORKSPACE_UI_Z_INDEX: i32 = 960;
 const SIDE_PANEL_Z_INDEX: i32 = 930;
 const TOOLBAR_BUTTON_WIDTH_PX: f32 = 132.0;
 const TOOLBAR_BUTTON_HEIGHT_PX: f32 = 34.0;
-const SCENE_BUILDER_BUTTON_WIDTH_PX: f32 = 168.0;
 const SIDE_PANEL_WIDTH_PX: f32 = 260.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,12 +164,6 @@ pub(crate) struct WorkspaceFloorsToggleButton;
 pub(crate) struct WorkspaceFloorsToggleButtonText;
 
 #[derive(Component)]
-pub(crate) struct WorkspaceSceneBuilderButton;
-
-#[derive(Component)]
-pub(crate) struct WorkspaceSceneBuilderButtonText;
-
-#[derive(Component)]
 pub(crate) struct ScenesPanelRoot;
 
 pub(crate) fn setup_workspace_ui(
@@ -197,7 +190,7 @@ pub(crate) fn setup_workspace_ui(
             root.spawn((
                 Button,
                 Node {
-                    width: Val::Px(SCENE_BUILDER_BUTTON_WIDTH_PX),
+                    width: Val::Px(TOOLBAR_BUTTON_WIDTH_PX),
                     height: Val::Px(TOOLBAR_BUTTON_HEIGHT_PX),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
@@ -287,39 +280,6 @@ pub(crate) fn setup_workspace_ui(
                     },
                     TextColor(Color::srgb(0.92, 0.92, 0.96)),
                     WorkspaceFloorsToggleButtonText,
-                ));
-            });
-
-            root.spawn((
-                Button,
-                Node {
-                    width: Val::Px(TOOLBAR_BUTTON_WIDTH_PX),
-                    height: Val::Px(TOOLBAR_BUTTON_HEIGHT_PX),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
-                    border: UiRect::all(Val::Px(1.0)),
-                    ..default()
-                },
-                BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.60)),
-                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                Outline {
-                    width: Val::Px(1.0),
-                    color: Color::srgba(0.25, 0.25, 0.30, 0.65),
-                    offset: Val::Px(0.0),
-                },
-                WorkspaceSceneBuilderButton,
-            ))
-            .with_children(|b| {
-                b.spawn((
-                    Text::new("Scene Builder"),
-                    TextLayout::new_with_no_wrap(),
-                    TextFont {
-                        font_size: 16.0,
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                    WorkspaceSceneBuilderButtonText,
                 ));
             });
 
@@ -728,7 +688,6 @@ pub(crate) fn workspace_toolbar_update_visibility(
             With<WorkspaceScenesToggleButton>,
             With<WorkspaceModelsToggleButton>,
             With<WorkspaceFloorsToggleButton>,
-            With<WorkspaceSceneBuilderButton>,
         )>,
     >,
 ) {
@@ -777,55 +736,6 @@ pub(crate) fn workspace_toolbar_update_toggle_button_styles(
             false
         };
 
-        match *interaction {
-            Interaction::Pressed => {
-                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
-                *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
-            }
-            Interaction::Hovered => {
-                *bg = BackgroundColor(Color::srgba(0.08, 0.08, 0.10, 0.80));
-                *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
-            }
-            Interaction::None => {
-                if selected {
-                    *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.85));
-                    *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
-                } else {
-                    *bg = BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.60));
-                    *border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
-                }
-            }
-        }
-    }
-}
-
-pub(crate) fn workspace_toolbar_scene_builder_button_interactions(
-    mode: Res<State<GameMode>>,
-    build_scene: Res<State<BuildScene>>,
-    mut scene_ui: ResMut<crate::scene_authoring_ui::SceneAuthoringUiState>,
-    mut buttons: Query<&Interaction, (Changed<Interaction>, With<WorkspaceSceneBuilderButton>)>,
-) {
-    if !matches!(mode.get(), GameMode::Build) || !matches!(build_scene.get(), BuildScene::Realm) {
-        return;
-    }
-
-    for interaction in &mut buttons {
-        if *interaction != Interaction::Pressed {
-            continue;
-        }
-        scene_ui.toggle_open();
-    }
-}
-
-pub(crate) fn workspace_toolbar_update_scene_builder_button_styles(
-    scene_ui: Res<crate::scene_authoring_ui::SceneAuthoringUiState>,
-    mut buttons: Query<
-        (&Interaction, &mut BackgroundColor, &mut BorderColor),
-        With<WorkspaceSceneBuilderButton>,
-    >,
-) {
-    for (interaction, mut bg, mut border) in &mut buttons {
-        let selected = scene_ui.is_open();
         match *interaction {
             Interaction::Pressed => {
                 *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
