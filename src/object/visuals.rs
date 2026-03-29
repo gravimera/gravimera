@@ -287,7 +287,7 @@ pub(crate) struct ObjectRefEdgeBinding {
 }
 
 #[allow(dead_code)]
-#[derive(Component, Clone, Debug)]
+#[derive(Component, Clone, Copy, Debug)]
 pub(crate) struct VisualObjectRefRoot {
     pub(crate) root_entity: Entity,
     pub(crate) parent_object_id: u128,
@@ -498,7 +498,7 @@ fn spawn_object_visuals_inner(
                     root_entity,
                     parent_object_id: def.object_id,
                     object_id: *child_id,
-                    depth,
+                    depth: depth + 1,
                     order: part_index,
                 });
                 child.insert(ObjectRefEdgeBinding {

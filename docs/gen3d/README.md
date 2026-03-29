@@ -88,13 +88,16 @@ The left-side Gen3D Status panel shows a compact run summary plus a scrolling st
 
 ## Preview inspection
 
-The main Gen3D preview panel now has a lightweight component-inspection overlay.
+The main Gen3D preview panel now has a lightweight component-inspection overlay for the full
+component tree, not just the first root layer.
 
-- Hover a top-level component in the preview image to frame it and show a small info card.
-- Use the `Inspect` → `Explode` toggle in the preview stats box to separate top-level components in
-  the preview only.
-- In explode mode, each separated top-level component shows its name directly in the preview. Hover
-  still shows the fuller info card.
+- Hover a visible component in the preview image to frame it and show a small info card.
+- When parent and child frames overlap, picking prefers the more specific nested component instead
+  of collapsing everything to the enclosing torso/body shell.
+- Use the `Inspect` → `Explode` toggle in the preview stats box to separate visible components in
+  the preview only, including nested object-ref roots.
+- In explode mode, separated components show their names directly in the preview. Hover still shows
+  the fuller info card.
 
 This is preview-only inspection UI. It does not modify the draft, saved prefab, or component
 attachments.

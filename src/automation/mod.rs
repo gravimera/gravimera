@@ -375,8 +375,29 @@ struct AutomationWorld<'w, 's> {
     gen3d_preview_cameras: Query<
         'w,
         's,
-        &'static bevy::camera::visibility::RenderLayers,
+        (
+            &'static Camera,
+            &'static GlobalTransform,
+            &'static bevy::camera::visibility::RenderLayers,
+        ),
         With<crate::gen3d::Gen3dPreviewCamera>,
+    >,
+    gen3d_preview_panels: Query<
+        'w,
+        's,
+        (&'static ComputedNode, &'static UiGlobalTransform),
+        With<crate::gen3d::Gen3dPreviewPanel>,
+    >,
+    gen3d_preview_ui_roots: Query<'w, 's, Entity, With<crate::gen3d::Gen3dPreviewUiModelRoot>>,
+    gen3d_preview_components: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static crate::object::visuals::VisualObjectRefRoot,
+            &'static GlobalTransform,
+            Option<&'static crate::gen3d::Gen3dPreviewAppliedExplodeOffset>,
+        ),
     >,
     active_floor: Res<'w, ActiveWorldFloor>,
     players: Query<'w, 's, (), With<Player>>,
@@ -449,6 +470,7 @@ struct AutomationWorld<'w, 's> {
 struct AutomationGen3d<'w> {
     log_sinks: Option<Res<'w, crate::app::Gen3dLogSinks>>,
     workshop: Option<ResMut<'w, crate::gen3d::Gen3dWorkshop>>,
+    preview: Option<ResMut<'w, crate::gen3d::Gen3dPreview>>,
     job: Option<ResMut<'w, crate::gen3d::Gen3dAiJob>>,
     draft: Option<ResMut<'w, crate::gen3d::Gen3dDraft>>,
     task_queue: Option<ResMut<'w, crate::gen3d::Gen3dTaskQueue>>,
@@ -814,6 +836,17 @@ struct GenfloorPromptRequest {
 #[derive(Deserialize)]
 struct Gen3dSeedFromPrefabRequest {
     prefab_id_uuid: String,
+}
+
+#[derive(Deserialize)]
+struct Gen3dPreviewExplodeRequest {
+    enabled: bool,
+}
+
+#[derive(Deserialize)]
+struct Gen3dPreviewProbeRequest {
+    x: f32,
+    y: f32,
 }
 
 #[derive(Deserialize)]
@@ -1336,6 +1369,7 @@ fn handle_gen3d_routes<
     let library = &mut *ctx.library;
     let prefab_descriptors = &mut *ctx.prefab_descriptors;
     let mut gen3d_workshop = ctx.gen3d.workshop.as_deref_mut();
+    let mut gen3d_preview = ctx.gen3d.preview.as_deref_mut();
     let mut gen3d_job = ctx.gen3d.job.as_deref_mut();
     let mut gen3d_draft = ctx.gen3d.draft.as_deref_mut();
     let mut gen3d_task_queue = ctx.gen3d.task_queue.as_deref_mut();
@@ -1431,7 +1465,7 @@ fn handle_gen3d_routes<
 
             let mut preview_camera_layers: Vec<usize> = Vec::new();
             let mut has_preview_camera = false;
-            for layers in ctx.world.gen3d_preview_cameras.iter() {
+            for (_camera, _camera_transform, layers) in ctx.world.gen3d_preview_cameras.iter() {
                 has_preview_camera = true;
                 preview_camera_layers = layers.iter().collect();
                 break;
@@ -1444,11 +1478,76 @@ fn handle_gen3d_routes<
                 "running_session_id": running_id.map(|id| id.to_string()),
                 "active_draft_empty": draft.defs.is_empty(),
                 "should_hide_running_preview": should_hide_running_preview,
+                "explode_components": gen3d_preview
+                    .as_deref()
+                    .map(|preview| preview.explode_components)
+                    .unwrap_or(false),
                 "preview_camera": {
                     "present": has_preview_camera,
                     "render_layers": preview_camera_layers,
                 },
             })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("GET", "/v1/gen3d/preview/components") => {
+            let Some(_preview) = gen3d_preview.as_deref() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+
+            let body = match build_gen3d_preview_debug_payload(ctx.world, library, None) {
+                Ok(body) => body,
+                Err(reply) => return Some(reply),
+            }
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/gen3d/preview/explode") => {
+            let Some(preview) = gen3d_preview.as_deref_mut() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+            let req: Gen3dPreviewExplodeRequest = match serde_json::from_slice(&msg.body) {
+                Ok(req) => req,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+
+            preview.explode_components = req.enabled;
+            let body = serde_json::json!({
+                "ok": true,
+                "explode_components": preview.explode_components,
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/gen3d/preview/probe") => {
+            let Some(_preview) = gen3d_preview.as_deref() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+            let req: Gen3dPreviewProbeRequest = match serde_json::from_slice(&msg.body) {
+                Ok(req) => req,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+
+            let body = match build_gen3d_preview_debug_payload(
+                ctx.world,
+                library,
+                Some(Vec2::new(req.x, req.y)),
+            ) {
+                Ok(body) => body,
+                Err(reply) => return Some(reply),
+            }
             .to_string();
             Some(AutomationReply {
                 status: 200,
@@ -3431,6 +3530,91 @@ fn handle_genfloor_routes<
     }
 }
 
+fn build_gen3d_preview_debug_payload<'w, 's>(
+    world: &AutomationWorld<'w, 's>,
+    library: &ObjectLibrary,
+    probe_panel_logical: Option<Vec2>,
+) -> Result<serde_json::Value, AutomationReply> {
+    let Some((camera, camera_transform, _layers)) = world.gen3d_preview_cameras.iter().next()
+    else {
+        return Err(json_error(409, "Gen3D preview camera is not ready."));
+    };
+    let Some((panel_node, panel_transform)) = world.gen3d_preview_panels.iter().next() else {
+        return Err(json_error(409, "Gen3D preview panel is not ready."));
+    };
+    let Some(layout) = crate::gen3d::preview_image_layout(panel_node, *panel_transform) else {
+        return Err(json_error(409, "Gen3D preview panel layout is not ready."));
+    };
+    let Some(ui_root) = world.gen3d_preview_ui_roots.iter().next() else {
+        return Err(json_error(409, "Gen3D preview model is not ready."));
+    };
+
+    let probe_target = probe_panel_logical
+        .and_then(|point| crate::gen3d::preview_panel_logical_to_target(point, layout));
+    let ray =
+        probe_target.and_then(|target| camera.viewport_to_world(camera_transform, target).ok());
+    let overlays = crate::gen3d::collect_preview_component_overlays(
+        library,
+        camera,
+        camera_transform,
+        layout,
+        ui_root,
+        ray,
+        world.gen3d_preview_components.iter().map(
+            |(entity, meta, global_transform, applied_offset)| {
+                (
+                    entity,
+                    meta,
+                    global_transform,
+                    applied_offset.map(|offset| offset.0).unwrap_or(Vec3::ZERO),
+                )
+            },
+        ),
+    );
+    let hovered = crate::gen3d::pick_hovered_preview_component(&overlays, probe_panel_logical)
+        .and_then(|index| overlays.get(index).map(|overlay| (index, overlay)));
+
+    let point_json = |point: Vec2| serde_json::json!([point.x, point.y]);
+    let vec3_json = |point: Vec3| serde_json::json!([point.x, point.y, point.z]);
+    let projected_json = |projected: crate::gen3d::PreviewProjectedComponent| {
+        serde_json::json!({
+            "frame_panel_logical": {
+                "min": point_json(projected.frame_panel_logical.min),
+                "max": point_json(projected.frame_panel_logical.max),
+            },
+            "label_anchor_panel_logical": point_json(projected.label_anchor_panel_logical),
+        })
+    };
+
+    Ok(serde_json::json!({
+        "ok": true,
+        "panel_size_logical": point_json(layout.panel_size_logical),
+        "probe_panel_logical": probe_panel_logical.map(point_json),
+        "probe_target_px": probe_target.map(point_json),
+        "hovered": hovered.map(|(index, overlay)| serde_json::json!({
+            "index": index,
+            "entity_bits": overlay.entity.to_bits(),
+            "object_id_uuid": uuid::Uuid::from_u128(overlay.object_id).to_string(),
+            "label": overlay.label,
+            "depth": overlay.depth,
+            "order": overlay.order,
+            "stable_order": overlay.stable_order,
+            "projected": overlay.projected.map(projected_json),
+        })),
+        "components": overlays.iter().map(|overlay| serde_json::json!({
+            "entity_bits": overlay.entity.to_bits(),
+            "object_id_uuid": uuid::Uuid::from_u128(overlay.object_id).to_string(),
+            "label": overlay.label,
+            "depth": overlay.depth,
+            "order": overlay.order,
+            "stable_order": overlay.stable_order,
+            "ray_t": overlay.ray_t,
+            "explode_offset_local": vec3_json(overlay.applied_explode_offset_local),
+            "projected": overlay.projected.map(projected_json),
+        })).collect::<Vec<_>>(),
+    }))
+}
+
 fn handle_request_main_thread<
     'a,
     'cmd_w,
@@ -3555,6 +3739,9 @@ fn handle_request_main_thread<
                 serde_json::json!({"method":"POST","path":"/v1/shutdown"}),
                 serde_json::json!({"method":"GET","path":"/v1/gen3d/status"}),
                 serde_json::json!({"method":"GET","path":"/v1/gen3d/preview"}),
+                serde_json::json!({"method":"GET","path":"/v1/gen3d/preview/components"}),
+                serde_json::json!({"method":"POST","path":"/v1/gen3d/preview/explode"}),
+                serde_json::json!({"method":"POST","path":"/v1/gen3d/preview/probe"}),
                 serde_json::json!({"method":"POST","path":"/v1/gen3d/prompt"}),
                 serde_json::json!({"method":"POST","path":"/v1/gen3d/build"}),
                 serde_json::json!({"method":"GET","path":"/v1/gen3d/tasks"}),

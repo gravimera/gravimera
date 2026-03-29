@@ -1204,6 +1204,7 @@ Response (shape):
   "running_session_id": "1e973ac3-ce48-4319-9582-cabf9c929598",
   "active_draft_empty": true,
   "should_hide_running_preview": true,
+  "explode_components": false,
   "preview_camera": {
     "present": true,
     "render_layers": []
@@ -1214,6 +1215,115 @@ Response (shape):
 Notes:
 
 - `preview_camera.render_layers=[]` means the camera renders **no** layers (the preview is visually blank).
+
+### `GET /v1/gen3d/preview/components`
+
+Debug endpoint to inspect the currently visible Gen3D preview components, including projected panel
+frames and current explode offsets.
+
+```bash
+curl -s http://127.0.0.1:8791/v1/gen3d/preview/components
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "panel_size_logical": [960.0, 540.0],
+  "probe_panel_logical": null,
+  "probe_target_px": null,
+  "hovered": null,
+  "components": [
+    {
+      "entity_bits": 12345,
+      "object_id_uuid": "41d2d0fb-24ff-498f-ad05-c0884aa620ba",
+      "label": "torso",
+      "depth": 2,
+      "order": 0,
+      "stable_order": 7,
+      "ray_t": null,
+      "explode_offset_local": [0.0, 0.0, 0.0],
+      "projected": {
+        "frame_panel_logical": {
+          "min": [120.0, 80.0],
+          "max": [340.0, 420.0]
+        },
+        "label_anchor_panel_logical": [230.0, 250.0]
+      }
+    }
+  ]
+}
+```
+
+Notes:
+
+- `depth` is the actual object-ref depth inside the preview hierarchy. Root child components start
+  at `depth=1`.
+- `explode_offset_local` is the preview-only offset currently applied in the component’s parent
+  local space.
+
+### `POST /v1/gen3d/preview/explode`
+
+Enable or disable preview-only component explosion.
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/gen3d/preview/explode \
+  -H 'Content-Type: application/json' \
+  -d '{"enabled":true}'
+```
+
+Response:
+
+```json
+{"ok":true,"explode_components":true}
+```
+
+### `POST /v1/gen3d/preview/probe`
+
+Probe the preview picking logic at a logical point inside the preview panel. This reuses the same
+component ranking as the UI hover overlay.
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/gen3d/preview/probe \
+  -H 'Content-Type: application/json' \
+  -d '{"x":230.0,"y":250.0}'
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "panel_size_logical": [960.0, 540.0],
+  "probe_panel_logical": [230.0, 250.0],
+  "probe_target_px": [402.0, 271.0],
+  "hovered": {
+    "index": 7,
+    "entity_bits": 12345,
+    "object_id_uuid": "41d2d0fb-24ff-498f-ad05-c0884aa620ba",
+    "label": "torso",
+    "depth": 2,
+    "order": 0,
+    "stable_order": 7,
+    "projected": {
+      "frame_panel_logical": {
+        "min": [120.0, 80.0],
+        "max": [340.0, 420.0]
+      },
+      "label_anchor_panel_logical": [230.0, 250.0]
+    }
+  },
+  "components": []
+}
+```
+
+Notes:
+
+- `hovered=null` means the probe point was outside the visible preview image or did not resolve to a
+  component.
+- The endpoint uses the same nested-component preference as the UI: when multiple projected frames
+  contain the probe point, deeper/smaller components beat enclosing parents.
 
 ### `POST /v1/gen3d/prompt`
 

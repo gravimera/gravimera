@@ -6,9 +6,9 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
 
 ## Purpose / Big Picture
 
-After this change, a user looking at the Gen3D preview panel can inspect the generated assembly as named components instead of a single opaque model. Moving the cursor over a component in the preview will draw a clear frame around that component and show a small info card with useful details such as the component name and size. Turning on the new explode switch will push the top-level components apart in the preview, keep the saved draft unchanged, and show component names directly in the panel so the user can quickly understand the structure of the object.
+After this change, a user looking at the Gen3D preview panel can inspect the generated assembly as named components instead of a single opaque model. Moving the cursor over a component in the preview will draw a clear frame around that component and show a small info card with useful details such as the component name and size. Turning on the new explode switch will push preview components apart in the preview, keep the saved draft unchanged, and show component names directly in the panel so the user can quickly understand the structure of the object.
 
-The behavior is visible in the existing Gen3D workshop in Build Preview mode. Open Gen3D, generate or load a draft with multiple components, hover the preview, and confirm that the hovered top-level component is framed. Then enable the explode switch and confirm that the preview separates components and shows labels for each of them while hover still reveals the full information card.
+The behavior is visible in the existing Gen3D workshop in Build Preview mode. Open Gen3D, generate or load a draft with nested components, hover the preview, and confirm that the hovered visible component is framed. Then enable the explode switch and confirm that the preview separates nested components and shows labels for each of them while hover still reveals the full information card.
 
 ## Progress
 
@@ -21,7 +21,11 @@ The behavior is visible in the existing Gen3D workshop in Build Preview mode. Op
 - [x] (2026-03-30 07:45Z) Added preview helper tests covering local center math, explode fallback direction, cursor mapping, and local AABB ray entry distance.
 - [x] (2026-03-30 07:47Z) Updated `docs/gen3d/README.md` and `docs/controls.md` for the new inspection controls.
 - [x] (2026-03-30 08:05Z) Ran `cargo fmt`, focused Gen3D tests, full `cargo test -q`, and the required rendered smoke test.
-- [ ] Commit the finished change with a clear message.
+- [x] (2026-03-30 10:32Z) Diagnosed the user-reported regression: hover/explode were incorrectly limited to `depth == 0`, so nested prefabs collapsed to one top-level target.
+- [x] (2026-03-30 10:57Z) Reworked preview picking/explode to support all object-ref depths generically, using hierarchy-safe local/world explode offsets and a nested-component hover ranking.
+- [x] (2026-03-30 11:12Z) Added preview automation endpoints for component snapshots, explode toggling, and deterministic probe picking.
+- [x] (2026-03-30 11:28Z) Added a rendered real HTTP regression under `test/run_1/gen3d_preview_component_inspection/`.
+- [ ] Run full validation on the nested-component fix path and commit the finished change with a clear message.
 
 ## Surprises & Discoveries
 
@@ -37,10 +41,13 @@ The behavior is visible in the existing Gen3D workshop in Build Preview mode. Op
 - Observation: Bevy system parameter validation rejects multiple mutable `Query` parameters that touch the same component types, even when the queried entities are logically distinct overlay widgets.
   Evidence: the first rendered smoke run failed with `error[B0001]` for `Node`/`Visibility`, then again for `Text`, until the overlay system was rewritten to use a single filtered overlay-node query and a single filtered overlay-text query.
 
+- Observation: limiting preview inspection to object-ref metadata with `depth == 0` only works for flat assemblies. In nested prefabs it makes torso/body shells shadow all internal targets and makes explode appear inert.
+  Evidence: `src/gen3d/preview.rs` originally filtered both hover and explode to `meta.depth != 0`, while `src/object/visuals.rs` stored first-level children with `depth = 0`.
+
 ## Decision Log
 
-- Decision: inspect only top-level root components in the Gen3D draft for hover framing and explode mode, while still storing generic metadata on all spawned object-ref roots.
-  Rationale: the user language and existing Gen3D component model refer to top-level draft components. Storing generic metadata on all object-ref roots keeps the visual spawn path reusable, but filtering to top-level components in preview avoids surprising labels on internal substructure and keeps the overlay readable.
+- Decision: inspect the full spawned object-ref tree, not only the first root layer.
+  Rationale: user-visible Gen3D prefabs can nest components several levels deep. Restricting inspection to the first layer makes the hover card and explode mode fail on exactly the kind of assemblies the feature is supposed to explain.
   Date/Author: 2026-03-30 / Codex
 
 - Decision: keep the hover frame as a 2D projected overlay rather than a 3D highlight mesh or shader effect.
@@ -62,8 +69,9 @@ The behavior is visible in the existing Gen3D workshop in Build Preview mode. Op
 ## Outcomes & Retrospective
 
 The feature is implemented. Gen3D preview now exposes a hover frame and info card for top-level components, an `Inspect` → `Explode` toggle in the preview controls, and always-on component labels during explode mode. The implementation stays generic by using object-ref visual metadata plus preview-space projection math; it does not assume faces, limbs, or any other object-specific structure.
+The feature is implemented. Gen3D preview now exposes a hover frame and info card for nested object-ref components, an `Inspect` → `Explode` toggle in the preview controls, and always-on component labels during explode mode. The implementation stays generic by using object-ref visual metadata plus preview-space projection math; it does not assume faces, limbs, or any other object-specific structure.
 
-Validation was strong at the code level: `cargo test -q gen3d::preview`, `cargo test -q gen3d::ui`, and `cargo test -q` all passed, and the required rendered smoke test launched the real app successfully for two seconds after two runtime query-validation fixes. I did not perform a human interactive hover session inside the live Gen3D UI from this environment, so the remaining gap is only direct visual confirmation of the exact framing/label feel rather than correctness of the build or runtime wiring.
+The follow-up fix also added automation-only preview debug endpoints so rendered HTTP tests can prove nested picking and explode motion against real prefabs instead of relying on a human mouse session. Remaining validation work is to run the full suite and the new rendered regression after the nested-component patch.
 
 ## Context and Orientation
 
