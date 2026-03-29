@@ -16,7 +16,6 @@ Runtime data is stored under `<root_dir>/` (default: `~/.gravimera/`; override v
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import shutil
 import stat
@@ -24,6 +23,7 @@ import subprocess
 import sys
 import tarfile
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -34,6 +34,15 @@ DIST_DIR = ROOT / "dist"
 
 APP_NAME = "Gravimera"
 BUNDLE_ID = "com.flowbehappy.gravimera"
+
+
+@dataclass(frozen=True)
+class BuildSpec:
+    target: str | None
+    platform: str
+    exe_name: str
+    artifact_suffix: str | None
+    bundle_name: str
 
 
 def _read_version() -> str:
@@ -55,6 +64,10 @@ def _read_version() -> str:
 def _run(cmd: list[str], *, cwd: Path = ROOT) -> None:
     print("+", " ".join(cmd))
     subprocess.check_call(cmd, cwd=str(cwd))
+
+
+def _check_output(cmd: list[str], *, cwd: Path = ROOT) -> str:
+    return subprocess.check_output(cmd, cwd=str(cwd), text=True)
 
 
 def _ensure_icons() -> None:
@@ -114,6 +127,94 @@ def _make_targz(tar_path: Path, folder: Path) -> None:
         tf.add(folder, arcname=folder.name)
 
 
+def _host_platform() -> str:
+    if sys.platform == "win32":
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    return "linux"
+
+
+def _platform_from_target(target: str) -> str:
+    lowered = target.lower()
+    if "windows" in lowered:
+        return "windows"
+    if "apple-darwin" in lowered or lowered.endswith("-darwin"):
+        return "macos"
+    if "linux" in lowered:
+        return "linux"
+    raise SystemExit(
+        f"Unsupported target triple for packaging: {target}\n"
+        "Expected a Windows, macOS, or Linux target triple."
+    )
+
+
+def _exe_name_for_platform(platform: str) -> str:
+    return "gravimera.exe" if platform == "windows" else "gravimera"
+
+
+def _package_name(*, version: str, platform: str, artifact_suffix: str | None) -> str:
+    name = f"gravimera-{version}-{platform}"
+    if artifact_suffix:
+        name += f"-{artifact_suffix}"
+    return name
+
+
+def _normalize_build_specs(targets: list[str] | None) -> list[BuildSpec]:
+    if not targets:
+        platform = _host_platform()
+        return [
+            BuildSpec(
+                target=None,
+                platform=platform,
+                exe_name=_exe_name_for_platform(platform),
+                artifact_suffix=None,
+                bundle_name=APP_NAME,
+            )
+        ]
+
+    specs: list[BuildSpec] = []
+    seen: set[str] = set()
+    for target in targets:
+        if target in seen:
+            continue
+        seen.add(target)
+        platform = _platform_from_target(target)
+        specs.append(
+            BuildSpec(
+                target=target,
+                platform=platform,
+                exe_name=_exe_name_for_platform(platform),
+                artifact_suffix=target,
+                bundle_name=f"{APP_NAME}-{target}" if platform == "macos" else APP_NAME,
+            )
+        )
+    return specs
+
+
+def _installed_rust_targets() -> set[str]:
+    try:
+        output = _check_output(["rustup", "target", "list", "--installed"])
+    except (OSError, subprocess.CalledProcessError):
+        return set()
+    return {line.strip() for line in output.splitlines() if line.strip()}
+
+
+def _ensure_explicit_targets_installed(specs: list[BuildSpec]) -> None:
+    explicit_targets = [spec.target for spec in specs if spec.target]
+    if not explicit_targets:
+        return
+    installed = _installed_rust_targets()
+    if not installed:
+        return
+    missing = [target for target in explicit_targets if target not in installed]
+    if missing:
+        joined = ", ".join(missing)
+        lines = [f"Rust target(s) not installed: {joined}"]
+        lines.extend(f"Run: `rustup target add {target}`" for target in missing)
+        raise SystemExit("\n".join(lines))
+
+
 def _build_release(*, target: str | None) -> None:
     cmd = ["cargo", "build", "--release", "--bin", "gravimera"]
     if target:
@@ -121,17 +222,16 @@ def _build_release(*, target: str | None) -> None:
     _run(cmd)
 
 
-def _release_bin_path(*, target: str | None) -> Path:
+def _release_bin_path(*, target: str | None, exe_name: str) -> Path:
     if target:
         base = ROOT / "target" / target / "release"
     else:
         base = ROOT / "target" / "release"
-    exe = "gravimera.exe" if sys.platform == "win32" else "gravimera"
-    return base / exe
+    return base / exe_name
 
 
-def _package_windows(*, version: str, bin_path: Path, out_dir: Path) -> None:
-    pkg_name = f"gravimera-{version}-windows"
+def _package_windows(*, version: str, bin_path: Path, out_dir: Path, artifact_suffix: str | None) -> None:
+    pkg_name = _package_name(version=version, platform="windows", artifact_suffix=artifact_suffix)
     pkg_dir = out_dir / pkg_name
     _clean_dir(pkg_dir)
 
@@ -145,8 +245,8 @@ def _package_windows(*, version: str, bin_path: Path, out_dir: Path) -> None:
     print(f"Wrote {zip_path}")
 
 
-def _package_linux(*, version: str, bin_path: Path, out_dir: Path) -> None:
-    pkg_name = f"gravimera-{version}-linux"
+def _package_linux(*, version: str, bin_path: Path, out_dir: Path, artifact_suffix: str | None) -> None:
+    pkg_name = _package_name(version=version, platform="linux", artifact_suffix=artifact_suffix)
     pkg_dir = out_dir / pkg_name
     _clean_dir(pkg_dir)
 
@@ -195,9 +295,16 @@ def _write_info_plist(path: Path, *, version: str) -> None:
     path.write_text(plist, encoding="utf-8")
 
 
-def _package_macos(*, version: str, bin_path: Path, out_dir: Path) -> None:
-    pkg_name = f"gravimera-{version}-macos"
-    app_dir = out_dir / f"{APP_NAME}.app"
+def _package_macos(
+    *,
+    version: str,
+    bin_path: Path,
+    out_dir: Path,
+    artifact_suffix: str | None,
+    bundle_name: str,
+) -> None:
+    pkg_name = _package_name(version=version, platform="macos", artifact_suffix=artifact_suffix)
+    app_dir = out_dir / f"{bundle_name}.app"
     if app_dir.exists():
         shutil.rmtree(app_dir)
 
@@ -224,29 +331,55 @@ def _package_macos(*, version: str, bin_path: Path, out_dir: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--no-build", action="store_true", help="Skip `cargo build --release`")
-    parser.add_argument("--target", default=None, help="Cargo target triple (optional)")
+    parser.add_argument(
+        "--target",
+        action="append",
+        dest="targets",
+        default=None,
+        metavar="TARGET",
+        help="Cargo target triple (repeatable)",
+    )
     args = parser.parse_args()
 
     _ensure_icons()
     version = _read_version()
-
-    platform = "windows" if sys.platform == "win32" else "macos" if sys.platform == "darwin" else "linux"
-    out_dir = DIST_DIR / platform
-    out_dir.mkdir(parents=True, exist_ok=True)
-
+    specs = _normalize_build_specs(args.targets)
     if not args.no_build:
-        _build_release(target=args.target)
+        _ensure_explicit_targets_installed(specs)
 
-    bin_path = _release_bin_path(target=args.target)
-    if not bin_path.is_file():
-        raise SystemExit(f"Missing release binary: {bin_path}")
+    for spec in specs:
+        out_dir = DIST_DIR / spec.platform
+        out_dir.mkdir(parents=True, exist_ok=True)
 
-    if platform == "windows":
-        _package_windows(version=version, bin_path=bin_path, out_dir=out_dir)
-    elif platform == "macos":
-        _package_macos(version=version, bin_path=bin_path, out_dir=out_dir)
-    else:
-        _package_linux(version=version, bin_path=bin_path, out_dir=out_dir)
+        if not args.no_build:
+            _build_release(target=spec.target)
+
+        bin_path = _release_bin_path(target=spec.target, exe_name=spec.exe_name)
+        if not bin_path.is_file():
+            raise SystemExit(f"Missing release binary: {bin_path}")
+
+        if spec.platform == "windows":
+            _package_windows(
+                version=version,
+                bin_path=bin_path,
+                out_dir=out_dir,
+                artifact_suffix=spec.artifact_suffix,
+            )
+        elif spec.platform == "macos":
+            _package_macos(
+                version=version,
+                bin_path=bin_path,
+                out_dir=out_dir,
+                artifact_suffix=spec.artifact_suffix,
+                bundle_name=spec.bundle_name,
+            )
+        else:
+            _package_linux(
+                version=version,
+                bin_path=bin_path,
+                out_dir=out_dir,
+                artifact_suffix=spec.artifact_suffix,
+            )
 
     return 0
 
