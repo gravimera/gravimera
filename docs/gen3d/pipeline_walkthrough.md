@@ -58,6 +58,8 @@ Two recent contract changes matter when reading Gen3D artifacts:
 - Every authored slot also carries `family="base" | "overlay"`.
   - `base` is the gameplay-selected body family.
   - `overlay` is a forced named family that composes on top of base instead of replacing it.
+  - When a named channel is selected in preview/runtime, Gravimera first tries that channel in
+    `base`, then composes any matching `overlay` slot on top.
 
 ## What happens in a run (whole-picture flow)
 
@@ -85,6 +87,7 @@ Pipeline stages (simplified):
      - Motion complaints → re-run `llm_generate_motions_v1` once with `qa_feedback` attached, then re-run QA.
      - Plan complaints are surfaced as hints but do not currently trigger an automatic plan retry.
    - If motion channels are missing for a movable unit, or if prompt intent includes explicit named motion channels that are still missing, pipeline calls `llm_generate_motions_v1` (with a schema reminder + prior failures as `qa_feedback`) and re-runs QA.
+   - Those remediation retries stay scoped to the missing/requested channels instead of broad-brushing unrelated existing motions.
    - `action` stays the generic default handling/working motion; explicitly named motions from prompt intent are requested as additional channels, not collapsed into `action`.
 5. Optional appearance review (if enabled)
    - Tools: `render_preview_v1` → `llm_review_delta_v1`
@@ -154,6 +157,7 @@ This list matches the deterministic calls in `src/gen3d/ai/pipeline_orchestrator
     - Args: `{}`
   - `llm_generate_motions_v1`
     - Args: `{ "channels": ["move","action", ...explicit named prompt motions...], "qa_feedback": "<optional QA complaints text>" }` (and `attack` when needed)
+    - QA retries narrow `channels` to the missing/requested motion set for the current problem instead of re-authoring every default body channel.
 
 - Appearance review
   - `render_preview_v1`

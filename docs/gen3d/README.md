@@ -157,8 +157,10 @@ Each authored slot also declares a motion `family`:
 - `base`: normal gameplay-selected body motion (`attack`, `action`, `move`, `idle`, `ambient`)
 - `overlay`: a forced named channel that composes on top of `base`
 
-In preview/runtime today, `overlay` is driven by `ForcedAnimationChannel`, so named local expression
-channels like `blink` or `jaw_open` can play without replacing the body’s base motion.
+In preview/runtime today, `ForcedAnimationChannel` first tries the same named channel in `base`,
+then composes any matching `overlay` slot on top. This lets named local expression channels like
+`blink` or `jaw_open` override the default base motion when they were authored as `base`, while
+still supporting additive overlays without replacing the body’s normal motion.
 
 `query_component_parts_v1` now returns both `parts[]` and `articulation_nodes[]` so seeded edits can
 reason about internal rig handles deterministically.

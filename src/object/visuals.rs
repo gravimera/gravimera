@@ -885,6 +885,13 @@ pub(crate) fn update_part_animations(
             .map(|c| c.channel.trim())
             .filter(|c| !c.is_empty());
         if let Some(channel) = forced_channel {
+            chosen_base = choose_spec_for_channel(
+                &player.animations,
+                PartAnimationFamily::Base,
+                channel,
+                player.root_entity,
+                attack_clock,
+            );
             chosen_overlay = choose_spec_for_channel(
                 &player.animations,
                 PartAnimationFamily::Overlay,
@@ -894,28 +901,30 @@ pub(crate) fn update_part_animations(
             );
         }
 
-        for channel in ["attack", "action", "move", "idle", "ambient"] {
-            let channel_active = match channel {
-                "attack" => attack_active,
-                "action" => action_active,
-                "move" => move_active,
-                "idle" => idle_active,
-                // Ambient is always active (fallback animation like fans/spinners).
-                "ambient" => true,
-                _ => false,
-            };
-            if !channel_active {
-                continue;
-            }
-            if let Some(spec) = choose_spec_for_channel(
-                &player.animations,
-                PartAnimationFamily::Base,
-                channel,
-                player.root_entity,
-                attack_clock,
-            ) {
-                chosen_base = Some(spec);
-                break;
+        if chosen_base.is_none() {
+            for channel in ["attack", "action", "move", "idle", "ambient"] {
+                let channel_active = match channel {
+                    "attack" => attack_active,
+                    "action" => action_active,
+                    "move" => move_active,
+                    "idle" => idle_active,
+                    // Ambient is always active (fallback animation like fans/spinners).
+                    "ambient" => true,
+                    _ => false,
+                };
+                if !channel_active {
+                    continue;
+                }
+                if let Some(spec) = choose_spec_for_channel(
+                    &player.animations,
+                    PartAnimationFamily::Base,
+                    channel,
+                    player.root_entity,
+                    attack_clock,
+                ) {
+                    chosen_base = Some(spec);
+                    break;
+                }
             }
         }
 
@@ -2165,6 +2174,107 @@ mod tests {
             transform.rotation.angle_between(expected_rot) < 1e-4,
             "expected overlay family rotation to compose on top of base, got {:?}",
             transform.rotation
+        );
+    }
+
+    #[test]
+    fn forced_named_base_channel_overrides_default_base_selection() {
+        use crate::object::registry::{
+            PartAnimationDef, PartAnimationDriver, PartAnimationFamily, PartAnimationKeyframeDef,
+            PartAnimationSlot, PartAnimationSpec,
+        };
+        use crate::types::ForcedAnimationChannel;
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(ObjectLibrary::default());
+        app.add_systems(Update, update_part_animations);
+
+        let root = app
+            .world_mut()
+            .spawn((
+                AnimationChannelsActive {
+                    moving: false,
+                    acting: false,
+                    attacking_primary: false,
+                },
+                ForcedAnimationChannel {
+                    channel: "cover_face_crying".to_string(),
+                },
+            ))
+            .id();
+
+        let idle_spec = PartAnimationSpec {
+            driver: PartAnimationDriver::Always,
+            speed_scale: 1.0,
+            time_offset_units: 0.0,
+            basis: Transform::IDENTITY,
+            clip: PartAnimationDef::Loop {
+                duration_secs: 1.0,
+                keyframes: vec![PartAnimationKeyframeDef {
+                    time_secs: 0.0,
+                    delta: Transform::from_translation(Vec3::new(0.0, 1.0, 0.0)),
+                }],
+            },
+        };
+        let named_spec = PartAnimationSpec {
+            driver: PartAnimationDriver::Always,
+            speed_scale: 1.0,
+            time_offset_units: 0.0,
+            basis: Transform::IDENTITY,
+            clip: PartAnimationDef::Loop {
+                duration_secs: 1.0,
+                keyframes: vec![PartAnimationKeyframeDef {
+                    time_secs: 0.0,
+                    delta: Transform::from_translation(Vec3::new(2.0, 0.0, 0.0)),
+                }],
+            },
+        };
+
+        let part_entity = app
+            .world_mut()
+            .spawn((
+                Transform::IDENTITY,
+                PartAnimationPlayer {
+                    root_entity: root,
+                    parent_object_id: 0,
+                    child_object_id: None,
+                    attachment: None,
+                    base_transform: Transform::IDENTITY,
+                    fallback_basis: Transform::IDENTITY,
+                    animations: vec![
+                        PartAnimationSlot {
+                            channel: "idle".into(),
+                            family: PartAnimationFamily::Base,
+                            spec: idle_spec,
+                        },
+                        PartAnimationSlot {
+                            channel: "cover_face_crying".into(),
+                            family: PartAnimationFamily::Base,
+                            spec: named_spec,
+                        },
+                    ],
+                    apply_aim_yaw: false,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let transform = app
+            .world()
+            .get::<Transform>(part_entity)
+            .copied()
+            .expect("part entity has Transform");
+        assert!(
+            (transform.translation.x - 2.0).abs() < 1e-4,
+            "expected forced named base channel to override idle, got {:?}",
+            transform.translation
+        );
+        assert!(
+            transform.translation.y.abs() < 1e-4,
+            "expected idle base translation to be suppressed when forcing a named base channel, got {:?}",
+            transform.translation
         );
     }
 }

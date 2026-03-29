@@ -370,36 +370,60 @@ fn appearance_review_enabled(job: &Gen3dAiJob) -> bool {
     llm_available && job.review_appearance
 }
 
-fn pipeline_missing_required_motion_channels(job: &Gen3dAiJob, draft: &Gen3dDraft) -> Vec<String> {
-    let movable = draft
+fn push_unique_channel(channels: &mut Vec<String>, channel: &str) {
+    let channel = channel.trim();
+    if channel.is_empty() {
+        return;
+    }
+    if channels.iter().any(|existing| existing == channel) {
+        return;
+    }
+    channels.push(channel.to_string());
+}
+
+fn pipeline_required_motion_channels(job: &Gen3dAiJob, draft: &Gen3dDraft) -> Vec<String> {
+    let mut required_channels: Vec<String> = Vec::new();
+    if draft
         .root_def()
         .and_then(|def| def.mobility.as_ref())
-        .is_some();
-
-    let mut required_channels: Vec<String> = Vec::new();
-    if movable {
-        required_channels.push("move".into());
-        required_channels.push("action".into());
+        .is_some()
+    {
+        push_unique_channel(&mut required_channels, "move");
+        push_unique_channel(&mut required_channels, "action");
+    }
+    if draft
+        .root_def()
+        .and_then(|def| def.attack.as_ref())
+        .is_some()
+    {
+        push_unique_channel(&mut required_channels, "attack");
     }
     if let Some(intent) = job.prompt_intent.as_ref() {
         for channel in intent.explicit_motion_channels.iter() {
-            let channel = channel.trim();
-            if channel.is_empty() {
-                continue;
-            }
-            if required_channels.iter().any(|existing| existing == channel) {
-                continue;
-            }
-            required_channels.push(channel.to_string());
+            push_unique_channel(&mut required_channels, channel);
         }
     }
+    required_channels
+}
 
+fn pipeline_missing_required_motion_channels(job: &Gen3dAiJob, draft: &Gen3dDraft) -> Vec<String> {
+    let required_channels = pipeline_required_motion_channels(job, draft);
     if required_channels.is_empty() {
         return Vec::new();
     }
 
     let mut present_channels: Vec<&str> = Vec::new();
     for comp in job.planned_components.iter() {
+        for slot in comp.root_animations.iter() {
+            let channel = slot.channel.as_ref().trim();
+            if channel.is_empty() {
+                continue;
+            }
+            if present_channels.iter().any(|existing| existing == &channel) {
+                continue;
+            }
+            present_channels.push(channel);
+        }
         let Some(att) = comp.attach_to.as_ref() else {
             continue;
         };
@@ -487,24 +511,64 @@ fn append_motion_authoring_retry_feedback(job: &Gen3dAiJob, feedback: &mut Strin
     }
 }
 
-fn pipeline_motion_batch_channels(job: &Gen3dAiJob, draft: &Gen3dDraft) -> Vec<String> {
-    let mut channels: Vec<String> = vec!["move".into(), "action".into()];
+fn pipeline_motion_issue_channels(qa_result: Option<&serde_json::Value>) -> Vec<String> {
+    let mut channels: Vec<String> = Vec::new();
+    let Some(issues) = qa_result
+        .and_then(|v| v.get("smoke"))
+        .and_then(|v| v.get("motion_validation"))
+        .and_then(|v| v.get("issues"))
+        .and_then(|v| v.as_array())
+    else {
+        return channels;
+    };
+
+    for issue in issues {
+        let Some(channel) = issue.get("channel").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        push_unique_channel(&mut channels, channel);
+    }
+    channels
+}
+
+fn pipeline_edit_retry_scope_channels(job: &Gen3dAiJob) -> Vec<String> {
+    if !is_edit_session(job) {
+        return Vec::new();
+    }
+
+    let mut channels: Vec<String> = Vec::new();
     if let Some(intent) = job.prompt_intent.as_ref() {
         for channel in intent.explicit_motion_channels.iter() {
-            let channel = channel.trim();
-            if channel.is_empty() {
-                continue;
-            }
-            if channels.iter().any(|existing| existing == channel) {
-                continue;
-            }
-            channels.push(channel.to_string());
+            push_unique_channel(&mut channels, channel);
         }
     }
-    if draft.root_def().and_then(|r| r.attack.as_ref()).is_some()
-        && !channels.iter().any(|existing| existing == "attack")
-    {
-        channels.push("attack".into());
+    channels
+}
+
+fn pipeline_motion_retry_channels(
+    job: &Gen3dAiJob,
+    draft: &Gen3dDraft,
+    preferred_channels: &[String],
+    qa_result: Option<&serde_json::Value>,
+) -> Vec<String> {
+    let mut channels: Vec<String> = Vec::new();
+    for channel in preferred_channels {
+        push_unique_channel(&mut channels, channel);
+    }
+    if !channels.is_empty() {
+        return channels;
+    }
+
+    let edit_scope_channels = pipeline_edit_retry_scope_channels(job);
+    if !edit_scope_channels.is_empty() {
+        return edit_scope_channels;
+    }
+
+    for channel in pipeline_motion_issue_channels(qa_result) {
+        push_unique_channel(&mut channels, &channel);
+    }
+    if channels.is_empty() {
+        return pipeline_required_motion_channels(job, draft);
     }
     channels
 }
@@ -1584,7 +1648,14 @@ fn poll_pipeline_tick(
                             job.agent.last_motion_ok = None;
 
                             workshop.status = "Pipeline: improving motion…".into();
-                            let channels = pipeline_motion_batch_channels(job, draft);
+                            let missing_motion_channels =
+                                pipeline_missing_required_motion_channels(job, draft);
+                            let channels = pipeline_motion_retry_channels(
+                                job,
+                                draft,
+                                &missing_motion_channels,
+                                result.result.as_ref(),
+                            );
 
                             let mut feedback = String::new();
                             feedback
@@ -1638,7 +1709,12 @@ fn poll_pipeline_tick(
                             missing_motion_channels.join(", ")
                         ));
                         append_motion_authoring_retry_feedback(job, &mut feedback);
-                        let channels = pipeline_motion_batch_channels(job, draft);
+                        let channels = pipeline_motion_retry_channels(
+                            job,
+                            draft,
+                            &missing_motion_channels,
+                            None,
+                        );
                         if let Some(result) = start_pipeline_tool_call(
                             config,
                             time,
@@ -1757,7 +1833,14 @@ fn poll_pipeline_tick(
                     job.agent.last_smoke_ok = None;
                     job.agent.last_motion_ok = None;
                     workshop.status = "Pipeline: authoring motion…".into();
-                    let channels = pipeline_motion_batch_channels(job, draft);
+                    let missing_motion_channels =
+                        pipeline_missing_required_motion_channels(job, draft);
+                    let channels = pipeline_motion_retry_channels(
+                        job,
+                        draft,
+                        &missing_motion_channels,
+                        result.result.as_ref(),
+                    );
 
                     let mut feedback = String::new();
                     feedback.push_str(&format!(
@@ -1966,5 +2049,159 @@ fn poll_pipeline_tick(
             return;
         }
         Gen3dPipelineStage::Finish | Gen3dPipelineStage::Start => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gen3d::ai::schema::AiPromptIntentJsonV1;
+    use crate::object::registry::{
+        ColliderProfile, MobilityDef, MobilityMode, ObjectDef, ObjectInteraction,
+    };
+
+    fn make_test_root_def_movable(movable: bool) -> ObjectDef {
+        ObjectDef {
+            object_id: crate::gen3d::gen3d_draft_object_id(),
+            label: "gen3d_draft".into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::AabbXZ {
+                half_extents: Vec2::new(0.5, 0.5),
+            },
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: movable.then_some(MobilityDef {
+                mode: MobilityMode::Ground,
+                max_speed: 1.0,
+            }),
+            anchors: Vec::new(),
+            parts: Vec::new(),
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        }
+    }
+
+    #[test]
+    fn motion_retry_channels_stay_scoped_to_missing_or_affected_channels() {
+        let mut job = Gen3dAiJob::default();
+        job.prompt_intent = Some(AiPromptIntentJsonV1 {
+            version: 1,
+            requires_attack: false,
+            explicit_motion_channels: vec!["cover_face_crying".into()],
+        });
+        let draft = Gen3dDraft {
+            defs: vec![make_test_root_def_movable(true)],
+        };
+        let preferred = vec!["cover_face_crying".to_string()];
+        let qa_result = serde_json::json!({
+            "smoke": {
+                "motion_validation": {
+                    "issues": [
+                        {
+                            "severity": "warn",
+                            "kind": "constrained_joint_translates",
+                            "channel": "cover_face_crying",
+                        }
+                    ]
+                }
+            }
+        });
+
+        let channels = pipeline_motion_retry_channels(&job, &draft, &preferred, Some(&qa_result));
+        assert_eq!(channels, vec!["cover_face_crying".to_string()]);
+    }
+
+    #[test]
+    fn motion_retry_channels_ignore_unrelated_qa_issues_when_preferred_scoped() {
+        let mut job = Gen3dAiJob::default();
+        job.prompt_intent = Some(AiPromptIntentJsonV1 {
+            version: 1,
+            requires_attack: false,
+            explicit_motion_channels: vec!["cover_face_crying".into()],
+        });
+        let draft = Gen3dDraft {
+            defs: vec![make_test_root_def_movable(true)],
+        };
+        let preferred = vec!["cover_face_crying".to_string()];
+        let qa_result = serde_json::json!({
+            "smoke": {
+                "motion_validation": {
+                    "issues": [
+                        {
+                            "severity": "error",
+                            "kind": "joint_rest_bias_large",
+                            "channel": "action",
+                        },
+                        {
+                            "severity": "warn",
+                            "kind": "joint_rest_bias_large",
+                            "channel": "cover_face_crying",
+                        }
+                    ]
+                }
+            }
+        });
+
+        let channels = pipeline_motion_retry_channels(&job, &draft, &preferred, Some(&qa_result));
+        assert_eq!(channels, vec!["cover_face_crying".to_string()]);
+    }
+
+    #[test]
+    fn edit_motion_retry_channels_stay_scoped_to_explicit_prompt_channels() {
+        let mut job = Gen3dAiJob::default();
+        job.edit_base_prefab_id = Some(42);
+        job.user_prompt_raw = "Add a shy smile expression.".into();
+        job.prompt_intent = Some(AiPromptIntentJsonV1 {
+            version: 1,
+            requires_attack: false,
+            explicit_motion_channels: vec!["shy_smile".into()],
+        });
+        let draft = Gen3dDraft {
+            defs: vec![make_test_root_def_movable(true)],
+        };
+        let qa_result = serde_json::json!({
+            "smoke": {
+                "motion_validation": {
+                    "issues": [
+                        {
+                            "severity": "warn",
+                            "kind": "joint_rest_bias_large",
+                            "channel": "cover_face_crying",
+                        }
+                    ]
+                }
+            }
+        });
+
+        let channels = pipeline_motion_retry_channels(&job, &draft, &[], Some(&qa_result));
+        assert_eq!(channels, vec!["shy_smile".to_string()]);
+    }
+
+    #[test]
+    fn motion_retry_channels_fall_back_to_required_channels_when_unscoped() {
+        let mut job = Gen3dAiJob::default();
+        job.prompt_intent = Some(AiPromptIntentJsonV1 {
+            version: 1,
+            requires_attack: false,
+            explicit_motion_channels: vec!["cover_face_crying".into()],
+        });
+        let draft = Gen3dDraft {
+            defs: vec![make_test_root_def_movable(true)],
+        };
+
+        let channels = pipeline_motion_retry_channels(&job, &draft, &[], None);
+        assert_eq!(
+            channels,
+            vec![
+                "move".to_string(),
+                "action".to_string(),
+                "cover_face_crying".to_string(),
+            ]
+        );
     }
 }
