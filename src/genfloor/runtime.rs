@@ -2,7 +2,7 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
 
-use crate::constants::FLOOR_GROUND_SINK_M;
+use crate::constants::{FLOOR_GROUND_SINK_M, WORLD_HALF_SIZE};
 use crate::genfloor::defs::{
     FloorAnimationMode, FloorColoringMode, FloorDefV1, FloorMeshKind, FloorReliefMode, FloorWaveV1,
 };
@@ -156,6 +156,23 @@ pub(crate) fn apply_floor_sink(height: f32) -> f32 {
         return height;
     }
     (height - FLOOR_GROUND_SINK_M).max(0.0)
+}
+
+pub(crate) fn floor_half_size(active: &ActiveWorldFloor) -> Vec2 {
+    let size = Vec2::new(active.def.mesh.size_m[0], active.def.mesh.size_m[1]);
+    let mut half = Vec2::new(size.x.abs() * 0.5, size.y.abs() * 0.5);
+    if !half.x.is_finite() || half.x <= 0.0 {
+        half.x = WORLD_HALF_SIZE;
+    }
+    if !half.y.is_finite() || half.y <= 0.0 {
+        half.y = WORLD_HALF_SIZE;
+    }
+    half
+}
+
+pub(crate) fn floor_half_size_min(active: &ActiveWorldFloor) -> f32 {
+    let half = floor_half_size(active);
+    half.x.min(half.y)
 }
 
 pub(crate) fn set_active_world_floor(

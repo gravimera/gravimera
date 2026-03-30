@@ -5,8 +5,11 @@ use std::net::SocketAddr;
 use crate::action_log::{ActionLogSource, ActionLogState};
 use crate::config::AppConfig;
 use crate::constants::*;
-use crate::genfloor::{apply_floor_sink, sample_floor_footprint, ActiveWorldFloor, FloorFootprint};
-use crate::geometry::safe_abs_scale_y;
+use crate::genfloor::{
+    apply_floor_sink, floor_half_size, floor_half_size_min, sample_floor_footprint,
+    ActiveWorldFloor, FloorFootprint,
+};
+use crate::geometry::{clamp_world_xz_with_half_size, safe_abs_scale_y};
 use crate::intelligence::protocol::*;
 use crate::intelligence::sidecar_client::SidecarClient;
 use crate::navigation;
@@ -802,9 +805,11 @@ fn intelligence_tick(
                     let current_ground_y = (transform.translation.y - origin_y).max(0.0);
 
                     let radius = collider.radius.max(0.01);
-                    let min = Vec2::splat(-WORLD_HALF_SIZE + radius);
-                    let max = Vec2::splat(WORLD_HALF_SIZE - radius);
-                    let clamped_goal = goal.clamp(min, max);
+                    let floor_half = floor_half_size(&active_floor);
+                    let clamped_goal = Vec2::new(
+                        clamp_world_xz_with_half_size(goal.x, radius, floor_half.x),
+                        clamp_world_xz_with_half_size(goal.y, radius, floor_half.y),
+                    );
 
                     let start = Vec2::new(transform.translation.x, transform.translation.z);
                     let height = library
@@ -840,7 +845,7 @@ fn intelligence_tick(
                                 goal_ground_y,
                                 radius,
                                 height,
-                                WORLD_HALF_SIZE,
+                                floor_half_size_min(&active_floor),
                                 NAV_GRID_SIZE,
                                 &obstacles,
                                 &is_walkable,

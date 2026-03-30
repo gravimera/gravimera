@@ -6,8 +6,14 @@ use std::collections::{HashMap, HashSet};
 use crate::action_log::{ActionLogSource, ActionLogState, ActionLogWriter};
 use crate::assets::SceneAssets;
 use crate::constants::*;
-use crate::genfloor::{apply_floor_sink, sample_floor_footprint, ActiveWorldFloor, FloorFootprint};
-use crate::geometry::{clamp_world_xz, point_inside_aabb_xz, safe_abs_scale_y, snap_to_grid};
+use crate::genfloor::{
+    apply_floor_sink, floor_half_size, floor_half_size_min, sample_floor_footprint,
+    ActiveWorldFloor, FloorFootprint,
+};
+use crate::geometry::{
+    clamp_world_xz, clamp_world_xz_with_half_size, point_inside_aabb_xz, safe_abs_scale_y,
+    snap_to_grid,
+};
 use crate::navigation;
 use crate::object::registry::ObjectLibrary;
 use crate::object::types::effects as effect_types;
@@ -879,9 +885,11 @@ pub(crate) fn move_command_input(
 
         let scale_y = safe_abs_scale_y(transform.scale);
         let radius = collider.radius.max(0.01);
-        let min = Vec2::splat(-WORLD_HALF_SIZE + radius);
-        let max = Vec2::splat(WORLD_HALF_SIZE - radius);
-        let clamped_goal = goal.clamp(min, max);
+        let floor_half = floor_half_size(&world.active_floor);
+        let clamped_goal = Vec2::new(
+            clamp_world_xz_with_half_size(goal.x, radius, floor_half.x),
+            clamp_world_xz_with_half_size(goal.y, radius, floor_half.y),
+        );
 
         let start = Vec2::new(transform.translation.x, transform.translation.z);
         let origin_y = if world.players.contains(entity) {
@@ -920,7 +928,7 @@ pub(crate) fn move_command_input(
                     goal_ground_y,
                     radius,
                     height,
-                    WORLD_HALF_SIZE,
+                    floor_half_size_min(&world.active_floor),
                     NAV_GRID_SIZE,
                     &obstacles,
                     &is_walkable,
@@ -1021,6 +1029,7 @@ pub(crate) fn keyboard_move_input(
     >,
     mut move_state: ResMut<MoveCommandState>,
     camera_q: Query<&Transform, With<MainCamera>>,
+    active_floor: Res<ActiveWorldFloor>,
     library: Res<ObjectLibrary>,
     selection: Res<SelectionState>,
     mut commandables: Query<
@@ -1138,8 +1147,9 @@ pub(crate) fn keyboard_move_input(
         let mut pos = start_pos + step;
 
         let radius = collider.radius.max(0.01);
-        pos.x = clamp_world_xz(pos.x, radius);
-        pos.y = clamp_world_xz(pos.y, radius);
+        let floor_half = floor_half_size(&active_floor);
+        pos.x = clamp_world_xz_with_half_size(pos.x, radius, floor_half.x);
+        pos.y = clamp_world_xz_with_half_size(pos.y, radius, floor_half.y);
 
         transform.translation.x = pos.x;
         transform.translation.z = pos.y;
@@ -1530,6 +1540,7 @@ pub(crate) fn execute_move_orders(
         With<Commandable>,
     >,
     mut move_state: ResMut<MoveCommandState>,
+    active_floor: Res<ActiveWorldFloor>,
 ) {
     if matches!(mode.get(), GameMode::Play) && game.game_over {
         return;
@@ -1622,8 +1633,9 @@ pub(crate) fn execute_move_orders(
         }
 
         let radius = collider.radius.max(0.01);
-        pos.x = clamp_world_xz(pos.x, radius);
-        pos.y = clamp_world_xz(pos.y, radius);
+        let floor_half = floor_half_size(&active_floor);
+        pos.x = clamp_world_xz_with_half_size(pos.x, radius, floor_half.x);
+        pos.y = clamp_world_xz_with_half_size(pos.y, radius, floor_half.y);
 
         transform.translation.x = pos.x;
         transform.translation.z = pos.y;

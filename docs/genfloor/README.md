@@ -54,6 +54,7 @@ Note: `mesh.size_m` is clamped to at least the default terrain size so generated
   via `apply_floor_sink` (skip the sink when the height is exactly 0).
 - Relief heights below 0 are tagged as water for sampling/diagnostics only; placement and pathing
   do not block on water by default.
+- Movement/placement/camera bounds clamp to the active floor mesh size (per-axis half size).
 
 ## Notes
 

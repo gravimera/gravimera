@@ -18,8 +18,11 @@ use serde::Deserialize;
 use crate::assets::SceneAssets;
 use crate::config::AppConfig;
 use crate::constants::*;
-use crate::genfloor::{apply_floor_sink, sample_floor_footprint, ActiveWorldFloor, FloorFootprint};
-use crate::geometry::{clamp_world_xz, safe_abs_scale_y, snap_to_grid};
+use crate::genfloor::{
+    apply_floor_sink, floor_half_size, floor_half_size_min, sample_floor_footprint,
+    ActiveWorldFloor, FloorFootprint,
+};
+use crate::geometry::{clamp_world_xz_with_half_size, safe_abs_scale_y, snap_to_grid};
 use crate::meta_speak::{MetaSpeakOutcome, MetaSpeakRequest, MetaSpeakRuntime, MetaSpeakVoice};
 use crate::navigation;
 use crate::object::registry::ObjectLibrary;
@@ -4119,8 +4122,11 @@ fn handle_request_main_thread<
             new_transform.translation += offset;
             new_transform.translation.x = snap_to_grid(new_transform.translation.x, snap_step);
             new_transform.translation.z = snap_to_grid(new_transform.translation.z, snap_step);
-            new_transform.translation.x = clamp_world_xz(new_transform.translation.x, radius);
-            new_transform.translation.z = clamp_world_xz(new_transform.translation.z, radius);
+            let floor_half = floor_half_size(active_floor);
+            new_transform.translation.x =
+                clamp_world_xz_with_half_size(new_transform.translation.x, radius, floor_half.x);
+            new_transform.translation.z =
+                clamp_world_xz_with_half_size(new_transform.translation.z, radius, floor_half.y);
 
             let forms = forms
                 .cloned()
@@ -4370,14 +4376,9 @@ fn handle_request_main_thread<
                 Vec3::new(base.x, req.y.unwrap_or(0.0), base.z)
             };
 
-            pos.x = pos.x.clamp(
-                -WORLD_HALF_SIZE + collider_half_xz.x,
-                WORLD_HALF_SIZE - collider_half_xz.x,
-            );
-            pos.z = pos.z.clamp(
-                -WORLD_HALF_SIZE + collider_half_xz.y,
-                WORLD_HALF_SIZE - collider_half_xz.y,
-            );
+            let floor_half = floor_half_size(active_floor);
+            pos.x = clamp_world_xz_with_half_size(pos.x, collider_half_xz.x, floor_half.x);
+            pos.z = clamp_world_xz_with_half_size(pos.z, collider_half_xz.y, floor_half.y);
 
             if req.y.is_none() {
                 let footprint = match def.collider {
@@ -4526,8 +4527,17 @@ fn handle_request_main_thread<
                         build_objects.get(entity)
                     {
                         let mut next = transform.clone();
-                        next.translation.x = clamp_world_xz(goal.x, collider.half_extents.x);
-                        next.translation.z = clamp_world_xz(goal.y, collider.half_extents.y);
+                        let floor_half = floor_half_size(active_floor);
+                        next.translation.x = clamp_world_xz_with_half_size(
+                            goal.x,
+                            collider.half_extents.x,
+                            floor_half.x,
+                        );
+                        next.translation.z = clamp_world_xz_with_half_size(
+                            goal.y,
+                            collider.half_extents.y,
+                            floor_half.y,
+                        );
 
                         if let Some(goal_ground_y) = req.y {
                             let scale_y = safe_abs_scale_y(next.scale);
@@ -4560,9 +4570,11 @@ fn handle_request_main_thread<
                 };
 
                 let radius = collider.radius.max(0.01);
-                let min = Vec2::splat(-WORLD_HALF_SIZE + radius);
-                let max = Vec2::splat(WORLD_HALF_SIZE - radius);
-                let clamped_goal = goal.clamp(min, max);
+                let floor_half = floor_half_size(active_floor);
+                let clamped_goal = Vec2::new(
+                    clamp_world_xz_with_half_size(goal.x, radius, floor_half.x),
+                    clamp_world_xz_with_half_size(goal.y, radius, floor_half.y),
+                );
 
                 let start = Vec2::new(transform.translation.x, transform.translation.z);
                 let scale_y = safe_abs_scale_y(transform.scale);
@@ -4605,7 +4617,7 @@ fn handle_request_main_thread<
                             goal_ground_y,
                             radius,
                             height,
-                            WORLD_HALF_SIZE,
+                            floor_half_size_min(active_floor),
                             NAV_GRID_SIZE,
                             &obstacles,
                             &is_walkable,

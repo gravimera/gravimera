@@ -1,9 +1,12 @@
 use bevy::prelude::*;
 
 use crate::constants::*;
-use crate::genfloor::{apply_floor_sink, sample_floor_footprint, ActiveWorldFloor, FloorFootprint};
+use crate::genfloor::{
+    apply_floor_sink, floor_half_size, sample_floor_footprint, ActiveWorldFloor, FloorFootprint,
+};
 use crate::geometry::{
-    circle_intersects_aabb_xz, clamp_world_xz, resolve_circle_against_aabbs, safe_abs_scale_y,
+    circle_intersects_aabb_xz, clamp_world_xz_with_half_size, resolve_circle_against_aabbs,
+    safe_abs_scale_y,
 };
 use crate::object::registry::{MovementBlockRule, ObjectLibrary};
 use crate::types::*;
@@ -186,8 +189,9 @@ pub(crate) fn separate_enemies(
         }));
         pos = resolve_circle_against_aabbs(pos, radius, &obstacles);
 
-        pos.x = clamp_world_xz(pos.x, radius);
-        pos.y = clamp_world_xz(pos.y, radius);
+        let floor_half = floor_half_size(&active_floor);
+        pos.x = clamp_world_xz_with_half_size(pos.x, radius, floor_half.x);
+        pos.y = clamp_world_xz_with_half_size(pos.y, radius, floor_half.y);
 
         let y = if pounce.is_some() {
             transform.translation.y
@@ -350,8 +354,9 @@ pub(crate) fn separate_commandables(
         }));
         pos = resolve_circle_against_aabbs(pos, radius, &obstacles);
 
-        pos.x = clamp_world_xz(pos.x, radius);
-        pos.y = clamp_world_xz(pos.y, radius);
+        let floor_half = floor_half_size(&active_floor);
+        pos.x = clamp_world_xz_with_half_size(pos.x, radius, floor_half.x);
+        pos.y = clamp_world_xz_with_half_size(pos.y, radius, floor_half.y);
 
         let y = match mobility_mode {
             crate::object::registry::MobilityMode::Air => transform.translation.y,
@@ -466,14 +471,9 @@ pub(crate) fn separate_player_from_enemies(
         }
 
         player_pos = resolve_circle_against_aabbs(player_pos, player_radius, &blocking_obstacles);
-        player_pos.x = player_pos.x.clamp(
-            -WORLD_HALF_SIZE + player_radius,
-            WORLD_HALF_SIZE - player_radius,
-        );
-        player_pos.y = player_pos.y.clamp(
-            -WORLD_HALF_SIZE + player_radius,
-            WORLD_HALF_SIZE - player_radius,
-        );
+        let floor_half = floor_half_size(&active_floor);
+        player_pos.x = clamp_world_xz_with_half_size(player_pos.x, player_radius, floor_half.x);
+        player_pos.y = clamp_world_xz_with_half_size(player_pos.y, player_radius, floor_half.y);
 
         if !moved {
             break;

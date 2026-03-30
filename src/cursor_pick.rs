@@ -1,8 +1,7 @@
 use bevy::prelude::*;
 
-use crate::constants::WORLD_HALF_SIZE;
 use crate::geometry::{point_inside_aabb_xz, safe_abs_scale_y};
-use crate::genfloor::{sample_floor_point, ActiveWorldFloor};
+use crate::genfloor::{floor_half_size, sample_floor_point, ActiveWorldFloor};
 use crate::object::registry::ObjectLibrary;
 use crate::types::{AabbCollider, BuildDimensions, BuildObject, ObjectPrefabId};
 
@@ -22,10 +21,16 @@ fn ray_floor_intersection(
 ) -> Option<(Vec3, f32, bool)> {
     let mut t_min = 0.0f32;
     let mut t_max = f32::INFINITY;
-    let min = -WORLD_HALF_SIZE;
-    let max = WORLD_HALF_SIZE;
+    let half = floor_half_size(active_floor);
+    let min_x = -half.x;
+    let max_x = half.x;
+    let min_z = -half.y;
+    let max_z = half.y;
 
-    for (o, d) in [(origin.x, direction.x), (origin.z, direction.z)] {
+    for (o, d, min, max) in [
+        (origin.x, direction.x, min_x, max_x),
+        (origin.z, direction.z, min_z, max_z),
+    ] {
         if d.abs() < 1e-6 {
             if o < min || o > max {
                 return None;

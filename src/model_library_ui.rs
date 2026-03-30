@@ -13,8 +13,10 @@ use std::sync::{mpsc, Mutex};
 use crate::assets::SceneAssets;
 use crate::config::AppConfig;
 use crate::constants::*;
-use crate::genfloor::{apply_floor_sink, sample_floor_footprint, ActiveWorldFloor, FloorFootprint};
-use crate::geometry::{clamp_world_xz, snap_to_grid};
+use crate::genfloor::{
+    apply_floor_sink, floor_half_size, sample_floor_footprint, ActiveWorldFloor, FloorFootprint,
+};
+use crate::geometry::{clamp_world_xz_with_half_size, snap_to_grid};
 use crate::object::registry::ObjectLibrary;
 use crate::object::registry::{ColliderProfile, MobilityMode};
 use crate::object::visuals;
@@ -6025,8 +6027,9 @@ fn spawn_at_pick(
     pos.x = snap_to_grid(pos.x, BUILD_GRID_SIZE);
     pos.z = snap_to_grid(pos.z, BUILD_GRID_SIZE);
 
-    pos.x = clamp_world_xz(pos.x, half_xz.x);
-    pos.z = clamp_world_xz(pos.z, half_xz.y);
+    let floor_half = floor_half_size(active_floor);
+    pos.x = clamp_world_xz_with_half_size(pos.x, half_xz.x, floor_half.x);
+    pos.z = clamp_world_xz_with_half_size(pos.z, half_xz.y, floor_half.y);
 
     let base_surface_y = if is_floor {
         let footprint = match library.collider(prefab_id) {

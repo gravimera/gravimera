@@ -2,8 +2,10 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::constants::*;
-use crate::geometry::{safe_abs_scale_y, snap_to_grid};
-use crate::genfloor::{apply_floor_sink, sample_floor_footprint, ActiveWorldFloor, FloorFootprint};
+use crate::geometry::{clamp_world_xz_with_half_size, safe_abs_scale_y, snap_to_grid};
+use crate::genfloor::{
+    apply_floor_sink, floor_half_size, sample_floor_footprint, ActiveWorldFloor, FloorFootprint,
+};
 use crate::object::registry::{MobilityMode, ObjectLibrary};
 use crate::scene_store::SceneSaveRequest;
 use crate::selection_circle;
@@ -359,9 +361,10 @@ pub(crate) fn world_drag_update(
         }
 
         let radius = collider.radius.max(0.01);
-        desired = desired.clamp(
-            Vec2::splat(-WORLD_HALF_SIZE + radius),
-            Vec2::splat(WORLD_HALF_SIZE - radius),
+        let floor_half = floor_half_size(&active_floor);
+        desired = Vec2::new(
+            clamp_world_xz_with_half_size(desired.x, radius, floor_half.x),
+            clamp_world_xz_with_half_size(desired.y, radius, floor_half.y),
         );
         transform.translation.x = desired.x;
         transform.translation.z = desired.y;
@@ -396,14 +399,17 @@ pub(crate) fn world_drag_update(
             return;
         }
 
-        desired = desired.clamp(
-            Vec2::new(
-                -WORLD_HALF_SIZE + collider.half_extents.x,
-                -WORLD_HALF_SIZE + collider.half_extents.y,
+        let floor_half = floor_half_size(&active_floor);
+        desired = Vec2::new(
+            clamp_world_xz_with_half_size(
+                desired.x,
+                collider.half_extents.x,
+                floor_half.x,
             ),
-            Vec2::new(
-                WORLD_HALF_SIZE - collider.half_extents.x,
-                WORLD_HALF_SIZE - collider.half_extents.y,
+            clamp_world_xz_with_half_size(
+                desired.y,
+                collider.half_extents.y,
+                floor_half.y,
             ),
         );
         transform.translation.x = desired.x;

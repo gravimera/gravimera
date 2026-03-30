@@ -5,10 +5,12 @@ use std::collections::HashSet;
 
 use crate::assets::SceneAssets;
 use crate::constants::*;
-use crate::genfloor::{apply_floor_sink, sample_floor_footprint, ActiveWorldFloor, FloorFootprint};
+use crate::genfloor::{
+    apply_floor_sink, floor_half_size, sample_floor_footprint, ActiveWorldFloor, FloorFootprint,
+};
 use crate::geometry::{
-    aabbs_intersect_xz, circle_intersects_aabb_xz, clamp_world_xz, point_inside_aabb_xz,
-    snap_to_grid,
+    aabbs_intersect_xz, circle_intersects_aabb_xz, clamp_world_xz, clamp_world_xz_with_half_size,
+    point_inside_aabb_xz, snap_to_grid,
 };
 use crate::object::registry::{ColliderProfile, ObjectLibrary};
 use crate::object::types::buildings;
@@ -53,11 +55,11 @@ fn build_object_collider_half_xz(spec: BuildPreviewSpec, size: Vec3) -> Vec2 {
     }
 }
 
-fn snapped_center_xz(cursor_hit: Vec3, half: Vec2) -> Vec2 {
+fn snapped_center_xz(cursor_hit: Vec3, half: Vec2, floor_half: Vec2) -> Vec2 {
     let mut x = snap_to_grid(cursor_hit.x, BUILD_GRID_SIZE);
     let mut z = snap_to_grid(cursor_hit.z, BUILD_GRID_SIZE);
-    x = clamp_world_xz(x, half.x);
-    z = clamp_world_xz(z, half.y);
+    x = clamp_world_xz_with_half_size(x, half.x, floor_half.x);
+    z = clamp_world_xz_with_half_size(z, half.y, floor_half.y);
     Vec2::new(x, z)
 }
 
@@ -690,7 +692,8 @@ pub(crate) fn build_place_object(
         Some(ColliderProfile::CircleXZ { radius }) => Vec2::splat(radius),
         _ => build_object_collider_half_xz(spec, size),
     };
-    let center_xz = snapped_center_xz(aim.cursor_hit, clamp_half_xz);
+    let floor_half = floor_half_size(&world.active_floor);
+    let center_xz = snapped_center_xz(aim.cursor_hit, clamp_half_xz, floor_half);
 
     let mut existing: Vec<ExistingBuildObject> = Vec::new();
     existing.reserve(world.objects.iter().len());
@@ -918,7 +921,8 @@ pub(crate) fn build_update_preview(
         Some(ColliderProfile::CircleXZ { radius }) => Vec2::splat(radius),
         _ => build_object_collider_half_xz(spec, size),
     };
-    let center_xz = snapped_center_xz(hit, clamp_half_xz);
+    let floor_half = floor_half_size(&active_floor);
+    let center_xz = snapped_center_xz(hit, clamp_half_xz, floor_half);
 
     let mut existing: Vec<ExistingBuildObject> = Vec::new();
     existing.reserve(objects.iter().len());

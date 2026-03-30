@@ -28,22 +28,36 @@ pub(crate) fn snap_to_grid(value: f32, grid: f32) -> f32 {
 }
 
 pub(crate) fn clamp_world_xz(value: f32, half_extent: f32) -> f32 {
+    clamp_world_xz_with_half_size(value, half_extent, WORLD_HALF_SIZE)
+}
+
+pub(crate) fn clamp_world_xz_with_half_size(
+    value: f32,
+    half_extent: f32,
+    world_half_size: f32,
+) -> f32 {
     if !value.is_finite() {
         return 0.0;
     }
 
+    let world_half = if world_half_size.is_finite() {
+        world_half_size.abs()
+    } else {
+        WORLD_HALF_SIZE
+    };
+
     if !half_extent.is_finite() {
-        return value.clamp(-WORLD_HALF_SIZE, WORLD_HALF_SIZE);
+        return value.clamp(-world_half, world_half);
     }
     let half_extent = half_extent.abs();
 
-    let min = -WORLD_HALF_SIZE + half_extent;
-    let max = WORLD_HALF_SIZE - half_extent;
+    let min = -world_half + half_extent;
+    let max = world_half - half_extent;
     if min.is_finite() && max.is_finite() && min <= max {
         value.clamp(min, max)
     } else {
         // `f32::clamp` panics when `min > max` or if either bound is NaN.
-        value.clamp(-WORLD_HALF_SIZE, WORLD_HALF_SIZE)
+        value.clamp(-world_half, world_half)
     }
 }
 

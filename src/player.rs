@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use bevy::window::{CursorOptions, PrimaryWindow};
 
 use crate::constants::*;
+use crate::genfloor::{floor_half_size, ActiveWorldFloor};
 use crate::geometry::ray_plane_intersection_y0;
 use crate::types::*;
 
@@ -195,6 +196,7 @@ pub(crate) fn camera_edge_pan(
         With<crate::model_library_ui::ModelLibraryPreviewOverlayRoot>,
     >,
     camera_yaw: Res<CameraYaw>,
+    active_floor: Res<ActiveWorldFloor>,
     mut focus: ResMut<CameraFocus>,
 ) {
     if console.open {
@@ -245,8 +247,9 @@ pub(crate) fn camera_edge_pan(
     }
 
     let delta = pan.normalize() * speed * dt * pan.length().clamp(0.0, 1.0);
-    focus.position.x = (focus.position.x + delta.x).clamp(-WORLD_HALF_SIZE, WORLD_HALF_SIZE);
-    focus.position.z = (focus.position.z + delta.z).clamp(-WORLD_HALF_SIZE, WORLD_HALF_SIZE);
+    let floor_half = floor_half_size(&active_floor);
+    focus.position.x = (focus.position.x + delta.x).clamp(-floor_half.x, floor_half.x);
+    focus.position.z = (focus.position.z + delta.z).clamp(-floor_half.y, floor_half.y);
 }
 
 pub(crate) fn camera_keyboard_pan(
@@ -262,6 +265,7 @@ pub(crate) fn camera_keyboard_pan(
     >,
     selection: Res<SelectionState>,
     camera_yaw: Res<CameraYaw>,
+    active_floor: Res<ActiveWorldFloor>,
     mut focus: ResMut<CameraFocus>,
 ) {
     if console.open {
@@ -321,13 +325,15 @@ pub(crate) fn camera_keyboard_pan(
             * zoom_t;
 
     let delta = dir.normalize() * speed * dt;
-    focus.position.x = (focus.position.x + delta.x).clamp(-WORLD_HALF_SIZE, WORLD_HALF_SIZE);
-    focus.position.z = (focus.position.z + delta.z).clamp(-WORLD_HALF_SIZE, WORLD_HALF_SIZE);
+    let floor_half = floor_half_size(&active_floor);
+    focus.position.x = (focus.position.x + delta.x).clamp(-floor_half.x, floor_half.x);
+    focus.position.z = (focus.position.z + delta.z).clamp(-floor_half.y, floor_half.y);
 }
 
 pub(crate) fn camera_follow_selection(
     console: Res<CommandConsole>,
     selection: Res<SelectionState>,
+    active_floor: Res<ActiveWorldFloor>,
     mut focus: ResMut<CameraFocus>,
     transforms: Query<&Transform, Without<MainCamera>>,
 ) {
@@ -385,8 +391,9 @@ pub(crate) fn camera_follow_selection(
 
     let dist = delta.length().max(1e-6);
     let correction = delta - (delta / dist) * deadzone;
-    focus.position.x = (focus.position.x + correction.x).clamp(-WORLD_HALF_SIZE, WORLD_HALF_SIZE);
-    focus.position.z = (focus.position.z + correction.y).clamp(-WORLD_HALF_SIZE, WORLD_HALF_SIZE);
+    let floor_half = floor_half_size(&active_floor);
+    focus.position.x = (focus.position.x + correction.x).clamp(-floor_half.x, floor_half.x);
+    focus.position.z = (focus.position.z + correction.y).clamp(-floor_half.y, floor_half.y);
 }
 
 pub(crate) fn camera_follow(

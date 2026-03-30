@@ -6,10 +6,12 @@ use std::time::Duration;
 use crate::assets::SceneAssets;
 use crate::constants::*;
 use crate::effects::{spawn_blood_particles, spawn_energy_impact_particles};
-use crate::genfloor::{apply_floor_sink, sample_floor_footprint, ActiveWorldFloor, FloorFootprint};
+use crate::genfloor::{
+    apply_floor_sink, floor_half_size, sample_floor_footprint, ActiveWorldFloor, FloorFootprint,
+};
 use crate::geometry::{
-    circle_intersects_aabb_xz, circles_intersect_xz, clamp_world_xz, normalize_flat_direction,
-    resolve_circle_against_aabbs, safe_abs_scale_y,
+    circle_intersects_aabb_xz, circles_intersect_xz, clamp_world_xz_with_half_size,
+    normalize_flat_direction, resolve_circle_against_aabbs, safe_abs_scale_y,
 };
 use crate::models::{spawn_dog_model, spawn_enemy_human_model, spawn_gundam_model};
 use crate::object::registry::{
@@ -316,8 +318,9 @@ pub(crate) fn spawn_enemies(
         let angle = rng.gen_range(0.0..std::f32::consts::TAU);
         let dir = Vec2::new(angle.cos(), angle.sin());
         let mut candidate = player_center + dir * ENEMY_SPAWN_RADIUS;
-        candidate.x = clamp_world_xz(candidate.x, radius);
-        candidate.y = clamp_world_xz(candidate.y, radius);
+        let floor_half = floor_half_size(&active_floor);
+        candidate.x = clamp_world_xz_with_half_size(candidate.x, radius, floor_half.x);
+        candidate.y = clamp_world_xz_with_half_size(candidate.y, radius, floor_half.y);
 
         let sample = sample_floor_footprint(&active_floor, candidate, footprint);
         if obstacles
@@ -375,9 +378,10 @@ pub(crate) fn spawn_enemies_headless(
     let angle = rng.gen_range(0.0..std::f32::consts::TAU);
     let dir = Vec3::new(angle.cos(), 0.0, angle.sin());
     let spawn_pos = player_transform.translation + dir * ENEMY_SPAWN_RADIUS;
+    let floor_half = floor_half_size(&active_floor);
     let center = Vec2::new(
-        clamp_world_xz(spawn_pos.x, radius),
-        clamp_world_xz(spawn_pos.z, radius),
+        clamp_world_xz_with_half_size(spawn_pos.x, radius, floor_half.x),
+        clamp_world_xz_with_half_size(spawn_pos.z, radius, floor_half.y),
     );
     let sample = sample_floor_footprint(
         &active_floor,
@@ -402,6 +406,7 @@ pub(crate) fn move_enemies(
     game: Res<Game>,
     player_q: Query<&Transform, With<Player>>,
     library: Res<ObjectLibrary>,
+    active_floor: Res<ActiveWorldFloor>,
     mut enemies: Query<
         (
             &mut Transform,
@@ -477,8 +482,9 @@ pub(crate) fn move_enemies(
         };
 
         pos += Vec2::new(step_dir.x, step_dir.z) * enemy.speed * dt;
-        pos.x = clamp_world_xz(pos.x, radius);
-        pos.y = clamp_world_xz(pos.y, radius);
+        let floor_half = floor_half_size(&active_floor);
+        pos.x = clamp_world_xz_with_half_size(pos.x, radius, floor_half.x);
+        pos.y = clamp_world_xz_with_half_size(pos.y, radius, floor_half.y);
 
         enemy_transform.translation.x = pos.x;
         enemy_transform.translation.z = pos.y;
