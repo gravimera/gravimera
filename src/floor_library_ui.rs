@@ -304,6 +304,9 @@ pub(crate) struct FloorLibrarySearchFieldText;
 pub(crate) struct FloorLibraryPreviewOverlayRoot;
 #[derive(Component)]
 pub(crate) struct FloorLibraryPreviewApplyButton;
+pub(crate) struct FloorLibraryPreviewDeleteButton;
+#[derive(Component)]
+pub(crate) struct FloorLibraryPreviewEditButton;
 #[derive(Component)]
 pub(crate) struct FloorLibraryPreviewCloseButton;
 #[derive(Component)]
@@ -741,6 +744,8 @@ pub(crate) fn floor_library_update_visibility(
             With<FloorLibraryListItem>,
             With<FloorLibraryPreviewApplyButton>,
             With<FloorLibraryPreviewCloseButton>,
+            With<FloorLibraryPreviewDeleteButton>,
+            With<FloorLibraryPreviewEditButton>,
             With<FloorLibraryGenfloorPlaceholderItem>,
         )>,
     >,
@@ -3015,12 +3020,13 @@ pub(crate) fn floor_library_open_preview_panel(
                     Node {
                         flex_direction: FlexDirection::Row,
                         column_gap: Val::Px(8.0),
+                        align_items: AlignItems::Center,
                         ..default()
                     },
                     BackgroundColor(Color::NONE),
                 ))
-                .with_children(|actions| {
-                    actions
+                .with_children(|buttons| {
+                    buttons
                         .spawn((
                             Button,
                             Node {
@@ -3043,7 +3049,55 @@ pub(crate) fn floor_library_open_preview_panel(
                             ));
                         });
 
-                    actions
+                    if floor_id != DEFAULT_FLOOR_ID {
+                        buttons
+                            .spawn((
+                                Button,
+                                Node {
+                                    padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                                FloorLibraryPreviewDeleteButton,
+                            ))
+                            .with_children(|b| {
+                                b.spawn((
+                                    Text::new("Delete"),
+                                    TextFont {
+                                        font_size: 14.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.94, 0.94, 0.96)),
+                                ));
+                            });
+
+                        buttons
+                            .spawn((
+                                Button,
+                                Node {
+                                    padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                                FloorLibraryPreviewEditButton,
+                            ))
+                            .with_children(|b| {
+                                b.spawn((
+                                    Text::new("Edit"),
+                                    TextFont {
+                                        font_size: 14.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                ));
+                            });
+                    }
+
+                    buttons
                         .spawn((
                             Button,
                             Node {
@@ -3113,11 +3167,93 @@ pub(crate) fn floor_library_open_preview_panel(
     active_floor.dirty = true;
 }
 
+pub(crate) fn floor_library_preview_delete_button_interactions(
+    mut commands: Commands,
+    active: Res<ActiveRealmScene>,
+    mut state: ResMut<FloorLibraryUiState>,
+    mut buttons: Query<&Interaction, (Changed<Interaction>, With<FloorLibraryPreviewDeleteButton>)>,
+) {
+    if state.manage_delete_modal_root.is_some() {
+        return;
+    }
+    let Some(floor_id) = state.preview.as_ref().map(|p| p.floor_id) else {
+        return;
+    };
+    if floor_id == DEFAULT_FLOOR_ID {
+        return;
+    }
+    for interaction in &mut buttons {
+        if *interaction == Interaction::Pressed {
+            open_floor_library_manage_delete_modal(
+                &mut commands,
+                &mut state,
+                active.realm_id.clone(),
+                vec![floor_id],
+            );
+            break;
+        }
+    }
+}
+
+pub(crate) fn floor_library_preview_edit_button_interactions(
+    mut commands: Commands,
+    active: Res<ActiveRealmScene>,
+    mut state: ResMut<FloorLibraryUiState>,
+    mut genfloor_job: ResMut<crate::genfloor::GenFloorAiJob>,
+    mut genfloor_workshop: ResMut<crate::genfloor::GenFloorWorkshop>,
+    mut next_mode: ResMut<NextState<GameMode>>,
+    mut next_build_scene: ResMut<NextState<BuildScene>>,
+    mut buttons: Query<&Interaction, (Changed<Interaction>, With<FloorLibraryPreviewEditButton>)>,
+) {
+    if state.manage_delete_modal_root.is_some() {
+        return;
+    }
+    let Some(floor_id) = state.preview.as_ref().map(|p| p.floor_id) else {
+        return;
+    };
+    if floor_id == DEFAULT_FLOOR_ID {
+        return;
+    }
+
+    for interaction in &mut buttons {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+
+        if genfloor_job.running {
+            genfloor_workshop.error =
+                Some("GenFloor build is running. Stop it before editing.".to_string());
+        } else {
+            genfloor_job.set_edit_base_floor_id(Some(floor_id));
+            genfloor_job.set_save_overwrite_floor_id(None);
+            genfloor_workshop.draft = None;
+            genfloor_workshop.error = None;
+            let prompt_path = crate::realm_floor_packages::realm_floor_package_genfloor_source_dir(
+                &active.realm_id,
+                floor_id,
+            )
+            .join("prompt.txt");
+            genfloor_workshop.prompt = std::fs::read_to_string(&prompt_path).unwrap_or_default();
+            genfloor_workshop.status =
+                "Edit session loaded. Click Edit to run; auto-save writes a new terrain id."
+                    .to_string();
+        }
+
+        next_mode.set(GameMode::Build);
+        next_build_scene.set(BuildScene::FloorPreview);
+        close_floor_library_preview(&mut commands, &mut state);
+        break;
+    }
+}
+
 pub(crate) fn floor_library_preview_close_button_interactions(
     mut commands: Commands,
     mut state: ResMut<FloorLibraryUiState>,
     mut buttons: Query<&Interaction, (Changed<Interaction>, With<FloorLibraryPreviewCloseButton>)>,
 ) {
+    if state.manage_delete_modal_root.is_some() {
+        return;
+    }
     if state.preview.is_none() {
         return;
     }
@@ -3173,6 +3309,9 @@ pub(crate) fn floor_library_preview_close_on_escape(
     mut commands: Commands,
     mut state: ResMut<FloorLibraryUiState>,
 ) {
+    if state.manage_delete_modal_root.is_some() {
+        return;
+    }
     if state.preview.is_none() {
         return;
     }

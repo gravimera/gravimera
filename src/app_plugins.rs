@@ -507,8 +507,16 @@ impl Plugin for RenderedUiPlugin {
                     .after(crate::floor_library_ui::floor_library_open_preview_panel)
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
-                crate::floor_library_ui::floor_library_preview_close_button_interactions
+                crate::floor_library_ui::floor_library_preview_delete_button_interactions
                     .after(crate::floor_library_ui::floor_library_preview_apply_button_interactions)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::floor_library_ui::floor_library_preview_edit_button_interactions
+                    .after(crate::floor_library_ui::floor_library_preview_delete_button_interactions)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::floor_library_ui::floor_library_preview_close_button_interactions
+                    .after(crate::floor_library_ui::floor_library_preview_edit_button_interactions)
                     .run_if(crate::automation::local_input_enabled),
                 crate::floor_library_ui::floor_library_preview_close_on_escape
                     .after(crate::floor_library_ui::floor_library_preview_close_button_interactions)
