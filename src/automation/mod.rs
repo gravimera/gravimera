@@ -1581,6 +1581,13 @@ fn handle_gen3d_routes<
                 crate::gen3d::Gen3dPreviewExportRequest {
                     out_dir: req.out_dir.as_deref().map(crate::paths::expand_tilde_path),
                     channels: req.channels,
+                    export_id: gen3d_job.as_deref().and_then(|job| {
+                        job.save_overwrite_prefab_id()
+                            .or(job.edit_base_prefab_id())
+                            .or(job.last_saved_prefab_id())
+                            .map(|id| uuid::Uuid::from_u128(id).to_string())
+                            .or_else(|| job.run_id().map(|id| id.to_string()))
+                    }),
                 },
             ) {
                 Ok(status) => {

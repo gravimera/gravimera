@@ -2469,6 +2469,7 @@ pub(crate) fn gen3d_preview_export_button(
 
 pub(crate) fn gen3d_preview_export_dialog_poll(
     build_scene: Res<State<BuildScene>>,
+    job: Res<Gen3dAiJob>,
     preview_state: Res<Gen3dPreview>,
     draft: Res<Gen3dDraft>,
     library: Res<ObjectLibrary>,
@@ -2512,6 +2513,12 @@ pub(crate) fn gen3d_preview_export_dialog_poll(
         super::Gen3dPreviewExportRequest {
             out_dir: Some(path),
             channels: Vec::new(),
+            export_id: job
+                .save_overwrite_prefab_id()
+                .or(job.edit_base_prefab_id())
+                .or(job.last_saved_prefab_id())
+                .map(|id| uuid::Uuid::from_u128(id).to_string())
+                .or_else(|| job.run_id().map(|id| id.to_string())),
         },
     ) {
         Ok(status) => {

@@ -1294,12 +1294,12 @@ Response (shape):
   "export": {
     "phase": "completed",
     "run_id": 1,
-    "out_dir": "/Users/me/.gravimera/cache/gen3d_preview_exports/preview_export_1743379200_1",
-    "manifest_path": "/Users/me/.gravimera/cache/gen3d_preview_exports/preview_export_1743379200_1/manifest.json",
+    "out_dir": "/Users/me/.gravimera/cache/gen3d_preview_exports/<id>_20260331_131800",
+    "manifest_path": "/Users/me/.gravimera/cache/gen3d_preview_exports/<id>_20260331_131800/manifest.json",
     "total_channels": 4,
     "completed_channels": 4,
     "current_channel": null,
-    "message": "Preview export completed: /Users/me/.gravimera/cache/gen3d_preview_exports/preview_export_1743379200_1/manifest.json",
+    "message": "Preview export completed: /Users/me/.gravimera/cache/gen3d_preview_exports/<id>_20260331_131800/manifest.json",
     "error": null
   }
 }
@@ -1330,8 +1330,12 @@ curl -s -X POST http://127.0.0.1:8791/v1/gen3d/preview/export \
 
 Request fields:
 
-- `out_dir` optional string path. `~` is expanded. When omitted, Gravimera writes to
-  `GRAVIMERA_HOME/cache/gen3d_preview_exports/...`.
+- `out_dir` optional string path (parent directory). `~` is expanded. When omitted, Gravimera uses
+  `GRAVIMERA_HOME/cache/gen3d_preview_exports/`.
+  - The exporter always creates a new folder named `<id>_<YYYYMMDD_HHMMSS>` inside `out_dir` and
+    writes all files into that folder.
+  - `<id>` is the current Gen3D prefab id when available (seeded sessions or after saving),
+    otherwise the current Gen3D run id, otherwise the preview export run id.
 - `channels` optional array of exact preview channel names. When omitted, the export uses the
   authored preview channel order for the current draft (falling back to `idle` if the draft has no
   explicit channels yet).
@@ -1344,7 +1348,7 @@ Response (shape):
   "export": {
     "phase": "running",
     "run_id": 2,
-    "out_dir": "./test/run_1/preview_export",
+    "out_dir": "./test/run_1/preview_export/<id>_20260331_131800",
     "manifest_path": null,
     "total_channels": 2,
     "completed_channels": 0,

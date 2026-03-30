@@ -2921,14 +2921,43 @@ pub(crate) fn model_library_open_preview_panel(
         }
     }
 
+    fn format_datetime_ms(ms: u128) -> String {
+        let secs_u128 = ms / 1000;
+        let secs = if secs_u128 > i64::MAX as u128 {
+            i64::MAX
+        } else {
+            secs_u128 as i64
+        };
+        let Ok(mut dt) = time::OffsetDateTime::from_unix_timestamp(secs) else {
+            return ms.to_string();
+        };
+        if let Ok(offset) = time::UtcOffset::current_local_offset() {
+            dt = dt.to_offset(offset);
+        }
+        let date = dt.date();
+        let time = dt.time();
+        format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+            date.year(),
+            date.month() as u8,
+            date.day(),
+            time.hour(),
+            time.minute(),
+            time.second()
+        )
+    }
+
     let mut meta = String::new();
     meta.push_str(&format!("Name: {name}\n"));
     meta.push_str(&format!("ID: {uuid}\n"));
     if let Some(modified_at_ms) = modified_at_ms {
-        meta.push_str(&format!("Last modified: {modified_at_ms}\n"));
+        meta.push_str(&format!(
+            "Last modified: {}\n",
+            format_datetime_ms(modified_at_ms)
+        ));
     }
     if let Some(created_at_ms) = created_at_ms {
-        meta.push_str(&format!("Created: {created_at_ms}\n"));
+        meta.push_str(&format!("Created: {}\n", format_datetime_ms(created_at_ms)));
     }
     if let Some(created_duration_ms) = created_duration_ms {
         meta.push_str(&format!(
@@ -6041,11 +6070,7 @@ fn spawn_at_pick(
             },
             _ => FloorFootprint::Aabb { half: half_xz },
         };
-        let sample = sample_floor_footprint(
-            active_floor,
-            Vec2::new(pos.x, pos.z),
-            footprint,
-        );
+        let sample = sample_floor_footprint(active_floor, Vec2::new(pos.x, pos.z), footprint);
         apply_floor_sink(sample.max_height)
     } else {
         surface_y

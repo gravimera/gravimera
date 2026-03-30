@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::f32::consts::TAU;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 use bevy::camera::RenderTarget;
 use bevy::core_pipeline::tonemapping::Tonemapping;
@@ -57,8 +57,12 @@ pub(crate) struct Gen3dPreviewExportStatus {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Gen3dPreviewExportRequest {
+    /// Parent directory for exports (a new `[ID]_[datetime]` folder is created inside).
     pub(crate) out_dir: Option<PathBuf>,
     pub(crate) channels: Vec<String>,
+    /// Optional id used in the export folder name. When omitted, the exporter falls back to the
+    /// export run id.
+    pub(crate) export_id: Option<String>,
 }
 
 #[derive(Resource, Default)]
@@ -236,9 +240,16 @@ pub(crate) fn request_gen3d_preview_export(
 
     let run_id = runtime.next_run_id.max(1);
     runtime.next_run_id = run_id.saturating_add(1);
-    let out_dir = request
+    let base_dir = request
         .out_dir
-        .unwrap_or_else(|| default_preview_export_dir(run_id));
+        .unwrap_or_else(default_preview_export_root_dir);
+    let export_id = request
+        .export_id
+        .as_deref()
+        .map(preview_export_normalize_folder_id)
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| run_id.to_string());
+    let out_dir = base_dir.join(preview_export_folder_name(&export_id));
     let channel_plans = channels
         .into_iter()
         .enumerate()
@@ -490,8 +501,12 @@ pub(crate) fn gen3d_preview_export_poll(
         runtime.status.current_channel = Some(format!("angle/{}", plan.label.as_str()));
         runtime.status.message = format!("Exporting angle {}…", plan.label);
 
-        let angle_transform =
-            crate::orbit_capture::orbit_transform(plan.yaw, active.pitch, active.distance, active.focus);
+        let angle_transform = crate::orbit_capture::orbit_transform(
+            plan.yaw,
+            active.pitch,
+            active.distance,
+            active.focus,
+        );
         commands.entity(active.camera).insert(angle_transform);
 
         let path = active.out_dir.join(&plan.file_name);
@@ -621,8 +636,12 @@ pub(crate) fn gen3d_preview_export_poll(
         .unwrap_or(1);
     let progress = active.capture_progress.clone();
     let frame_path_for_capture = frame_path.clone();
-    let front_transform =
-        crate::orbit_capture::orbit_transform(active.yaw, active.pitch, active.distance, active.focus);
+    let front_transform = crate::orbit_capture::orbit_transform(
+        active.yaw,
+        active.pitch,
+        active.distance,
+        active.focus,
+    );
     commands.entity(active.camera).insert(front_transform);
     commands
         .spawn(Screenshot::image(active.target.clone()))
@@ -919,9 +938,7 @@ fn finalize_preview_export_channel(active: &mut ActiveGen3dPreviewExport) -> Res
     Ok(())
 }
 
-fn finalize_preview_export_manifest(
-    active: &ActiveGen3dPreviewExport,
-) -> Result<PathBuf, String> {
+fn finalize_preview_export_manifest(active: &ActiveGen3dPreviewExport) -> Result<PathBuf, String> {
     let manifest_path = active.out_dir.join("manifest.json");
     let doc = PreviewExportManifestV1 {
         format_version: GEN3D_PREVIEW_EXPORT_FORMAT_VERSION,
@@ -1236,14 +1253,45 @@ fn apply_preview_export_sample(
     }
 }
 
-fn default_preview_export_dir(run_id: u64) -> PathBuf {
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0);
-    crate::paths::default_cache_dir()
-        .join("gen3d_preview_exports")
-        .join(format!("preview_export_{stamp}_{run_id}"))
+fn default_preview_export_root_dir() -> PathBuf {
+    crate::paths::default_cache_dir().join("gen3d_preview_exports")
+}
+
+fn preview_export_normalize_folder_id(id: &str) -> String {
+    let mut out = String::new();
+    let mut last_was_sep = false;
+    for ch in id.trim().chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' {
+            out.push(ch);
+            last_was_sep = false;
+        } else if !last_was_sep {
+            out.push('_');
+            last_was_sep = true;
+        }
+    }
+    let trimmed = out.trim_matches('_');
+    if trimmed.is_empty() {
+        "export".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn preview_export_folder_name(id: &str) -> String {
+    let id = preview_export_normalize_folder_id(id);
+    let now = time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc());
+    let date = now.date();
+    let time = now.time();
+    let datetime = format!(
+        "{:04}{:02}{:02}_{:02}{:02}{:02}",
+        date.year(),
+        date.month() as u8,
+        date.day(),
+        time.hour(),
+        time.minute(),
+        time.second()
+    );
+    format!("{id}_{datetime}")
 }
 
 fn preview_export_file_stem(channel: &str) -> String {
@@ -1312,6 +1360,23 @@ mod tests {
         assert_eq!(preview_export_file_stem("Idle"), "idle");
         assert_eq!(preview_export_file_stem("Left Slash!"), "left_slash");
         assert_eq!(preview_export_file_stem("   "), "idle");
+    }
+
+    #[test]
+    fn preview_export_folder_id_sanitizes_and_keeps_single_separators() {
+        assert_eq!(
+            preview_export_normalize_folder_id("  Alpha Beta  "),
+            "Alpha_Beta"
+        );
+        assert_eq!(preview_export_normalize_folder_id("a///b***c"), "a_b_c");
+        assert_eq!(preview_export_normalize_folder_id("   "), "export");
+    }
+
+    #[test]
+    fn preview_export_folder_name_uses_normalized_prefix() {
+        let folder = preview_export_folder_name(" Sword Slash ");
+        assert!(folder.starts_with("Sword_Slash_"), "folder={folder}");
+        assert_eq!(folder.len(), "Sword_Slash_YYYYMMDD_HHMMSS".len());
     }
 
     #[test]
