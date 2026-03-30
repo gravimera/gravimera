@@ -5,6 +5,7 @@
 - Top bar: click `Terrain` to open the Terrain panel.
 - Terrain panel: click `Generate` to enter GenFloor (Terrain Preview).
 - Terrain panel: click a completed terrain item to open the Terrain Preview panel.
+- Terrain Preview panel: click `Apply` to switch the active scene terrain.
 - Exiting GenFloor (Save or Cancel) returns to the Terrain panel.
 
 ## Storage Layout
@@ -62,7 +63,7 @@ Note: `mesh.size_m` is clamped to at least the default terrain size so generated
 - Clicking `Build` sends the prompt to the GenFloor AI and returns a `FloorDefV1` terrain draft.
 - GenFloor auto-saves the draft on completion and switches the Build button to Edit (subsequent runs overwrite the same terrain id).
 - Clicking `Generate` from the Terrain panel starts a fresh GenFloor session (clears the previous edit-overwrite terrain id), unless a build is currently running (in which case it resumes the active session).
-- Terrain can be switched at runtime by clicking items in the Terrain list.
+- Terrain can be switched at runtime from the Terrain Preview panel's `Apply` button.
 - The Terrain list always includes a built-in `Default Terrain` entry.
 - GenFloor uses the same AI service selection as Gen3D (`[gen3d].ai_service`).
 - The Terrain list shows placeholder rows for active GenFloor work (`Generating`, `Editing`, `Queued`).

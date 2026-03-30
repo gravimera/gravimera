@@ -301,6 +301,8 @@ pub(crate) struct FloorLibrarySearchFieldText;
 #[derive(Component)]
 pub(crate) struct FloorLibraryPreviewOverlayRoot;
 #[derive(Component)]
+pub(crate) struct FloorLibraryPreviewApplyButton;
+#[derive(Component)]
 pub(crate) struct FloorLibraryPreviewCloseButton;
 #[derive(Component)]
 pub(crate) struct FloorLibraryPreviewSceneRoot;
@@ -735,6 +737,7 @@ pub(crate) fn floor_library_update_visibility(
             With<FloorLibraryManageSelectNoneButton>,
             With<FloorLibrarySearchField>,
             With<FloorLibraryListItem>,
+            With<FloorLibraryPreviewApplyButton>,
             With<FloorLibraryPreviewCloseButton>,
             With<FloorLibraryGenfloorPlaceholderItem>,
         )>,
@@ -2721,6 +2724,15 @@ fn close_floor_library_preview(commands: &mut Commands, state: &mut FloorLibrary
     });
 }
 
+fn floor_library_load_preview_def(realm_id: &str, floor_id: u128) -> Result<FloorDefV1, String> {
+    if floor_id == DEFAULT_FLOOR_ID {
+        Ok(FloorDefV1::default_world())
+    } else {
+        crate::realm_floor_packages::load_realm_floor_def(realm_id, floor_id)
+            .map_err(|err| format!("Failed to load floor: {err}"))
+    }
+}
+
 fn spawn_floor_library_preview_scene(
     commands: &mut Commands,
     images: &mut Assets<Image>,
@@ -2833,6 +2845,7 @@ pub(crate) fn floor_library_open_preview_panel(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<BuildScene>>,
     mut images: ResMut<Assets<Image>>,
+    active: Res<ActiveRealmScene>,
     mut state: ResMut<FloorLibraryUiState>,
     mut active_floor: ResMut<ActiveWorldFloor>,
 ) {
@@ -2862,10 +2875,12 @@ pub(crate) fn floor_library_open_preview_panel(
 
     close_floor_library_preview(&mut commands, &mut state);
 
-    let def = if floor_id == DEFAULT_FLOOR_ID {
-        FloorDefV1::default_world()
-    } else {
-        active_floor.def.clone()
+    let def = match floor_library_load_preview_def(&active.realm_id, floor_id) {
+        Ok(def) => def,
+        Err(err) => {
+            warn!("{err}");
+            return;
+        }
     };
 
     let scene = match spawn_floor_library_preview_scene(&mut commands, &mut images, &def) {
@@ -2947,25 +2962,59 @@ pub(crate) fn floor_library_open_preview_panel(
                 ));
 
                 row.spawn((
-                    Button,
                     Node {
-                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
-                        border: UiRect::all(Val::Px(1.0)),
+                        flex_direction: FlexDirection::Row,
+                        column_gap: Val::Px(8.0),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
-                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                    FloorLibraryPreviewCloseButton,
+                    BackgroundColor(Color::NONE),
                 ))
-                .with_children(|b| {
-                    b.spawn((
-                        Text::new("Exit"),
-                        TextFont {
-                            font_size: 14.0,
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                    ));
+                .with_children(|actions| {
+                    actions
+                        .spawn((
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.08, 0.16, 0.13, 0.78)),
+                            BorderColor::all(Color::srgba(0.25, 0.95, 0.85, 0.85)),
+                            FloorLibraryPreviewApplyButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("Apply"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.98, 0.96)),
+                            ));
+                        });
+
+                    actions
+                        .spawn((
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                            FloorLibraryPreviewCloseButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("Exit"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                            ));
+                        });
                 });
             });
 
@@ -3030,6 +3079,45 @@ pub(crate) fn floor_library_preview_close_button_interactions(
     }
 }
 
+pub(crate) fn floor_library_preview_apply_button_interactions(
+    active: Res<ActiveRealmScene>,
+    mut active_floor: ResMut<ActiveWorldFloor>,
+    mut state: ResMut<FloorLibraryUiState>,
+    mut buttons: Query<&Interaction, (Changed<Interaction>, With<FloorLibraryPreviewApplyButton>)>,
+) {
+    let Some(floor_id) = state.preview.as_ref().map(|preview| preview.floor_id) else {
+        return;
+    };
+
+    for interaction in &mut buttons {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+
+        match floor_library_load_preview_def(&active.realm_id, floor_id) {
+            Ok(def) => {
+                let scene_floor_id = if floor_id == DEFAULT_FLOOR_ID {
+                    None
+                } else {
+                    Some(floor_id)
+                };
+                set_active_world_floor(&mut active_floor, scene_floor_id, def);
+                state.selected_floor_id = Some(floor_id);
+                if let Err(err) = crate::scene_floor_selection::save_scene_floor_selection(
+                    &active.realm_id,
+                    &active.scene_id,
+                    scene_floor_id,
+                ) {
+                    warn!("{err}");
+                }
+            }
+            Err(err) => warn!("{err}"),
+        }
+
+        break;
+    }
+}
+
 pub(crate) fn floor_library_preview_close_on_escape(
     keys: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
@@ -3046,8 +3134,6 @@ pub(crate) fn floor_library_preview_close_on_escape(
 pub(crate) fn floor_library_item_button_interactions(
     keys: Res<ButtonInput<KeyCode>>,
     mut state: ResMut<FloorLibraryUiState>,
-    active: Res<ActiveRealmScene>,
-    mut active_floor: ResMut<ActiveWorldFloor>,
     mut buttons: Query<(&Interaction, &FloorLibraryItemButton), Changed<Interaction>>,
 ) {
     for (interaction, button) in &mut buttons {
@@ -3093,34 +3179,7 @@ pub(crate) fn floor_library_item_button_interactions(
         }
 
         state.selected_floor_id = Some(button.floor_id);
-        if button.floor_id == DEFAULT_FLOOR_ID {
-            set_active_world_floor(&mut active_floor, None, FloorDefV1::default_world());
-            if let Err(err) = crate::scene_floor_selection::save_scene_floor_selection(
-                &active.realm_id,
-                &active.scene_id,
-                None,
-            ) {
-                warn!("{err}");
-            }
-            state.request_preview(button.floor_id);
-            continue;
-        }
-        match crate::realm_floor_packages::load_realm_floor_def(&active.realm_id, button.floor_id) {
-            Ok(def) => {
-                set_active_world_floor(&mut active_floor, Some(button.floor_id), def);
-                if let Err(err) = crate::scene_floor_selection::save_scene_floor_selection(
-                    &active.realm_id,
-                    &active.scene_id,
-                    Some(button.floor_id),
-                ) {
-                    warn!("{err}");
-                }
-                state.request_preview(button.floor_id);
-            }
-            Err(err) => {
-                warn!("Failed to load floor: {err}");
-            }
-        }
+        state.request_preview(button.floor_id);
     }
 }
 
