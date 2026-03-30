@@ -2364,7 +2364,7 @@ mod tests {
 
         ObjectDef {
             object_id,
-            label: format!("gen3d_component_{name}").into(),
+            label: name.to_string().into(),
             size,
             ground_origin_y: None,
             collider: ColliderProfile::None,

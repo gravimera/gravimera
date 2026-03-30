@@ -1302,7 +1302,7 @@ pub(super) fn ai_plan_to_initial_draft_defs(
         let size = comp.planned_size.abs().max(Vec3::splat(0.01));
         defs.push(ObjectDef {
             object_id: id,
-            label: format!("gen3d_component_{}", comp.name).into(),
+            label: comp.name.clone().into(),
             size,
             ground_origin_y: None,
             collider: ColliderProfile::None,
@@ -2912,7 +2912,7 @@ pub(super) fn ai_to_component_def(
     Ok(ConvertedComponentDef {
         def: ObjectDef {
             object_id,
-            label: format!("gen3d_component_{}", component_name).into(),
+            label: component_name.to_string().into(),
             size,
             ground_origin_y: None,
             collider,

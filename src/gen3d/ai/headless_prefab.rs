@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -8,7 +8,7 @@ use bevy::prelude::*;
 
 use crate::config::AppConfig;
 use crate::gen3d::state::{Gen3dDraft, Gen3dSpeedMode};
-use crate::object::registry::{ObjectDef, ObjectPartDef, ObjectPartKind};
+use crate::object::registry::{builtin_object_id, ObjectDef, ObjectPartDef, ObjectPartKind};
 
 use super::ai_service::{generate_text_via_ai_service, Gen3dAiServiceConfig};
 use super::convert;
@@ -22,6 +22,10 @@ use super::{Gen3dAiProgress, Gen3dAiSessionState};
 pub(crate) struct Gen3dHeadlessPrefabResult {
     pub(crate) root_prefab_id: u128,
     pub(crate) defs: Vec<ObjectDef>,
+}
+
+fn component_object_id_for_name(name: &str) -> u128 {
+    builtin_object_id(&format!("gravimera/gen3d/component/{name}"))
 }
 
 pub(crate) fn gen3d_generate_prefab_defs_headless(
@@ -95,10 +99,14 @@ pub(crate) fn gen3d_generate_prefab_defs_headless(
 
     let (planned_components, assembly_notes, mut initial_defs) =
         convert::ai_plan_to_initial_draft_defs(plan)?;
+    let planned_component_ids: HashSet<u128> = planned_components
+        .iter()
+        .map(|component| component_object_id_for_name(&component.name))
+        .collect();
 
     let mut child_ref_parts: HashMap<u128, Vec<ObjectPartDef>> = HashMap::new();
     for def in initial_defs.iter() {
-        if !def.label.starts_with("gen3d_component_") {
+        if !planned_component_ids.contains(&def.object_id) {
             continue;
         }
         let refs: Vec<ObjectPartDef> = def

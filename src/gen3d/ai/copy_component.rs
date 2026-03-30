@@ -977,7 +977,7 @@ fn ensure_target_subtree_shape(
         let size = component.planned_size.abs().max(Vec3::splat(0.01));
         draft.defs.push(ObjectDef {
             object_id: id,
-            label: format!("gen3d_component_{}", component.name).into(),
+            label: component.name.clone().into(),
             size,
             ground_origin_y: None,
             collider: ColliderProfile::None,
@@ -2724,7 +2724,7 @@ mod tests {
 
         // And we should have at least one new component def created with primitives copied in.
         let generated_new = draft.defs.iter().any(|d| {
-            d.label.as_ref().starts_with("gen3d_component_leg_1_root__")
+            d.label.as_ref().starts_with("leg_1_root__")
                 && d.parts
                     .iter()
                     .any(|p| matches!(p.kind, ObjectPartKind::Primitive { .. }))
@@ -3555,7 +3555,7 @@ mod tests {
 
         // And we should have at least one new component def created with primitives copied in.
         let generated_new = draft.defs.iter().any(|d| {
-            d.label.as_ref().starts_with("gen3d_component_leg_1_root__")
+            d.label.as_ref().starts_with("leg_1_root__")
                 && d.parts
                     .iter()
                     .any(|p| matches!(p.kind, ObjectPartKind::Primitive { .. }))

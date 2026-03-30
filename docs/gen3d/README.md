@@ -108,6 +108,12 @@ component tree, not just the first root layer.
 This is preview-only inspection UI. It does not modify the draft, saved prefab, or component
 attachments.
 
+## Component identity
+
+Gen3D component definitions keep the component `name` as their object `label`. Internal identity
+for reuse, snapshots, and deterministic edit tooling comes from the stable object id namespace
+`gravimera/gen3d/component/<name>`, not from a label prefix.
+
 ## DraftOps-first primitive editing (seeded edits)
 
 ## Post-build edit flow
