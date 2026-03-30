@@ -6043,9 +6043,6 @@ fn spawn_at_pick(
             Vec2::new(pos.x, pos.z),
             footprint,
         );
-        if sample.is_water && mobility_mode != Some(MobilityMode::Air) {
-            return None;
-        }
         apply_floor_sink(sample.max_height)
     } else {
         surface_y

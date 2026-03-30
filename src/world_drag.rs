@@ -366,24 +366,24 @@ pub(crate) fn world_drag_update(
         transform.translation.x = desired.x;
         transform.translation.z = desired.y;
 
-        if active.mobility_mode != Some(MobilityMode::Air) {
-            if hit.is_floor {
-                let footprint = FloorFootprint::Circle { radius };
-                let sample =
-                    sample_floor_footprint(&active_floor, Vec2::new(desired.x, desired.y), footprint);
-                if sample.is_water {
-                    return;
+            if active.mobility_mode != Some(MobilityMode::Air) {
+                if hit.is_floor {
+                    let footprint = FloorFootprint::Circle { radius };
+                    let sample = sample_floor_footprint(
+                        &active_floor,
+                        Vec2::new(desired.x, desired.y),
+                        footprint,
+                    );
+                    let ground_y = apply_floor_sink(sample.max_height);
+                    let scale_y = safe_abs_scale_y(transform.scale);
+                    let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
+                    transform.translation.y = ground_y + origin_y;
+                } else {
+                    let scale_y = safe_abs_scale_y(transform.scale);
+                    let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
+                    transform.translation.y = hit.surface_y + origin_y;
                 }
-                let ground_y = apply_floor_sink(sample.max_height);
-                let scale_y = safe_abs_scale_y(transform.scale);
-                let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
-                transform.translation.y = ground_y + origin_y;
-            } else {
-            let scale_y = safe_abs_scale_y(transform.scale);
-            let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
-            transform.translation.y = hit.surface_y + origin_y;
             }
-        }
     } else {
         let Ok((_e, mut transform, collider, dimensions, prefab_id)) =
             build_objects.get_mut(active.entity)
@@ -413,20 +413,20 @@ pub(crate) fn world_drag_update(
             let footprint = FloorFootprint::Aabb {
                 half: collider.half_extents,
             };
-            let sample =
-                sample_floor_footprint(&active_floor, Vec2::new(desired.x, desired.y), footprint);
-            if sample.is_water {
-                return;
-            }
+            let sample = sample_floor_footprint(
+                &active_floor,
+                Vec2::new(desired.x, desired.y),
+                footprint,
+            );
             let ground_y = apply_floor_sink(sample.max_height);
             let scale_y = safe_abs_scale_y(transform.scale);
             let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
             transform.translation.y = ground_y + origin_y;
         } else {
-        let scale_y = safe_abs_scale_y(transform.scale);
-        let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
-        let bottom_y = hit.surface_y.max(0.0);
-        transform.translation.y = bottom_y + origin_y;
+            let scale_y = safe_abs_scale_y(transform.scale);
+            let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
+            let bottom_y = hit.surface_y;
+            transform.translation.y = bottom_y + origin_y;
         }
 
         let _ = dimensions;

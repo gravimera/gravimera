@@ -153,7 +153,7 @@ pub(crate) fn apply_floor_sink(height: f32) -> f32 {
     }
     if height <= 0.0 {
         // Keep default flat terrain at y=0 without any sink.
-        return height.max(0.0);
+        return height;
     }
     (height - FLOOR_GROUND_SINK_M).max(0.0)
 }

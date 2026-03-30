@@ -19,7 +19,7 @@ use crate::assets::SceneAssets;
 use crate::config::AppConfig;
 use crate::constants::*;
 use crate::genfloor::{apply_floor_sink, sample_floor_footprint, ActiveWorldFloor, FloorFootprint};
-use crate::geometry::{circle_intersects_aabb_xz, clamp_world_xz, safe_abs_scale_y, snap_to_grid};
+use crate::geometry::{clamp_world_xz, safe_abs_scale_y, snap_to_grid};
 use crate::meta_speak::{MetaSpeakOutcome, MetaSpeakRequest, MetaSpeakRuntime, MetaSpeakVoice};
 use crate::navigation;
 use crate::object::registry::ObjectLibrary;
@@ -4333,8 +4333,6 @@ fn handle_request_main_thread<
             let Some(def) = library.get(prefab_id) else {
                 return Some(json_error(404, "Prefab not found."));
             };
-            let mobility_mode = def.mobility.as_ref().map(|mobility| mobility.mode);
-
             let size = def.size.abs();
             let collider_half_xz = match def.collider {
                 crate::object::registry::ColliderProfile::CircleXZ { radius } => {
@@ -4402,13 +4400,6 @@ fn handle_request_main_thread<
                     Vec2::new(pos.x, pos.z),
                     footprint,
                 );
-                if sample.is_water && mobility_mode != Some(crate::object::registry::MobilityMode::Air)
-                {
-                    return Some(json_error(
-                        409,
-                        "Cannot spawn ground/static objects on water without explicit y.",
-                    ));
-                }
                 let ground_y = apply_floor_sink(sample.max_height);
                 pos.y = ground_y + library.ground_origin_y_or_default(prefab_id);
             }
@@ -4542,7 +4533,7 @@ fn handle_request_main_thread<
                             let scale_y = safe_abs_scale_y(next.scale);
                             let origin_y =
                                 library.ground_origin_y_or_default(prefab_id.0) * scale_y;
-                            next.translation.y = (goal_ground_y.max(0.0) + origin_y).max(0.0);
+                            next.translation.y = goal_ground_y + origin_y;
                         } else {
                             let footprint = FloorFootprint::Aabb {
                                 half: collider.half_extents,
@@ -4552,14 +4543,11 @@ fn handle_request_main_thread<
                                 Vec2::new(next.translation.x, next.translation.z),
                                 footprint,
                             );
-                            if sample.is_water {
-                                continue;
-                            }
                             let scale_y = safe_abs_scale_y(next.scale);
                             let origin_y =
                                 library.ground_origin_y_or_default(prefab_id.0) * scale_y;
                             let ground_y = apply_floor_sink(sample.max_height);
-                            next.translation.y = (ground_y + origin_y).max(0.0);
+                            next.translation.y = ground_y + origin_y;
                         }
 
                         commands.entity(entity).insert(next);
@@ -4596,7 +4584,7 @@ fn handle_request_main_thread<
                     }
                     crate::object::registry::MobilityMode::Ground => {
                         let goal_ground_y = if let Some(goal_ground_y) = req.y {
-                            goal_ground_y.max(0.0)
+                            goal_ground_y
                         } else {
                             let footprint = FloorFootprint::Circle {
                                 radius: radius.max(0.01),
@@ -4606,30 +4594,10 @@ fn handle_request_main_thread<
                                 clamped_goal,
                                 footprint,
                             );
-                            if sample.is_water {
-                                commands.entity(entity).remove::<MoveOrder>();
-                                continue;
-                            }
                             apply_floor_sink(sample.max_height)
                         };
 
-                        let is_walkable = |pos: Vec2| {
-                            let footprint = FloorFootprint::Circle {
-                                radius: radius.max(0.01),
-                            };
-                            let sample = sample_floor_footprint(
-                                active_floor,
-                                pos,
-                                footprint,
-                            );
-                            if !sample.is_water {
-                                return true;
-                            }
-                            obstacles.iter().any(|ob| {
-                                ob.supports_standing
-                                    && circle_intersects_aabb_xz(pos, radius, ob.center, ob.half)
-                            })
-                        };
+                        let is_walkable = |_pos: Vec2| true;
                         let Some(path) = navigation::find_path_height_aware(
                             start,
                             current_ground_y,

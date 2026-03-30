@@ -6,7 +6,7 @@ use crate::action_log::{ActionLogSource, ActionLogState};
 use crate::config::AppConfig;
 use crate::constants::*;
 use crate::genfloor::{apply_floor_sink, sample_floor_footprint, ActiveWorldFloor, FloorFootprint};
-use crate::geometry::{circle_intersects_aabb_xz, safe_abs_scale_y};
+use crate::geometry::safe_abs_scale_y;
 use crate::intelligence::protocol::*;
 use crate::intelligence::sidecar_client::SidecarClient;
 use crate::navigation;
@@ -829,32 +829,10 @@ fn intelligence_tick(
                                     clamped_goal,
                                     footprint,
                                 );
-                                if sample.is_water {
-                                    commands.entity(entity).remove::<MoveOrder>();
-                                    continue;
-                                }
                                 apply_floor_sink(sample.max_height)
                             };
 
-                            let is_walkable = |pos: Vec2| {
-                                let footprint = FloorFootprint::Circle {
-                                    radius: radius.max(0.01),
-                                };
-                                let sample =
-                                    sample_floor_footprint(&active_floor, pos, footprint);
-                                if !sample.is_water {
-                                    return true;
-                                }
-                                obstacles.iter().any(|ob| {
-                                    ob.supports_standing
-                                        && circle_intersects_aabb_xz(
-                                            pos,
-                                            radius,
-                                            ob.center,
-                                            ob.half,
-                                        )
-                                })
-                            };
+                            let is_walkable = |_pos: Vec2| true;
                             let Some(path) = navigation::find_path_height_aware(
                                 start,
                                 current_ground_y,

@@ -172,7 +172,8 @@ Placement notes (non-normative):
   - Apply a 0.02m sink for visual grounding, but skip the sink when `base_ground_y == 0`.
   - `translation.y = base_ground_y + ground_origin_y * abs(scale.y)` when the prefab defines `ground_origin_y` (realm prefab packs).
   - otherwise `translation.y = base_ground_y + (prefab_size.y * abs(scale.y)) / 2`.
-- If any sampled terrain height under the footprint is below 0, treat the area as water: ground/static instances should not be placed there unless a `supports_standing` object provides support (air units are exempt).
+- If any sampled terrain height under the footprint is below 0, tag the area as water in sampling
+  metadata; placement does not block on water by default.
 
 Additional fields are allowed and must be preserved by round-trip tools when possible.
 
@@ -240,7 +241,8 @@ Placement notes (non-normative):
   - Apply a 0.02m sink for visual grounding, but skip the sink when `base_ground_y == 0`.
   - `translation.y = base_ground_y + ground_origin_y * abs(scale.y)` when the prefab defines `ground_origin_y` (realm prefab packs).
   - otherwise `translation.y = base_ground_y + (prefab_size.y * abs(scale.y)) / 2`.
-- If any sampled terrain height under the footprint is below 0, treat the area as water: ground/static instances should not be placed there unless a `supports_standing` object provides support (air units are exempt).
+- If any sampled terrain height under the footprint is below 0, tag the area as water in sampling
+  metadata; placement does not block on water by default.
 
 Additional fields are allowed and must be preserved by round-trip tools when possible.
 

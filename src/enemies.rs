@@ -320,9 +320,6 @@ pub(crate) fn spawn_enemies(
         candidate.y = clamp_world_xz(candidate.y, radius);
 
         let sample = sample_floor_footprint(&active_floor, candidate, footprint);
-        if sample.is_water {
-            continue;
-        }
         if obstacles
             .iter()
             .any(|(center, half)| circle_intersects_aabb_xz(candidate, radius, *center, *half))
@@ -389,9 +386,6 @@ pub(crate) fn spawn_enemies_headless(
             radius: radius.max(0.01),
         },
     );
-    if sample.is_water {
-        return;
-    }
     let spawn_ground_y = apply_floor_sink(sample.max_height);
 
     spawn_enemy_headless(

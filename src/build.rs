@@ -717,16 +717,6 @@ pub(crate) fn build_place_object(
         },
     };
     let sample = sample_floor_footprint(&world.active_floor, center_xz, footprint);
-    let has_support = existing.iter().any(|object| {
-        if object.kind != BuildObjectKind::Block {
-            return false;
-        }
-        let other_center = Vec2::new(object.center.x, object.center.z);
-        aabbs_intersect_xz(center_xz, collider_half_xz, other_center, object.half_xz)
-    });
-    if sample.is_water && !has_support {
-        return;
-    }
     let base_ground_y = apply_floor_sink(sample.max_height);
 
     let center_y = match spec.kind {
@@ -955,17 +945,6 @@ pub(crate) fn build_update_preview(
         },
     };
     let sample = sample_floor_footprint(&active_floor, center_xz, footprint);
-    let has_support = existing.iter().any(|object| {
-        if object.kind != BuildObjectKind::Block {
-            return false;
-        }
-        let other_center = Vec2::new(object.center.x, object.center.z);
-        aabbs_intersect_xz(center_xz, collider_half_xz, other_center, object.half_xz)
-    });
-    if sample.is_water && !has_support {
-        preview.visible = false;
-        return;
-    }
     let base_ground_y = apply_floor_sink(sample.max_height);
 
     let center_y = match spec.kind {

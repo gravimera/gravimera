@@ -161,7 +161,6 @@ pub(crate) fn separate_enemies(
         let origin_y = enemy.origin_y * scale_y;
         let radius = collider.radius;
         let mut pos = Vec2::new(transform.translation.x, transform.translation.z);
-        let start_pos = pos;
         let current_ground_y = if let Some(pounce) = pounce {
             (pounce.start.y - origin_y).max(0.0)
         } else {
@@ -196,7 +195,7 @@ pub(crate) fn separate_enemies(
             let footprint = FloorFootprint::Circle {
                 radius: radius.max(0.01),
             };
-            let (ground_y, is_water, has_support) = ground_y_for_pos(
+            let (ground_y, _is_water, _has_support) = ground_y_for_pos(
                 &active_floor,
                 pos,
                 footprint,
@@ -205,21 +204,7 @@ pub(crate) fn separate_enemies(
                 height,
                 &aabbs,
             );
-            if is_water && !has_support {
-                pos = start_pos;
-                let (ground_y, _is_water, _has_support) = ground_y_for_pos(
-                    &active_floor,
-                    pos,
-                    footprint,
-                    radius,
-                    current_ground_y,
-                    height,
-                    &aabbs,
-                );
-                ground_y + origin_y
-            } else {
-                ground_y + origin_y
-            }
+            ground_y + origin_y
         };
         transform.translation = Vec3::new(pos.x, y, pos.y);
     }
@@ -348,7 +333,6 @@ pub(crate) fn separate_commandables(
             .unwrap_or(crate::object::registry::MobilityMode::Ground);
 
         let mut pos = Vec2::new(transform.translation.x, transform.translation.z);
-        let start_pos = pos;
         let current_ground_y = (transform.translation.y - origin_y).max(0.0);
 
         let mut obstacles: Vec<(Vec2, Vec2)> = Vec::with_capacity(aabbs.len());
@@ -375,7 +359,7 @@ pub(crate) fn separate_commandables(
                 let footprint = FloorFootprint::Circle {
                     radius: radius.max(0.01),
                 };
-                let (ground_y, is_water, has_support) = ground_y_for_pos(
+                let (ground_y, _is_water, _has_support) = ground_y_for_pos(
                     &active_floor,
                     pos,
                     footprint,
@@ -384,21 +368,7 @@ pub(crate) fn separate_commandables(
                     height,
                     &aabbs,
                 );
-                if is_water && !has_support {
-                    pos = start_pos;
-                    let (ground_y, _is_water, _has_support) = ground_y_for_pos(
-                        &active_floor,
-                        pos,
-                        footprint,
-                        radius,
-                        current_ground_y,
-                        height,
-                        &aabbs,
-                    );
-                    ground_y + origin_y
-                } else {
-                    ground_y + origin_y
-                }
+                ground_y + origin_y
             }
         };
 
@@ -467,8 +437,6 @@ pub(crate) fn separate_player_from_enemies(
         player_transform.translation.x,
         player_transform.translation.z,
     );
-    let start_pos = player_pos;
-
     for _ in 0..6 {
         let mut moved = false;
 
@@ -515,18 +483,6 @@ pub(crate) fn separate_player_from_enemies(
     let footprint = FloorFootprint::Circle {
         radius: player_radius.max(0.01),
     };
-    let (_ground_y, is_water, has_support) = ground_y_for_pos(
-        &active_floor,
-        player_pos,
-        footprint,
-        player_radius,
-        current_ground_y,
-        HERO_HEIGHT_WORLD,
-        &aabbs,
-    );
-    if is_water && !has_support {
-        player_pos = start_pos;
-    }
     let (ground_y, _is_water, _has_support) = ground_y_for_pos(
         &active_floor,
         player_pos,

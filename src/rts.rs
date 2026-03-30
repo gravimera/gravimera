@@ -7,10 +7,7 @@ use crate::action_log::{ActionLogSource, ActionLogState, ActionLogWriter};
 use crate::assets::SceneAssets;
 use crate::constants::*;
 use crate::genfloor::{apply_floor_sink, sample_floor_footprint, ActiveWorldFloor, FloorFootprint};
-use crate::geometry::{
-    circle_intersects_aabb_xz, clamp_world_xz, point_inside_aabb_xz, safe_abs_scale_y,
-    snap_to_grid,
-};
+use crate::geometry::{clamp_world_xz, point_inside_aabb_xz, safe_abs_scale_y, snap_to_grid};
 use crate::navigation;
 use crate::object::registry::ObjectLibrary;
 use crate::object::types::effects as effect_types;
@@ -912,27 +909,11 @@ pub(crate) fn move_command_input(
                     };
                     let sample =
                         sample_floor_footprint(&world.active_floor, clamped_goal, footprint);
-                    if sample.is_water {
-                        commands.entity(entity).remove::<MoveOrder>();
-                        continue;
-                    }
                     apply_floor_sink(sample.max_height)
                 };
 
-                let is_walkable = |pos: Vec2| {
-                    let footprint = FloorFootprint::Circle {
-                        radius: radius.max(0.01),
-                    };
-                    let sample = sample_floor_footprint(&world.active_floor, pos, footprint);
-                    if !sample.is_water {
-                        return true;
-                    }
-                    obstacles.iter().any(|ob| {
-                        ob.supports_standing
-                            && circle_intersects_aabb_xz(pos, radius, ob.center, ob.half)
-                    })
-                };
-                let Some(path) = navigation::find_path_height_aware(
+                let is_walkable = |_pos: Vec2| true;
+                let mut path = if let Some(path) = navigation::find_path_height_aware(
                     start,
                     current_ground_y,
                     clamped_goal,
@@ -943,20 +924,23 @@ pub(crate) fn move_command_input(
                     NAV_GRID_SIZE,
                     &obstacles,
                     &is_walkable,
-                ) else {
-                    commands.entity(entity).remove::<MoveOrder>();
-                    continue;
+                ) {
+                    navigation::smooth_path_height_aware(
+                        start,
+                        current_ground_y,
+                        path,
+                        radius,
+                        height,
+                        NAV_GRID_SIZE,
+                        &obstacles,
+                        &is_walkable,
+                    )
+                } else {
+                    vec![clamped_goal]
                 };
-                let path = navigation::smooth_path_height_aware(
-                    start,
-                    current_ground_y,
-                    path,
-                    radius,
-                    height,
-                    NAV_GRID_SIZE,
-                    &obstacles,
-                    &is_walkable,
-                );
+                if path.is_empty() {
+                    path.push(clamped_goal);
+                }
                 order.path = path.into();
                 order.target = Some(clamped_goal);
             }

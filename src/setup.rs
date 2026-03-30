@@ -349,7 +349,7 @@ pub(crate) fn setup_rendered(
     commands.spawn((WorldFloor, Transform::IDENTITY, Visibility::Inherited));
 
     let ground_sample = sample_floor_point(&active_floor, 0.0, 0.0);
-    let ground_y = apply_floor_sink(ground_sample.height).max(0.0);
+    let ground_y = apply_floor_sink(ground_sample.height);
     let player_start = Vec3::new(0.0, ground_y + PLAYER_Y, 0.0);
 
     commands.spawn((
