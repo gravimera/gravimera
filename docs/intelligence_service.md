@@ -37,6 +37,10 @@ mode = "embedded"
 # Optional: require `Authorization: Bearer <token>` on every request.
 # token = "secret"
 
+# Optional: how often the host sends brain ticks to the intelligence service.
+# Minimum: 1 second. Default: 1 second.
+# tick_interval_secs = 1
+
 # Dev-only: spawn a demo commandable unit with a demo standalone brain.
 # debug_spawn_unit = true
 ```
@@ -94,7 +98,8 @@ cargo run
 The service currently ships a few **demo** modules for development and testing:
 
 - `demo.orbit.v1`: circles around a center point.
-  - config: `{ "center": [x,z], "radius": f32, "rads_per_tick": f32 }`
+  - config: `{ "center": [x,z], "radius": f32, "rads_per_sec": f32 }`
+  - legacy config key `rads_per_tick` is still accepted and interpreted as a 60 Hz rate.
 - `demo.coward.v1`: wanders/rests/“looks around”, but flees from nearby units of different `kind`.
   - on taking damage (health drop), it guesses the attacker as the nearest hostile unit in its snapshot.
   - if the attacker seems more powerful (based on health/max health), it panic-flees (may try to hide behind nearby buildings) and remembers that attacker as “dangerous” for ~60 seconds.
@@ -125,6 +130,8 @@ When `intelligence_service.enabled = true` (and `mode != "disabled"`), the host 
 - Units that cannot attack: `demo.coward.v1`
 
 Brains only tick/act in **Play** mode. When switching back to **Build**, the host clears brain-issued move/attack orders so units stay still for review.
+
+By default, the host sends standalone-brain ticks once per second (`tick_interval_secs = 1`). Increase it if you want coarser AI updates; the current minimum is 1 second.
 
 If the intelligence service disconnects (or is temporarily unavailable), the host will automatically retry connecting. If the service restarts and forgets existing brain instance ids, the host respawns those brain instances.
 

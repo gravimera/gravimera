@@ -5,6 +5,7 @@ const CONFIG_FILE_NAME: &str = "config.toml";
 const CONFIG_OVERRIDE_ENV: &str = "GRAVIMERA_CONFIG";
 
 pub(crate) const DEFAULT_AI_REQUEST_TIMEOUT_SECS: u64 = 60 * 4;
+pub(crate) const DEFAULT_INTELLIGENCE_SERVICE_TICK_INTERVAL_SECS: u64 = 1;
 
 #[derive(Resource, Clone, Debug)]
 pub(crate) struct AppConfig {
@@ -28,6 +29,7 @@ pub(crate) struct AppConfig {
     pub(crate) intelligence_service_mode: IntelligenceServiceMode,
     pub(crate) intelligence_service_addr: Option<String>,
     pub(crate) intelligence_service_token: Option<String>,
+    pub(crate) intelligence_service_tick_interval_secs: u64,
     pub(crate) intelligence_service_debug_spawn_unit: bool,
     pub(crate) automation_enabled: bool,
     pub(crate) automation_bind: Option<String>,
@@ -87,6 +89,8 @@ impl Default for AppConfig {
             intelligence_service_mode: IntelligenceServiceMode::Embedded,
             intelligence_service_addr: None,
             intelligence_service_token: None,
+            intelligence_service_tick_interval_secs:
+                DEFAULT_INTELLIGENCE_SERVICE_TICK_INTERVAL_SECS,
             intelligence_service_debug_spawn_unit: false,
             automation_enabled: false,
             automation_bind: None,
@@ -239,6 +243,7 @@ fn parse_config_text_into(out: &mut AppConfig, text: &str) {
     parse_intelligence_service_mode_into_config(out, text);
     parse_intelligence_service_addr_into_config(out, text);
     parse_intelligence_service_token_into_config(out, text);
+    parse_intelligence_service_tick_interval_secs_into_config(out, text);
     parse_intelligence_service_debug_spawn_unit_into_config(out, text);
     parse_automation_enabled_into_config(out, text);
     parse_automation_bind_into_config(out, text);
@@ -612,6 +617,14 @@ fn parse_intelligence_service_addr_into_config(out: &mut AppConfig, text: &str) 
 fn parse_intelligence_service_token_into_config(out: &mut AppConfig, text: &str) {
     match parse_intelligence_service_token(text) {
         Ok(Some(value)) => out.intelligence_service_token = Some(value),
+        Ok(None) => {}
+        Err(err) => out.errors.push(err),
+    }
+}
+
+fn parse_intelligence_service_tick_interval_secs_into_config(out: &mut AppConfig, text: &str) {
+    match parse_intelligence_service_tick_interval_secs(text) {
+        Ok(Some(value)) => out.intelligence_service_tick_interval_secs = value,
         Ok(None) => {}
         Err(err) => out.errors.push(err),
     }
@@ -1630,6 +1643,87 @@ fn parse_intelligence_service_token(text: &str) -> Result<Option<String>, String
         } else {
             out = Some(trimmed.to_string());
         }
+    }
+
+    Ok(out)
+}
+
+fn parse_intelligence_service_tick_interval_secs(text: &str) -> Result<Option<u64>, String> {
+    const MAX_ALLOWED: u64 = 24 * 60 * 60;
+
+    let mut section: Option<String> = None;
+    let mut out: Option<u64> = None;
+
+    for (line_no, raw_line) in text.lines().enumerate() {
+        let line_no = line_no + 1;
+        let line = strip_comment(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            let name = line.trim_matches(&['[', ']'][..]).trim();
+            section = if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            };
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key != "intelligence_service_tick_interval_secs"
+            && key != "tick_interval_secs"
+            && key != "tick_secs"
+        {
+            continue;
+        }
+
+        match section.as_deref() {
+            None => {
+                if key != "intelligence_service_tick_interval_secs" {
+                    continue;
+                }
+            }
+            Some("intelligence_service") => {}
+            Some("app") => {
+                if key != "intelligence_service_tick_interval_secs" {
+                    continue;
+                }
+            }
+            Some(_) => continue,
+        }
+
+        let value = value.trim();
+        if value.is_empty() {
+            out = None;
+            continue;
+        }
+
+        let value = if value.starts_with('"') || value.starts_with('\'') {
+            parse_toml_string(value).ok_or_else(|| {
+                format!(
+                    "config.toml:{line_no}: expected an integer for `intelligence_service.tick_interval_secs` (example: [intelligence_service]\\ntick_interval_secs = 1)"
+                )
+            })?
+        } else {
+            value.to_string()
+        };
+
+        let parsed: i128 = value.trim().parse().map_err(|_| {
+            format!(
+                "config.toml:{line_no}: expected an integer for `intelligence_service.tick_interval_secs` (example: [intelligence_service]\\ntick_interval_secs = 1)"
+            )
+        })?;
+        if parsed <= 0 {
+            return Err(format!(
+                "config.toml:{line_no}: `intelligence_service.tick_interval_secs` must be >= 1"
+            ));
+        }
+
+        out = Some((parsed as u64).min(MAX_ALLOWED));
     }
 
     Ok(out)
@@ -3155,7 +3249,7 @@ mod tests {
     use super::parse_gen3d_save_pass_screenshots;
     use super::{
         parse_config_text_into, parse_intelligence_service_mode, AppConfig, Gen3dAiService,
-        IntelligenceServiceMode,
+        IntelligenceServiceMode, DEFAULT_INTELLIGENCE_SERVICE_TICK_INTERVAL_SECS,
     };
     use std::path::PathBuf;
 
@@ -3501,6 +3595,14 @@ ai_service = "claude"
     }
 
     #[test]
+    fn default_intelligence_service_tick_interval_secs_is_one() {
+        assert_eq!(
+            AppConfig::default().intelligence_service_tick_interval_secs,
+            DEFAULT_INTELLIGENCE_SERVICE_TICK_INTERVAL_SECS
+        );
+    }
+
+    #[test]
     fn parses_intelligence_service_mode_from_section() {
         let text = r#"
         [intelligence_service]
@@ -3561,6 +3663,47 @@ ai_service = "claude"
         assert_eq!(
             cfg.intelligence_service_mode,
             IntelligenceServiceMode::Sidecar
+        );
+    }
+
+    #[test]
+    fn parses_intelligence_service_tick_interval_secs_from_section() {
+        let text = r#"
+        [intelligence_service]
+        tick_interval_secs = 3
+
+        [openai]
+        base_url = "mock://gen3d"
+        model = "mock"
+        "#;
+        let mut cfg = AppConfig::default();
+        parse_config_text_into(&mut cfg, text);
+        assert_eq!(cfg.intelligence_service_tick_interval_secs, 3);
+        assert!(
+            cfg.errors.is_empty(),
+            "unexpected config errors: {:?}",
+            cfg.errors
+        );
+    }
+
+    #[test]
+    fn intelligence_service_tick_interval_secs_must_be_positive() {
+        let text = r#"
+        [intelligence_service]
+        tick_interval_secs = 0
+
+        [openai]
+        base_url = "mock://gen3d"
+        model = "mock"
+        "#;
+        let mut cfg = AppConfig::default();
+        parse_config_text_into(&mut cfg, text);
+        assert!(
+            cfg.errors
+                .iter()
+                .any(|err| err.contains("tick_interval_secs")),
+            "errors={:?}",
+            cfg.errors
         );
     }
 }
