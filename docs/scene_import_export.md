@@ -6,7 +6,7 @@ This document describes the scene package import/export workflow from the Scenes
 
 - In normal mode, the Scenes panel shows **Add Scene**, **Manage**, and **Import**.
 - **Import** prompts for a zip file and imports any valid scene packages into the active realm.
-- If the zip conflicts with existing scene ids or bundled prefab package ids, the app opens a native local conflict dialog with `Replace`, `Keep Both`, and `Quit`.
+- If the zip conflicts with existing scene ids or bundled prefab package ids, the app opens a native local conflict dialog with `Replace`, `Keep Both`, and `Cancel`.
 - Click **Manage** to enter manage mode (multi-select). In manage mode the panel keeps **Import** visible and adds **Export**, **Delete**, **All**, and **None**.
 - In manage mode, click scene rows to toggle selection.
 - **Export** saves the selected scene folders plus any referenced prefab packages into one zip.
@@ -40,7 +40,7 @@ Prefab packages are exported by scanning the selected scenes for referenced pref
 
 - `Replace` removes the conflicting destination scene folder and/or prefab package folder, then imports the zip contents.
 - `Keep Both` imports a second copy under new ids.
-- `Quit` cancels the import without changing disk.
+- `Cancel` aborts the import without changing disk.
 
 For `Keep Both`:
 

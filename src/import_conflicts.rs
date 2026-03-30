@@ -25,7 +25,7 @@ pub(crate) fn prompt_import_conflict_policy(
         .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
             "Replace".to_string(),
             "Keep Both".to_string(),
-            "Quit".to_string(),
+            "Cancel".to_string(),
         ))
         .show();
 
@@ -33,7 +33,7 @@ pub(crate) fn prompt_import_conflict_policy(
         rfd::MessageDialogResult::Custom(choice) => match choice.as_str() {
             "Replace" => Ok(Some(ImportConflictPolicy::Replace)),
             "Keep Both" => Ok(Some(ImportConflictPolicy::KeepBoth)),
-            "Quit" => Ok(None),
+            "Cancel" => Ok(None),
             other => Err(format!("Unexpected import conflict choice: {other}")),
         },
         rfd::MessageDialogResult::Cancel => Ok(None),

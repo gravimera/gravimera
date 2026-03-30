@@ -1090,7 +1090,7 @@ pub(crate) fn scenes_panel_import_dialog_poll(
                     ));
                 }
                 description.push_str(
-                    "\n\nReplace overwrites the existing scenes and prefab packages. Keep Both imports copies under new ids. Quit cancels the import.",
+                    "\n\nReplace overwrites the existing scenes and prefab packages. Keep Both imports copies under new ids. Cancel aborts the import.",
                 );
                 crate::import_conflicts::prompt_import_conflict_policy(
                     "Scene import conflicts",

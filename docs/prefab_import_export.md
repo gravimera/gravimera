@@ -5,7 +5,7 @@ This document describes the prefab package import/export workflow from the 3D Mo
 ## UI Workflow
 
 - In normal mode, the 3D Models panel shows **Import** (and **Generate**) below the title. **Import** prompts for a zip file and imports any valid prefab packages into the active realm.
-- If the zip conflicts with existing prefab package ids, the app opens a native local conflict dialog with `Replace`, `Keep Both`, and `Quit`.
+- If the zip conflicts with existing prefab package ids, the app opens a native local conflict dialog with `Replace`, `Keep Both`, and `Cancel`.
 - Click **Manage** to enter manage mode (multi-select). In manage mode the panel shows **Export** (and **Delete**) plus **All**/**None**.
 - In manage mode, select prefabs by clicking list items; `Shift`+click selects a contiguous range.
 - **Export** saves the selected prefab packages into a zip.
@@ -36,7 +36,7 @@ Each prefab package directory is copied as-is from the realm prefab store, inclu
 
 - `Replace` removes the conflicting destination package and imports the zip package in its place.
 - `Keep Both` imports a second copy under a fresh root prefab id.
-- `Quit` cancels the import without changing disk.
+- `Cancel` aborts the import without changing disk.
 
 For `Keep Both`, the importer stages the package and rewrites the package metadata so the new copy stays internally consistent:
 
