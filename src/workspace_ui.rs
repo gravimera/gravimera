@@ -831,11 +831,12 @@ pub(crate) fn workspace_toolbar_toggle_buttons(
     }
 }
 
-pub(crate) fn workspace_toolbar_close_models_panel_on_escape(
+pub(crate) fn workspace_toolbar_close_top_panels_on_escape(
     keys: Res<ButtonInput<KeyCode>>,
     mode: Res<State<GameMode>>,
     build_scene: Res<State<BuildScene>>,
     mut top_panel: ResMut<TopPanelUiState>,
+    scenes_panel: Res<crate::workspace_scenes_ui::ScenesPanelUiState>,
     model_library: Res<crate::model_library_ui::ModelLibraryUiState>,
     floor_library: Res<crate::floor_library_ui::FloorLibraryUiState>,
 ) {
@@ -843,6 +844,14 @@ pub(crate) fn workspace_toolbar_close_models_panel_on_escape(
         return;
     }
     if !matches!(mode.get(), GameMode::Build) || !matches!(build_scene.get(), BuildScene::Realm) {
+        return;
+    }
+
+    if top_panel.selected == Some(TopPanelTab::Scenes) {
+        if scenes_panel.is_drag_active() {
+            return;
+        }
+        top_panel.selected = None;
         return;
     }
 

@@ -114,6 +114,12 @@ impl Default for ScenesPanelUiState {
     }
 }
 
+impl ScenesPanelUiState {
+    pub(crate) fn is_drag_active(&self) -> bool {
+        self.scrollbar_drag.is_some()
+    }
+}
+
 #[derive(Component)]
 pub(crate) struct ScenesAddSceneButton;
 
