@@ -98,7 +98,9 @@ Enter/exit the Gen3D workshop from Build mode via the top-left workspace dropdow
 
 - Preview orbit: `LMB` drag on the preview panel
 - Preview zoom: mouse wheel on the preview panel
+- Preview pan: with the cursor over the preview, `W` / `A` / `S` / `D` or arrow keys
 - Component inspection: move the cursor over a visible preview component to show a frame and info
   card; when parent/child frames overlap, the more specific nested component wins
 - Explode inspection: use the preview panel `Inspect` → `Explode` toggle to separate preview
-  components, including nested ones, and show their names without modifying the draft
+  components, including nested ones, and show their names without modifying the draft; zoom stays
+  centered on the exploded assembly while explode is active

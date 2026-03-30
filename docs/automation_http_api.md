@@ -1204,7 +1204,16 @@ Response (shape):
   "running_session_id": "1e973ac3-ce48-4319-9582-cabf9c929598",
   "active_draft_empty": true,
   "should_hide_running_preview": true,
-  "explode_components": false,
+  "preview_state": {
+    "explode_components": false,
+    "camera_focus": [0.0, 1.2, 0.0],
+    "draft_focus": [0.0, 1.2, 0.0],
+    "exploded_component_center": null,
+    "view_pan": [0.0, 0.0, 0.0],
+    "yaw": 0.0,
+    "pitch": -0.45,
+    "distance": 6.0
+  },
   "preview_camera": {
     "present": true,
     "render_layers": []
@@ -1215,6 +1224,12 @@ Response (shape):
 Notes:
 
 - `preview_camera.render_layers=[]` means the camera renders **no** layers (the preview is visually blank).
+- `preview_state.camera_focus` is the effective orbit target after explode-centering and user pan
+  are applied.
+- `preview_state.draft_focus` is the stable assembled-object center used for deterministic explode
+  direction math.
+- `preview_state.exploded_component_center` is present when the visible preview component tree can
+  be measured; in explode mode, `camera_focus` should track this value plus `view_pan`.
 
 ### `GET /v1/gen3d/preview/components`
 
@@ -1278,6 +1293,40 @@ Response:
 ```json
 {"ok":true,"explode_components":true}
 ```
+
+### `POST /v1/gen3d/preview/pan`
+
+Apply a semantic preview pan in preview-screen axes. This exists for rendered automation and reuses
+the same view-pan math as the keyboard preview controls.
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/gen3d/preview/pan \
+  -H 'Content-Type: application/json' \
+  -d '{"dx":2.0,"dy":-1.5}'
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "preview_state": {
+    "explode_components": true,
+    "camera_focus": [1.2, 2.4, -0.8],
+    "draft_focus": [0.0, 1.2, 0.0],
+    "exploded_component_center": [0.5, 1.4, 0.2],
+    "view_pan": [0.7, 1.0, -1.0],
+    "yaw": 0.0,
+    "pitch": -0.45,
+    "distance": 6.0
+  }
+}
+```
+
+Notes:
+
+- `dx` moves the preview right/left in screen space; `dy` moves it up/down.
+- The endpoint is additive. Send negative deltas to pan back.
 
 ### `POST /v1/gen3d/preview/probe`
 

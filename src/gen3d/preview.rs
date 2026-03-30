@@ -1,6 +1,7 @@
 use bevy::camera::RenderTarget;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::ecs::hierarchy::ChildOf;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -20,7 +21,7 @@ use super::state::{
     Gen3dPreviewHoverFrame, Gen3dPreviewHoverInfoCard, Gen3dPreviewHoverInfoText,
     Gen3dPreviewLight, Gen3dPreviewModelRoot, Gen3dPreviewPanel, Gen3dPreviewSceneRoot,
     Gen3dPreviewUiModelRoot, Gen3dReviewOverlayRoot, Gen3dSidePanelRoot,
-    Gen3dSidePanelToggleButton,
+    Gen3dSidePanelToggleButton, Gen3dWorkshop,
 };
 use super::task_queue::Gen3dTaskQueue;
 
@@ -38,6 +39,79 @@ pub(crate) fn gen3d_update_preview_camera_render_layers(
             *layers = desired.clone();
         }
     }
+}
+
+#[derive(SystemParam)]
+pub(crate) struct Gen3dPreviewOrbitUi<'w, 's> {
+    windows: Query<'w, 's, &'static mut Window, With<bevy::window::PrimaryWindow>>,
+    panel: Query<'w, 's, &'static Interaction, With<Gen3dPreviewPanel>>,
+    anim_dropdown_button: Query<
+        'w,
+        's,
+        (
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+            Option<&'static Visibility>,
+        ),
+        With<Gen3dPreviewAnimationDropdownButton>,
+    >,
+    explode_toggle_button: Query<
+        'w,
+        's,
+        (
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+            Option<&'static Visibility>,
+        ),
+        With<Gen3dPreviewExplodeToggleButton>,
+    >,
+    anim_dropdown_list: Query<
+        'w,
+        's,
+        (
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+            Option<&'static Visibility>,
+        ),
+        With<Gen3dPreviewAnimationDropdownList>,
+    >,
+    side_panel_root: Query<
+        'w,
+        's,
+        (
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+            Option<&'static Visibility>,
+        ),
+        With<Gen3dSidePanelRoot>,
+    >,
+    side_panel_toggle: Query<
+        'w,
+        's,
+        (
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+            Option<&'static Visibility>,
+        ),
+        With<Gen3dSidePanelToggleButton>,
+    >,
+}
+
+#[derive(SystemParam)]
+pub(crate) struct Gen3dPreviewFocusWorld<'w, 's> {
+    library: Res<'w, ObjectLibrary>,
+    ui_roots: Query<'w, 's, Entity, With<Gen3dPreviewUiModelRoot>>,
+    preview_components: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static VisualObjectRefRoot,
+            &'static Transform,
+            Option<&'static ChildOf>,
+        ),
+        (With<VisualObjectRefRoot>, Without<Gen3dPreviewCamera>),
+    >,
 }
 
 pub(super) fn setup_preview_scene(
@@ -61,7 +135,8 @@ pub(super) fn setup_preview_scene(
         .id();
 
     // Initialize orbit defaults.
-    preview.focus = Vec3::ZERO;
+    preview.draft_focus = Vec3::ZERO;
+    preview.view_pan = Vec3::ZERO;
     preview.yaw = super::GEN3D_PREVIEW_DEFAULT_YAW;
     preview.pitch = super::GEN3D_PREVIEW_DEFAULT_PITCH;
     preview.distance = super::GEN3D_PREVIEW_DEFAULT_DISTANCE;
@@ -69,7 +144,7 @@ pub(super) fn setup_preview_scene(
         preview.yaw,
         preview.pitch,
         preview.distance,
-        preview.focus,
+        preview.draft_focus,
     );
 
     let aspect =
@@ -423,6 +498,50 @@ fn preview_local_center(size: Vec3, ground_origin_y: Option<f32>) -> Vec3 {
     Vec3::new(0.0, size.y * 0.5 - ground_origin_y, 0.0)
 }
 
+fn preview_orbit_rotation(yaw: f32, pitch: f32) -> Quat {
+    Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch)
+}
+
+fn preview_camera_basis(yaw: f32, pitch: f32) -> (Vec3, Vec3) {
+    let rotation = preview_orbit_rotation(yaw, pitch);
+    let mut view_dir = -(rotation * Vec3::Z);
+    if !view_dir.is_finite() || view_dir.length_squared() <= 1e-6 {
+        view_dir = -Vec3::Z;
+    } else {
+        view_dir = view_dir.normalize();
+    }
+
+    let mut right = view_dir.cross(Vec3::Y);
+    if !right.is_finite() || right.length_squared() <= 1e-6 {
+        right = Vec3::X;
+    } else {
+        right = right.normalize();
+    }
+
+    let mut up = right.cross(view_dir);
+    if !up.is_finite() || up.length_squared() <= 1e-6 {
+        up = Vec3::Y;
+    } else {
+        up = up.normalize();
+    }
+
+    (right, up)
+}
+
+fn preview_pan_step_scale(distance: f32) -> f32 {
+    (distance.abs() * 0.22).clamp(0.12, 6.0)
+}
+
+pub(crate) fn preview_pan_delta_world(yaw: f32, pitch: f32, distance: f32, pan: Vec2) -> Vec3 {
+    if !pan.is_finite() || pan.length_squared() <= 1e-8 {
+        return Vec3::ZERO;
+    }
+
+    let (right, up) = preview_camera_basis(yaw, pitch);
+    let scale = preview_pan_step_scale(distance);
+    (right * pan.x + up * pan.y) * scale
+}
+
 fn explode_direction(delta: Vec3, order: usize) -> Vec3 {
     if delta.is_finite() && delta.length_squared() > 1e-4 {
         return delta.normalize();
@@ -566,16 +685,58 @@ pub(crate) fn preview_panel_logical_to_target(
     preview_cursor_to_target(physical, layout.image_bounds_physical)
 }
 
-fn component_box_world_from_box(global_transform: &GlobalTransform, def: &ObjectDef) -> Mat4 {
+fn component_box_world_from_entity_matrix(world_from_entity: Mat4, def: &ObjectDef) -> Mat4 {
     let scale = def.size.abs().max(Vec3::splat(0.01));
     let local_center = preview_local_center(def.size, def.ground_origin_y);
-    global_transform.to_matrix()
+    world_from_entity
         * Transform {
             translation: local_center,
             rotation: Quat::IDENTITY,
             scale,
         }
         .to_matrix()
+}
+
+fn component_box_world_from_box(global_transform: &GlobalTransform, def: &ObjectDef) -> Mat4 {
+    component_box_world_from_entity_matrix(global_transform.to_matrix(), def)
+}
+
+fn expand_world_bounds_for_box(world_from_box: Mat4, min: &mut Vec3, max: &mut Vec3) -> bool {
+    let half = Vec3::splat(0.5);
+    let corners = [
+        Vec3::new(-half.x, -half.y, -half.z),
+        Vec3::new(-half.x, -half.y, half.z),
+        Vec3::new(-half.x, half.y, -half.z),
+        Vec3::new(-half.x, half.y, half.z),
+        Vec3::new(half.x, -half.y, -half.z),
+        Vec3::new(half.x, -half.y, half.z),
+        Vec3::new(half.x, half.y, -half.z),
+        Vec3::new(half.x, half.y, half.z),
+    ];
+    let mut any = false;
+    for corner in corners {
+        let point = world_from_box.transform_point3(corner);
+        if !point.is_finite() {
+            continue;
+        }
+        *min = min.min(point);
+        *max = max.max(point);
+        any = true;
+    }
+    any
+}
+
+fn finite_bounds_center(min: Vec3, max: Vec3) -> Option<Vec3> {
+    if !min.is_finite() || !max.is_finite() {
+        return None;
+    }
+
+    let center = (min + max) * 0.5;
+    if center.is_finite() {
+        Some(center)
+    } else {
+        None
+    }
 }
 
 fn preview_component_sort_key(
@@ -610,6 +771,74 @@ fn component_chain_world_affine(
     let world = parent_world * local_transform.to_matrix();
     cache.insert(entity, world);
     world
+}
+
+pub(crate) fn compute_preview_component_bounds_center_from_transforms<'a>(
+    library: &ObjectLibrary,
+    ui_root: Entity,
+    components: impl IntoIterator<
+        Item = (
+            Entity,
+            &'a VisualObjectRefRoot,
+            &'a Transform,
+            Option<Entity>,
+        ),
+    >,
+) -> Option<Vec3> {
+    let mut ordered_components = Vec::new();
+    let mut component_chain =
+        std::collections::HashMap::<Entity, (Option<Entity>, Transform)>::new();
+
+    for (entity, meta, transform, parent_entity) in components {
+        if meta.root_entity != ui_root {
+            continue;
+        }
+        component_chain.insert(entity, (parent_entity, *transform));
+        ordered_components.push((entity, *meta));
+    }
+
+    if ordered_components.is_empty() {
+        return None;
+    }
+
+    ordered_components.sort_by_key(|(entity, meta)| preview_component_sort_key(meta, *entity));
+
+    let mut world_cache = std::collections::HashMap::<Entity, Mat4>::new();
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    let mut any = false;
+
+    for (entity, meta) in ordered_components {
+        let Some(def) = library.get(meta.object_id) else {
+            continue;
+        };
+        let world_from_entity =
+            component_chain_world_affine(entity, &component_chain, &mut world_cache);
+        let world_from_box = component_box_world_from_entity_matrix(world_from_entity, def);
+        any |= expand_world_bounds_for_box(world_from_box, &mut min, &mut max);
+    }
+
+    if !any {
+        return None;
+    }
+    finite_bounds_center(min, max)
+}
+
+pub(crate) fn effective_preview_camera_focus(
+    preview: &Gen3dPreview,
+    exploded_center: Option<Vec3>,
+) -> Vec3 {
+    let base_focus = if preview.explode_components {
+        exploded_center.unwrap_or(preview.draft_focus)
+    } else {
+        preview.draft_focus
+    };
+    let focus = base_focus + preview.view_pan;
+    if focus.is_finite() {
+        focus
+    } else {
+        base_focus
+    }
 }
 
 pub(crate) fn collect_preview_component_overlays<'a>(
@@ -895,40 +1124,24 @@ pub(crate) fn gen3d_preview_tick_selected_animation(
 
 pub(crate) fn gen3d_preview_orbit_controls(
     build_scene: Res<State<BuildScene>>,
+    time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
-    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    mut workshop: ResMut<Gen3dWorkshop>,
+    mut orbit_ui: Gen3dPreviewOrbitUi,
     mut mouse_wheel: bevy::ecs::message::MessageReader<bevy::input::mouse::MouseWheel>,
-    panel: Query<&Interaction, With<Gen3dPreviewPanel>>,
-    anim_dropdown_button: Query<
-        (&ComputedNode, &UiGlobalTransform, Option<&Visibility>),
-        With<Gen3dPreviewAnimationDropdownButton>,
-    >,
-    explode_toggle_button: Query<
-        (&ComputedNode, &UiGlobalTransform, Option<&Visibility>),
-        With<Gen3dPreviewExplodeToggleButton>,
-    >,
-    anim_dropdown_list: Query<
-        (&ComputedNode, &UiGlobalTransform, Option<&Visibility>),
-        With<Gen3dPreviewAnimationDropdownList>,
-    >,
-    side_panel_root: Query<
-        (&ComputedNode, &UiGlobalTransform, Option<&Visibility>),
-        With<Gen3dSidePanelRoot>,
-    >,
-    side_panel_toggle: Query<
-        (&ComputedNode, &UiGlobalTransform, Option<&Visibility>),
-        With<Gen3dSidePanelToggleButton>,
-    >,
+    focus_world: Gen3dPreviewFocusWorld,
     mut preview: ResMut<Gen3dPreview>,
     mut cameras: Query<&mut Transform, With<Gen3dPreviewCamera>>,
 ) {
     if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
-    let Ok(window) = windows.single() else {
+    let Ok(mut window) = orbit_ui.windows.single_mut() else {
         return;
     };
-    let mut hovered = panel
+    let mut hovered = orbit_ui
+        .panel
         .iter()
         .any(|i| matches!(*i, Interaction::Hovered | Interaction::Pressed));
 
@@ -937,7 +1150,7 @@ pub(crate) fn gen3d_preview_orbit_controls(
         if let Some(cursor) = cursor_physical {
             let mut blocked = false;
 
-            if let Ok((node, transform, vis)) = side_panel_root.single() {
+            if let Ok((node, transform, vis)) = orbit_ui.side_panel_root.single() {
                 let visible = vis
                     .map(|v| !matches!(*v, Visibility::Hidden))
                     .unwrap_or(true);
@@ -946,7 +1159,7 @@ pub(crate) fn gen3d_preview_orbit_controls(
                 }
             }
 
-            if let Ok((node, transform, vis)) = side_panel_toggle.single() {
+            if let Ok((node, transform, vis)) = orbit_ui.side_panel_toggle.single() {
                 let visible = vis
                     .map(|v| !matches!(*v, Visibility::Hidden))
                     .unwrap_or(true);
@@ -955,7 +1168,7 @@ pub(crate) fn gen3d_preview_orbit_controls(
                 }
             }
 
-            if let Ok((node, transform, vis)) = anim_dropdown_button.single() {
+            if let Ok((node, transform, vis)) = orbit_ui.anim_dropdown_button.single() {
                 let visible = vis
                     .map(|v| !matches!(*v, Visibility::Hidden))
                     .unwrap_or(true);
@@ -964,7 +1177,7 @@ pub(crate) fn gen3d_preview_orbit_controls(
                 }
             }
 
-            if let Ok((node, transform, vis)) = explode_toggle_button.single() {
+            if let Ok((node, transform, vis)) = orbit_ui.explode_toggle_button.single() {
                 let visible = vis
                     .map(|v| !matches!(*v, Visibility::Hidden))
                     .unwrap_or(true);
@@ -973,7 +1186,7 @@ pub(crate) fn gen3d_preview_orbit_controls(
                 }
             }
 
-            if let Ok((node, transform, vis)) = anim_dropdown_list.single() {
+            if let Ok((node, transform, vis)) = orbit_ui.anim_dropdown_list.single() {
                 let visible = vis
                     .map(|v| !matches!(*v, Visibility::Hidden))
                     .unwrap_or(true);
@@ -986,6 +1199,11 @@ pub(crate) fn gen3d_preview_orbit_controls(
                 hovered = false;
             }
         }
+    }
+
+    if hovered && mouse_buttons.just_pressed(MouseButton::Left) && workshop.prompt_focused {
+        workshop.prompt_focused = false;
+        window.ime_enabled = false;
     }
 
     let cursor = window.cursor_position();
@@ -1017,17 +1235,53 @@ pub(crate) fn gen3d_preview_orbit_controls(
         }
     }
 
+    if hovered && !workshop.prompt_focused {
+        let x = (keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight)) as i8
+            - (keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft)) as i8;
+        let y = (keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp)) as i8
+            - (keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown)) as i8;
+        let mut pan_input = Vec2::new(x as f32, y as f32);
+        if pan_input.length_squared() > 1.0 {
+            pan_input = pan_input.normalize();
+        }
+        if pan_input.length_squared() > 1e-6 {
+            let pan_units = pan_input * time.delta_secs() * 3.0;
+            let yaw = preview.yaw;
+            let pitch = preview.pitch;
+            let distance = preview.distance;
+            preview.view_pan += preview_pan_delta_world(yaw, pitch, distance, pan_units);
+            if !preview.view_pan.is_finite() {
+                preview.view_pan = Vec3::ZERO;
+            }
+        }
+    }
+
     preview.last_cursor = if hovered { cursor } else { None };
+
+    let exploded_center = focus_world.ui_roots.iter().next().and_then(|ui_root| {
+        compute_preview_component_bounds_center_from_transforms(
+            &focus_world.library,
+            ui_root,
+            focus_world
+                .preview_components
+                .iter()
+                .map(|(entity, meta, transform, child_of)| {
+                    (
+                        entity,
+                        meta,
+                        transform,
+                        child_of.map(|child_of| child_of.parent()),
+                    )
+                }),
+        )
+    });
+    let focus = effective_preview_camera_focus(&preview, exploded_center);
 
     let Ok(mut camera_transform) = cameras.single_mut() else {
         return;
     };
-    *camera_transform = crate::orbit_capture::orbit_transform(
-        preview.yaw,
-        preview.pitch,
-        preview.distance,
-        preview.focus,
-    );
+    *camera_transform =
+        crate::orbit_capture::orbit_transform(preview.yaw, preview.pitch, preview.distance, focus);
 }
 
 pub(crate) fn gen3d_clear_preview_component_explode_offsets(
@@ -1130,7 +1384,7 @@ pub(crate) fn gen3d_apply_preview_component_explode_offsets(
                 let current_center = world_from_entity
                     .transform_point3(preview_local_center(def.size, def.ground_origin_y));
                 let desired_world_offset =
-                    explode_offset(current_center - preview.focus, def.size, stable_order);
+                    explode_offset(current_center - preview.draft_focus, def.size, stable_order);
                 parent_world
                     .inverse()
                     .transform_vector3(desired_world_offset)
@@ -1490,9 +1744,12 @@ pub(crate) fn gen3d_apply_draft_to_preview(
             preview.ui_applied_assembly_rev = Some(job.assembly_rev());
 
             if draft.defs.is_empty() {
+                preview.draft_focus = Vec3::ZERO;
+                preview.view_pan = Vec3::ZERO;
                 preview.collision_dirty = true;
             } else {
-                preview.focus = compute_draft_focus(&draft);
+                preview.draft_focus = compute_draft_focus(&draft);
+                preview.view_pan = Vec3::ZERO;
 
                 for mut def in draft.defs.clone() {
                     if def.object_id == super::gen3d_draft_object_id() {
@@ -1849,6 +2106,34 @@ mod tests {
 
         let miss = ray_intersects_local_aabb(Vec3::new(-2.0, 2.0, 0.0), direction, half);
         assert!(miss.is_none());
+    }
+
+    #[test]
+    fn preview_pan_delta_uses_camera_screen_axes() {
+        let delta = preview_pan_delta_world(0.0, 0.0, 5.0, Vec2::new(1.0, 0.0));
+        assert!(delta.x > 0.9, "expected positive right pan, got {delta:?}");
+        assert!(delta.y.abs() < 1e-4, "unexpected vertical drift: {delta:?}");
+        assert!(delta.z.abs() < 1e-4, "unexpected depth drift: {delta:?}");
+    }
+
+    #[test]
+    fn effective_preview_focus_uses_exploded_center_plus_pan() {
+        let preview = Gen3dPreview {
+            draft_focus: Vec3::new(1.0, 2.0, 3.0),
+            view_pan: Vec3::new(0.5, -0.25, 1.5),
+            explode_components: true,
+            ..Default::default()
+        };
+        let focus = effective_preview_camera_focus(&preview, Some(Vec3::new(4.0, 5.0, 6.0)));
+        assert!((focus - Vec3::new(4.5, 4.75, 7.5)).length() < 1e-4);
+
+        let assembled_preview = Gen3dPreview {
+            explode_components: false,
+            ..preview
+        };
+        let assembled_focus =
+            effective_preview_camera_focus(&assembled_preview, Some(Vec3::new(40.0, 50.0, 60.0)));
+        assert!((assembled_focus - Vec3::new(1.5, 1.75, 4.5)).length() < 1e-4);
     }
 
     #[test]

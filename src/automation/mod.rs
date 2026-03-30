@@ -1,3 +1,4 @@
+use bevy::ecs::hierarchy::ChildOf;
 use bevy::ecs::system::SystemParam;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::mouse::{MouseButtonInput, MouseWheel};
@@ -395,6 +396,8 @@ struct AutomationWorld<'w, 's> {
         (
             Entity,
             &'static crate::object::visuals::VisualObjectRefRoot,
+            &'static Transform,
+            Option<&'static ChildOf>,
             &'static GlobalTransform,
             Option<&'static crate::gen3d::Gen3dPreviewAppliedExplodeOffset>,
         ),
@@ -847,6 +850,12 @@ struct Gen3dPreviewExplodeRequest {
 struct Gen3dPreviewProbeRequest {
     x: f32,
     y: f32,
+}
+
+#[derive(Deserialize)]
+struct Gen3dPreviewPanRequest {
+    dx: f32,
+    dy: f32,
 }
 
 #[derive(Deserialize)]
@@ -1478,10 +1487,19 @@ fn handle_gen3d_routes<
                 "running_session_id": running_id.map(|id| id.to_string()),
                 "active_draft_empty": draft.defs.is_empty(),
                 "should_hide_running_preview": should_hide_running_preview,
-                "explode_components": gen3d_preview
+                "preview_state": gen3d_preview
                     .as_deref()
-                    .map(|preview| preview.explode_components)
-                    .unwrap_or(false),
+                    .map(|preview| build_gen3d_preview_status_payload(ctx.world, library, preview))
+                    .unwrap_or_else(|| serde_json::json!({
+                        "explode_components": false,
+                        "camera_focus": [0.0, 0.0, 0.0],
+                        "draft_focus": [0.0, 0.0, 0.0],
+                        "exploded_component_center": serde_json::Value::Null,
+                        "view_pan": [0.0, 0.0, 0.0],
+                        "yaw": 0.0,
+                        "pitch": 0.0,
+                        "distance": 0.0,
+                    })),
                 "preview_camera": {
                     "present": has_preview_camera,
                     "render_layers": preview_camera_layers,
@@ -1523,6 +1541,36 @@ fn handle_gen3d_routes<
             let body = serde_json::json!({
                 "ok": true,
                 "explode_components": preview.explode_components,
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/gen3d/preview/pan") => {
+            let Some(preview) = gen3d_preview.as_deref_mut() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+            let req: Gen3dPreviewPanRequest = match serde_json::from_slice(&msg.body) {
+                Ok(req) => req,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+
+            preview.view_pan += crate::gen3d::preview_pan_delta_world(
+                preview.yaw,
+                preview.pitch,
+                preview.distance,
+                Vec2::new(req.dx, req.dy),
+            );
+            if !preview.view_pan.is_finite() {
+                preview.view_pan = Vec3::ZERO;
+            }
+
+            let body = serde_json::json!({
+                "ok": true,
+                "preview_state": build_gen3d_preview_status_payload(ctx.world, library, preview),
             })
             .to_string();
             Some(AutomationReply {
@@ -3530,6 +3578,48 @@ fn handle_genfloor_routes<
     }
 }
 
+fn gen3d_preview_component_bounds_center<'w, 's>(
+    world: &AutomationWorld<'w, 's>,
+    library: &ObjectLibrary,
+) -> Option<Vec3> {
+    let ui_root = world.gen3d_preview_ui_roots.iter().next()?;
+    crate::gen3d::compute_preview_component_bounds_center_from_transforms(
+        library,
+        ui_root,
+        world.gen3d_preview_components.iter().map(
+            |(entity, meta, transform, child_of, _global_transform, _applied_offset)| {
+                (
+                    entity,
+                    meta,
+                    transform,
+                    child_of.map(|child_of| child_of.parent()),
+                )
+            },
+        ),
+    )
+}
+
+fn build_gen3d_preview_status_payload<'w, 's>(
+    world: &AutomationWorld<'w, 's>,
+    library: &ObjectLibrary,
+    preview: &crate::gen3d::Gen3dPreview,
+) -> serde_json::Value {
+    let exploded_center = gen3d_preview_component_bounds_center(world, library);
+    let camera_focus = crate::gen3d::effective_preview_camera_focus(preview, exploded_center);
+    let vec3_json = |point: Vec3| serde_json::json!([point.x, point.y, point.z]);
+
+    serde_json::json!({
+        "explode_components": preview.explode_components,
+        "camera_focus": vec3_json(camera_focus),
+        "draft_focus": vec3_json(preview.draft_focus),
+        "exploded_component_center": exploded_center.map(vec3_json),
+        "view_pan": vec3_json(preview.view_pan),
+        "yaw": preview.yaw,
+        "pitch": preview.pitch,
+        "distance": preview.distance,
+    })
+}
+
 fn build_gen3d_preview_debug_payload<'w, 's>(
     world: &AutomationWorld<'w, 's>,
     library: &ObjectLibrary,
@@ -3561,7 +3651,7 @@ fn build_gen3d_preview_debug_payload<'w, 's>(
         ui_root,
         ray,
         world.gen3d_preview_components.iter().map(
-            |(entity, meta, global_transform, applied_offset)| {
+            |(entity, meta, _transform, _child_of, global_transform, applied_offset)| {
                 (
                     entity,
                     meta,
@@ -3741,6 +3831,7 @@ fn handle_request_main_thread<
                 serde_json::json!({"method":"GET","path":"/v1/gen3d/preview"}),
                 serde_json::json!({"method":"GET","path":"/v1/gen3d/preview/components"}),
                 serde_json::json!({"method":"POST","path":"/v1/gen3d/preview/explode"}),
+                serde_json::json!({"method":"POST","path":"/v1/gen3d/preview/pan"}),
                 serde_json::json!({"method":"POST","path":"/v1/gen3d/preview/probe"}),
                 serde_json::json!({"method":"POST","path":"/v1/gen3d/prompt"}),
                 serde_json::json!({"method":"POST","path":"/v1/gen3d/build"}),

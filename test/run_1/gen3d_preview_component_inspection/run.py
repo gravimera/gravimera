@@ -232,6 +232,43 @@ def wait_for_preview_components(
     raise RuntimeError(f"timed out waiting for preview components: last={last_payload}")
 
 
+def get_preview_state(base_url: str, token: str | None) -> dict:
+    status, payload = http_json(
+        "GET",
+        f"{base_url}/v1/gen3d/preview",
+        None,
+        token=token,
+        timeout_secs=10.0,
+    )
+    if status != 200 or payload.get("ok") is not True:
+        raise RuntimeError(f"preview state failed: status={status} payload={payload}")
+    preview_state = payload.get("preview_state")
+    if not isinstance(preview_state, dict):
+        raise RuntimeError(f"preview state payload missing preview_state: {payload}")
+    return preview_state
+
+
+def vec3(value) -> tuple[float, float, float]:
+    if not isinstance(value, list) or len(value) != 3:
+        raise RuntimeError(f"expected vec3 list, got {value!r}")
+    return (float(value[0]), float(value[1]), float(value[2]))
+
+
+def vec3_add(
+    a: tuple[float, float, float], b: tuple[float, float, float]
+) -> tuple[float, float, float]:
+    return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
+
+
+def vec3_distance(
+    a: tuple[float, float, float], b: tuple[float, float, float]
+) -> float:
+    dx = a[0] - b[0]
+    dy = a[1] - b[1]
+    dz = a[2] - b[2]
+    return float(dx * dx + dy * dy + dz * dz) ** 0.5
+
+
 def frame_center(component: dict) -> tuple[float, float] | None:
     projected = component.get("projected")
     if not isinstance(projected, dict):
@@ -485,6 +522,20 @@ def main() -> int:
         (run_root / "preview_before.json").write_text(
             json.dumps(before, indent=2), encoding="utf-8"
         )
+        preview_state_before = get_preview_state(base_url, token)
+        (run_root / "preview_state_before.json").write_text(
+            json.dumps(preview_state_before, indent=2), encoding="utf-8"
+        )
+
+        camera_focus_before = vec3(preview_state_before.get("camera_focus"))
+        draft_focus_before = vec3(preview_state_before.get("draft_focus"))
+        view_pan_before = vec3(preview_state_before.get("view_pan"))
+        if vec3_distance(view_pan_before, (0.0, 0.0, 0.0)) > 0.05:
+            raise RuntimeError(f"expected preview pan to reset on draft load, got {preview_state_before}")
+        if vec3_distance(camera_focus_before, draft_focus_before) > 0.15:
+            raise RuntimeError(
+                f"expected assembled preview camera focus to match draft focus, got {preview_state_before}"
+            )
 
         nested_components = [c for c in before_components if int(c.get("depth") or 0) > 1]
         if not nested_components:
@@ -520,6 +571,27 @@ def main() -> int:
         (run_root / "preview_after.json").write_text(
             json.dumps(after, indent=2), encoding="utf-8"
         )
+        preview_state_after_explode = get_preview_state(base_url, token)
+        (run_root / "preview_state_after_explode.json").write_text(
+            json.dumps(preview_state_after_explode, indent=2), encoding="utf-8"
+        )
+
+        camera_focus_after_explode = vec3(preview_state_after_explode.get("camera_focus"))
+        exploded_center_after = preview_state_after_explode.get("exploded_component_center")
+        if not isinstance(exploded_center_after, list) or len(exploded_center_after) != 3:
+            raise RuntimeError(
+                f"expected explode mode to report an exploded component center, got {preview_state_after_explode}"
+            )
+        exploded_center_after_vec = vec3(exploded_center_after)
+        view_pan_after_explode = vec3(preview_state_after_explode.get("view_pan"))
+        expected_focus_after_explode = vec3_add(
+            exploded_center_after_vec, view_pan_after_explode
+        )
+        if vec3_distance(camera_focus_after_explode, expected_focus_after_explode) > 0.15:
+            raise RuntimeError(
+                "explode-mode camera focus is not anchored to exploded component center + pan: "
+                f"{preview_state_after_explode}"
+            )
 
         before_by_entity = {c["entity_bits"]: c for c in before_components if "entity_bits" in c}
         moved = 0
@@ -559,13 +631,57 @@ def main() -> int:
                 f"expected probing to resolve multiple components after explode, got {probe_hits_after}"
             )
 
+        status, payload = http_json(
+            "POST",
+            f"{base_url}/v1/gen3d/preview/pan",
+            {"dx": 2.0, "dy": -1.5},
+            token=token,
+            timeout_secs=10.0,
+        )
+        if status != 200 or payload.get("ok") is not True:
+            raise RuntimeError(f"preview pan failed: status={status} payload={payload}")
+
+        step(base_url, token, frames=2)
+        preview_state_after_pan = get_preview_state(base_url, token)
+        (run_root / "preview_state_after_pan.json").write_text(
+            json.dumps(preview_state_after_pan, indent=2), encoding="utf-8"
+        )
+        camera_focus_after_pan = vec3(preview_state_after_pan.get("camera_focus"))
+        exploded_center_after_pan = preview_state_after_pan.get("exploded_component_center")
+        if not isinstance(exploded_center_after_pan, list) or len(exploded_center_after_pan) != 3:
+            raise RuntimeError(
+                f"expected exploded component center after pan, got {preview_state_after_pan}"
+            )
+        exploded_center_after_pan_vec = vec3(exploded_center_after_pan)
+        view_pan_after_pan = vec3(preview_state_after_pan.get("view_pan"))
+        if vec3_distance(view_pan_after_pan, (0.0, 0.0, 0.0)) < 0.2:
+            raise RuntimeError(f"expected preview pan to move the camera focus, got {preview_state_after_pan}")
+        expected_focus_after_pan = vec3_add(
+            exploded_center_after_pan_vec, view_pan_after_pan
+        )
+        if vec3_distance(camera_focus_after_pan, expected_focus_after_pan) > 0.15:
+            raise RuntimeError(
+                "panned explode-mode camera focus is not anchored to exploded center + pan: "
+                f"{preview_state_after_pan}"
+            )
+        if vec3_distance(camera_focus_after_pan, camera_focus_after_explode) < 0.2:
+            raise RuntimeError(
+                f"expected preview pan to change camera focus, got before={preview_state_after_explode} after={preview_state_after_pan}"
+            )
+
+        after_pan = wait_for_preview_components(base_url, token, timeout_secs=10.0)
+        after_pan_components = after_pan.get("components") or []
+        (run_root / "preview_after_pan.json").write_text(
+            json.dumps(after_pan, indent=2), encoding="utf-8"
+        )
+
         step(base_url, token, frames=1)
         after_next = wait_for_preview_components(base_url, token, timeout_secs=10.0)
         after_next_components = after_next.get("components") or []
         (run_root / "preview_after_next.json").write_text(
             json.dumps(after_next, indent=2), encoding="utf-8"
         )
-        motion_stats = anchor_motion_stats(after_components, after_next_components)
+        motion_stats = anchor_motion_stats(after_pan_components, after_next_components)
         if motion_stats["count"] >= 4 and motion_stats["over_25px"] > 2:
             raise RuntimeError(
                 "explode layout is unstable across adjacent frames: "
@@ -580,6 +696,9 @@ def main() -> int:
             "distinct_probe_hits_after": len(distinct_after),
             "components_moved_after_explode": moved,
             "components_with_non_zero_offsets": non_zero_offsets,
+            "camera_focus_after_explode": camera_focus_after_explode,
+            "camera_focus_after_pan": camera_focus_after_pan,
+            "view_pan_after_pan": view_pan_after_pan,
             "explode_frame_to_frame_motion": motion_stats,
             "artifacts_dir": str(run_root),
         }

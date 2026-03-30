@@ -98,24 +98,20 @@ where
                                 top: Val::Px(0.0),
                                 width: Val::Px(0.0),
                                 height: Val::Px(0.0),
-                                border: UiRect::all(Val::Px(1.0)),
                                 display: Display::None,
                                 ..default()
                             },
-                            BackgroundColor(Color::srgba(0.12, 0.72, 0.96, 0.08)),
-                            BorderColor::all(Color::srgba(0.66, 0.90, 1.0, 0.70)),
-                            Outline {
-                                width: Val::Px(2.0),
-                                color: Color::srgba(0.10, 0.72, 1.0, 0.48),
-                                offset: Val::Px(0.0),
-                            },
+                            BackgroundColor(Color::NONE),
                             Visibility::Hidden,
                             ZIndex(12),
                             Gen3dPreviewHoverFrame,
                         ))
                         .with_children(|frame| {
-                            const SEGMENT_LEN_PX: f32 = 20.0;
-                            const SEGMENT_THICKNESS_PX: f32 = 3.0;
+                            const CORNER_LEN_PX: f32 = 18.0;
+                            const EDGE_THICKNESS_PX: f32 = 2.0;
+                            const EDGE_INSET_PX: f32 = 14.0;
+                            const EDGE_SPAN_PERCENT: f32 = 28.0;
+                            const CORNER_OVERHANG_PX: f32 = 1.0;
 
                             let mut spawn_segment = |node: Node, color: Color| {
                                 frame.spawn((
@@ -127,17 +123,108 @@ where
                                 ));
                             };
 
-                            let accent = Color::srgb(0.05, 0.82, 1.0);
-                            let accent_soft = Color::srgba(0.90, 0.98, 1.0, 0.92);
+                            let accent = Color::srgb(0.06, 0.84, 1.0);
+                            let accent_soft = Color::srgba(0.92, 0.98, 1.0, 0.94);
+
+                            // Edge segments with center gaps keep the frame readable without
+                            // collapsing back into a plain rectangular box.
+                            spawn_segment(
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: Val::Px(EDGE_INSET_PX),
+                                    top: Val::Px(0.0),
+                                    width: Val::Percent(EDGE_SPAN_PERCENT),
+                                    height: Val::Px(EDGE_THICKNESS_PX),
+                                    ..default()
+                                },
+                                accent,
+                            );
+                            spawn_segment(
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    right: Val::Px(EDGE_INSET_PX),
+                                    top: Val::Px(0.0),
+                                    width: Val::Percent(EDGE_SPAN_PERCENT),
+                                    height: Val::Px(EDGE_THICKNESS_PX),
+                                    ..default()
+                                },
+                                accent,
+                            );
+                            spawn_segment(
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: Val::Px(EDGE_INSET_PX),
+                                    bottom: Val::Px(0.0),
+                                    width: Val::Percent(EDGE_SPAN_PERCENT),
+                                    height: Val::Px(EDGE_THICKNESS_PX),
+                                    ..default()
+                                },
+                                accent,
+                            );
+                            spawn_segment(
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    right: Val::Px(EDGE_INSET_PX),
+                                    bottom: Val::Px(0.0),
+                                    width: Val::Percent(EDGE_SPAN_PERCENT),
+                                    height: Val::Px(EDGE_THICKNESS_PX),
+                                    ..default()
+                                },
+                                accent,
+                            );
+                            spawn_segment(
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: Val::Px(0.0),
+                                    top: Val::Px(EDGE_INSET_PX),
+                                    width: Val::Px(EDGE_THICKNESS_PX),
+                                    height: Val::Percent(EDGE_SPAN_PERCENT),
+                                    ..default()
+                                },
+                                accent,
+                            );
+                            spawn_segment(
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: Val::Px(0.0),
+                                    bottom: Val::Px(EDGE_INSET_PX),
+                                    width: Val::Px(EDGE_THICKNESS_PX),
+                                    height: Val::Percent(EDGE_SPAN_PERCENT),
+                                    ..default()
+                                },
+                                accent,
+                            );
+                            spawn_segment(
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    right: Val::Px(0.0),
+                                    top: Val::Px(EDGE_INSET_PX),
+                                    width: Val::Px(EDGE_THICKNESS_PX),
+                                    height: Val::Percent(EDGE_SPAN_PERCENT),
+                                    ..default()
+                                },
+                                accent,
+                            );
+                            spawn_segment(
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    right: Val::Px(0.0),
+                                    bottom: Val::Px(EDGE_INSET_PX),
+                                    width: Val::Px(EDGE_THICKNESS_PX),
+                                    height: Val::Percent(EDGE_SPAN_PERCENT),
+                                    ..default()
+                                },
+                                accent,
+                            );
 
                             // Top-left
                             spawn_segment(
                                 Node {
                                     position_type: PositionType::Absolute,
-                                    left: Val::Px(-1.0),
-                                    top: Val::Px(-1.0),
-                                    width: Val::Px(SEGMENT_LEN_PX),
-                                    height: Val::Px(SEGMENT_THICKNESS_PX),
+                                    left: Val::Px(-CORNER_OVERHANG_PX),
+                                    top: Val::Px(-CORNER_OVERHANG_PX),
+                                    width: Val::Px(CORNER_LEN_PX),
+                                    height: Val::Px(EDGE_THICKNESS_PX + 1.0),
                                     ..default()
                                 },
                                 accent_soft,
@@ -145,10 +232,10 @@ where
                             spawn_segment(
                                 Node {
                                     position_type: PositionType::Absolute,
-                                    left: Val::Px(-1.0),
-                                    top: Val::Px(-1.0),
-                                    width: Val::Px(SEGMENT_THICKNESS_PX),
-                                    height: Val::Px(SEGMENT_LEN_PX),
+                                    left: Val::Px(-CORNER_OVERHANG_PX),
+                                    top: Val::Px(-CORNER_OVERHANG_PX),
+                                    width: Val::Px(EDGE_THICKNESS_PX + 1.0),
+                                    height: Val::Px(CORNER_LEN_PX),
                                     ..default()
                                 },
                                 accent,
@@ -158,10 +245,10 @@ where
                             spawn_segment(
                                 Node {
                                     position_type: PositionType::Absolute,
-                                    right: Val::Px(-1.0),
-                                    top: Val::Px(-1.0),
-                                    width: Val::Px(SEGMENT_LEN_PX),
-                                    height: Val::Px(SEGMENT_THICKNESS_PX),
+                                    right: Val::Px(-CORNER_OVERHANG_PX),
+                                    top: Val::Px(-CORNER_OVERHANG_PX),
+                                    width: Val::Px(CORNER_LEN_PX),
+                                    height: Val::Px(EDGE_THICKNESS_PX + 1.0),
                                     ..default()
                                 },
                                 accent_soft,
@@ -169,10 +256,10 @@ where
                             spawn_segment(
                                 Node {
                                     position_type: PositionType::Absolute,
-                                    right: Val::Px(-1.0),
-                                    top: Val::Px(-1.0),
-                                    width: Val::Px(SEGMENT_THICKNESS_PX),
-                                    height: Val::Px(SEGMENT_LEN_PX),
+                                    right: Val::Px(-CORNER_OVERHANG_PX),
+                                    top: Val::Px(-CORNER_OVERHANG_PX),
+                                    width: Val::Px(EDGE_THICKNESS_PX + 1.0),
+                                    height: Val::Px(CORNER_LEN_PX),
                                     ..default()
                                 },
                                 accent,
@@ -182,10 +269,10 @@ where
                             spawn_segment(
                                 Node {
                                     position_type: PositionType::Absolute,
-                                    left: Val::Px(-1.0),
-                                    bottom: Val::Px(-1.0),
-                                    width: Val::Px(SEGMENT_LEN_PX),
-                                    height: Val::Px(SEGMENT_THICKNESS_PX),
+                                    left: Val::Px(-CORNER_OVERHANG_PX),
+                                    bottom: Val::Px(-CORNER_OVERHANG_PX),
+                                    width: Val::Px(CORNER_LEN_PX),
+                                    height: Val::Px(EDGE_THICKNESS_PX + 1.0),
                                     ..default()
                                 },
                                 accent_soft,
@@ -193,10 +280,10 @@ where
                             spawn_segment(
                                 Node {
                                     position_type: PositionType::Absolute,
-                                    left: Val::Px(-1.0),
-                                    bottom: Val::Px(-1.0),
-                                    width: Val::Px(SEGMENT_THICKNESS_PX),
-                                    height: Val::Px(SEGMENT_LEN_PX),
+                                    left: Val::Px(-CORNER_OVERHANG_PX),
+                                    bottom: Val::Px(-CORNER_OVERHANG_PX),
+                                    width: Val::Px(EDGE_THICKNESS_PX + 1.0),
+                                    height: Val::Px(CORNER_LEN_PX),
                                     ..default()
                                 },
                                 accent,
@@ -206,10 +293,10 @@ where
                             spawn_segment(
                                 Node {
                                     position_type: PositionType::Absolute,
-                                    right: Val::Px(-1.0),
-                                    bottom: Val::Px(-1.0),
-                                    width: Val::Px(SEGMENT_LEN_PX),
-                                    height: Val::Px(SEGMENT_THICKNESS_PX),
+                                    right: Val::Px(-CORNER_OVERHANG_PX),
+                                    bottom: Val::Px(-CORNER_OVERHANG_PX),
+                                    width: Val::Px(CORNER_LEN_PX),
+                                    height: Val::Px(EDGE_THICKNESS_PX + 1.0),
                                     ..default()
                                 },
                                 accent_soft,
@@ -217,10 +304,10 @@ where
                             spawn_segment(
                                 Node {
                                     position_type: PositionType::Absolute,
-                                    right: Val::Px(-1.0),
-                                    bottom: Val::Px(-1.0),
-                                    width: Val::Px(SEGMENT_THICKNESS_PX),
-                                    height: Val::Px(SEGMENT_LEN_PX),
+                                    right: Val::Px(-CORNER_OVERHANG_PX),
+                                    bottom: Val::Px(-CORNER_OVERHANG_PX),
+                                    width: Val::Px(EDGE_THICKNESS_PX + 1.0),
+                                    height: Val::Px(CORNER_LEN_PX),
                                     ..default()
                                 },
                                 accent,
@@ -1493,6 +1580,8 @@ pub(crate) fn exit_gen3d_mode(
         preview_state.ui_applied_assembly_rev = None;
         preview_state.capture_applied_session_id = None;
         preview_state.capture_applied_assembly_rev = None;
+        preview_state.draft_focus = Vec3::ZERO;
+        preview_state.view_pan = Vec3::ZERO;
         preview_state.animation_channel = "idle".to_string();
         preview_state.animation_channels.clear();
         preview_state.animation_dropdown_open = false;
@@ -1557,6 +1646,8 @@ pub(crate) fn gen3d_cleanup_preview_scene_when_idle(
     preview_state.ui_applied_assembly_rev = None;
     preview_state.capture_applied_session_id = None;
     preview_state.capture_applied_assembly_rev = None;
+    preview_state.draft_focus = Vec3::ZERO;
+    preview_state.view_pan = Vec3::ZERO;
     preview_state.animation_channel = "idle".to_string();
     preview_state.animation_channels.clear();
     preview_state.animation_dropdown_open = false;
@@ -1567,10 +1658,7 @@ pub(crate) fn gen3d_cleanup_preview_scene_when_idle(
 pub(crate) fn gen3d_prompt_box_focus(
     mut workshop: ResMut<Gen3dWorkshop>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
-    mut prompt_boxes: Query<
-        (&Interaction, &mut BackgroundColor),
-        (Changed<Interaction>, With<Gen3dPromptBox>),
-    >,
+    mut prompt_boxes: Query<(&Interaction, &mut BackgroundColor), With<Gen3dPromptBox>>,
 ) {
     for (interaction, mut bg) in &mut prompt_boxes {
         match *interaction {

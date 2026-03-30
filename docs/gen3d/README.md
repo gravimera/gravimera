@@ -96,6 +96,12 @@ component tree, not just the first root layer.
   of collapsing everything to the enclosing torso/body shell.
 - Use the `Inspect` → `Explode` toggle in the preview stats box to separate visible components in
   the preview only, including nested object-ref roots.
+- In explode mode, zoom stays centered on the exploded assembly instead of pulling back toward the
+  original assembled draft center.
+- Hovering uses a flatter segmented frame rather than a filled selection box so bright components
+  stay readable.
+- With the cursor over the preview, use `W` / `A` / `S` / `D` or the arrow keys to pan the preview
+  view.
 - In explode mode, separated components show their names directly in the preview. Hover still shows
   the fuller info card.
 
