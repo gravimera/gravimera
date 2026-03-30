@@ -55,6 +55,7 @@ pub(crate) fn exit_genfloor_mode(
     viewer_roots: Query<Entity, With<gen3d::Gen3dImageViewerRoot>>,
     job: Res<Gen3dAiJob>,
     task_queue: Res<gen3d::Gen3dTaskQueue>,
+    preview_export: Res<gen3d::Gen3dPreviewExportRuntime>,
     preview_state: ResMut<Gen3dPreview>,
     workshop: ResMut<Gen3dWorkshop>,
     mut floor_workshop: ResMut<GenFloorWorkshop>,
@@ -79,6 +80,7 @@ pub(crate) fn exit_genfloor_mode(
         viewer_roots,
         job,
         task_queue,
+        preview_export,
         preview_state,
         workshop,
     );

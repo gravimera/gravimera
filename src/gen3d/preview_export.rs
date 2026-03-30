@@ -293,17 +293,31 @@ pub(crate) fn gen3d_preview_export_poll(
     >,
     mut runtime: ResMut<Gen3dPreviewExportRuntime>,
 ) {
+    if !runtime.is_running() {
+        return;
+    }
+
     if !matches!(build_scene.get(), BuildScene::Preview) {
-        if runtime.is_running() {
-            fail_preview_export(
-                &mut commands,
-                &mut images,
-                &mut runtime,
-                None,
-                "Gen3D preview export canceled because BuildScene::Preview is no longer active."
-                    .to_string(),
-            );
-        }
+        fail_preview_export(
+            &mut commands,
+            &mut images,
+            &mut runtime,
+            None,
+            "Gen3D preview export canceled because BuildScene::Preview is no longer active."
+                .to_string(),
+        );
+        return;
+    }
+
+    if preview.root.is_none() || preview.camera.is_none() {
+        fail_preview_export(
+            &mut commands,
+            &mut images,
+            &mut runtime,
+            None,
+            "Preview export canceled because the Gen3D preview scene is no longer available."
+                .to_string(),
+        );
         return;
     }
 
@@ -335,12 +349,11 @@ pub(crate) fn gen3d_preview_export_poll(
                     active.channels.len()
                 );
                 runtime.active = Some(active);
+                // The camera/model entities are spawned via Commands, so they are not available
+                // to queries until the next frame after Commands have been applied.
+                return;
             }
-            Err(err) => {
-                runtime.status.phase = Gen3dPreviewExportPhase::Failed;
-                runtime.status.error = Some(err.clone());
-                runtime.status.message = format!("Preview export failed: {err}");
-            }
+            Err(err) => fail_preview_export(&mut commands, &mut images, &mut runtime, None, err),
         }
     }
 
@@ -433,7 +446,10 @@ pub(crate) fn gen3d_preview_export_poll(
             &mut images,
             &mut runtime,
             Some(active),
-            "Preview export model is no longer available.".to_string(),
+            format!(
+                "Preview export model is no longer available (BuildScene={:?}).",
+                build_scene.get()
+            ),
         );
         return;
     };
@@ -622,6 +638,23 @@ fn fail_preview_export(
     active: Option<ActiveGen3dPreviewExport>,
     err: String,
 ) {
+    let run_id = runtime.status.run_id.unwrap_or(0);
+    let out_dir = runtime
+        .status
+        .out_dir
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_default();
+    let current_channel = runtime
+        .status
+        .current_channel
+        .as_deref()
+        .unwrap_or_default();
+    error!(
+        "Gen3D preview export failed (run_id={}, out_dir={}, current_channel={}): {}",
+        run_id, out_dir, current_channel, err
+    );
+
     runtime.pending = None;
     cleanup_active_preview_export(commands, images, active.or_else(|| runtime.active.take()));
     runtime.status.phase = Gen3dPreviewExportPhase::Failed;

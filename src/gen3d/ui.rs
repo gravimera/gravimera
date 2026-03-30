@@ -1602,6 +1602,7 @@ pub(crate) fn exit_gen3d_mode(
     viewer_roots: Query<Entity, With<Gen3dImageViewerRoot>>,
     job: Res<Gen3dAiJob>,
     task_queue: Res<Gen3dTaskQueue>,
+    preview_export: Res<super::Gen3dPreviewExportRuntime>,
     mut preview_state: ResMut<Gen3dPreview>,
     mut workshop: ResMut<Gen3dWorkshop>,
 ) {
@@ -1612,7 +1613,8 @@ pub(crate) fn exit_gen3d_mode(
         commands.entity(entity).try_despawn();
     }
 
-    let any_running = job.is_running() || task_queue.running_session_id.is_some();
+    let any_running =
+        job.is_running() || task_queue.running_session_id.is_some() || preview_export.is_running();
     if !any_running {
         for entity in &preview_cameras {
             commands.entity(entity).try_despawn();
@@ -1659,13 +1661,14 @@ pub(crate) fn gen3d_cleanup_preview_scene_when_idle(
     mut commands: Commands,
     job: Res<Gen3dAiJob>,
     task_queue: Res<Gen3dTaskQueue>,
+    preview_export: Res<super::Gen3dPreviewExportRuntime>,
     preview_cameras: Query<Entity, With<Gen3dPreviewCamera>>,
     review_cameras: Query<Entity, With<Gen3dReviewCaptureCamera>>,
     preview_roots: Query<Entity, With<Gen3dPreviewSceneRoot>>,
     preview_lights: Query<Entity, With<Gen3dPreviewLight>>,
     mut preview_state: ResMut<Gen3dPreview>,
 ) {
-    if job.is_running() || task_queue.running_session_id.is_some() {
+    if job.is_running() || task_queue.running_session_id.is_some() || preview_export.is_running() {
         return;
     }
 
