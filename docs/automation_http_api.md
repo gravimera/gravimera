@@ -1308,8 +1308,10 @@ Response (shape):
 Notes:
 
 - `phase` is one of `idle`, `running`, `completed`, or `failed`.
-- `completed_channels` counts finished channel bundles. Each bundle writes one `*_still.png` and one
-  `*_anim.gif`.
+- `completed_channels` counts finished channel bundles (motion channels only). Each bundle writes
+  one `*_still.png` and one `*_anim.gif`.
+- Every export also writes three static angle images: `angle_front.png`, `angle_left_front.png`,
+  and `angle_right_front.png`.
 - `manifest_path` is present after a successful export.
 
 ### `POST /v1/gen3d/preview/export`
@@ -1359,7 +1361,10 @@ Notes:
 - Invalid channel names return `409` and list the available preview channels.
 - Output filenames are informative and ordered, for example:
   `01_idle_still.png`, `01_idle_anim.gif`, `02_attack_still.png`, `02_attack_anim.gif`.
-- `manifest.json` records the export camera state plus every generated file.
+- Static angle images are also written: `angle_front.png`, `angle_left_front.png`,
+  `angle_right_front.png`.
+- `manifest.json` records the export camera state plus the static `angles` images and the
+  per-channel still+gif bundles.
 
 ### `POST /v1/gen3d/preview/explode`
 

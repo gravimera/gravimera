@@ -20,12 +20,13 @@ use crate::types::{
     LocomotionClock, ObjectPrefabId,
 };
 
-use super::state::{Gen3dDraft, Gen3dPreview, Gen3dPreviewCamera};
+use super::state::{Gen3dDraft, Gen3dPreview};
 
-const GEN3D_PREVIEW_EXPORT_FORMAT_VERSION: u32 = 1;
+const GEN3D_PREVIEW_EXPORT_FORMAT_VERSION: u32 = 2;
 const GEN3D_PREVIEW_EXPORT_FRAME_COUNT: usize = 4;
 const GEN3D_PREVIEW_EXPORT_CAPTURE_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_secs(10);
+    std::time::Duration::from_secs(120);
+const GEN3D_PREVIEW_EXPORT_ANGLE_YAW_OFFSET: f32 = std::f32::consts::FRAC_PI_4; // 45 degrees.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Gen3dPreviewExportPhase {
@@ -89,13 +90,27 @@ struct PreviewExportChannelPlan {
     finite: bool,
 }
 
+#[derive(Clone, Debug)]
+struct PreviewExportAnglePlan {
+    label: String,
+    file_name: String,
+    yaw: f32,
+}
+
 #[derive(Default)]
 struct PreviewExportCaptureProgress {
     completed: usize,
 }
 
-struct PendingPreviewFrameCapture {
-    frame_path: PathBuf,
+#[derive(Clone, Debug)]
+enum PendingPreviewCaptureKind {
+    Angle { label: String },
+    MotionFrame,
+}
+
+struct PendingPreviewCapture {
+    kind: PendingPreviewCaptureKind,
+    path: PathBuf,
     sample_secs: f32,
     expected_completed: usize,
     requested_at: Instant,
@@ -108,11 +123,19 @@ struct ActiveGen3dPreviewExport {
     target: Handle<Image>,
     camera: Entity,
     model_root: Entity,
+    focus: Vec3,
+    yaw: f32,
+    pitch: f32,
+    distance: f32,
+    angle_channel: String,
+    angles: Vec<PreviewExportAnglePlan>,
+    angle_index: usize,
     channels: Vec<PreviewExportChannelPlan>,
     channel_index: usize,
     frame_paths: Vec<PathBuf>,
-    pending_capture: Option<PendingPreviewFrameCapture>,
+    pending_capture: Option<PendingPreviewCapture>,
     capture_progress: Arc<Mutex<PreviewExportCaptureProgress>>,
+    manifest_angles: Vec<PreviewExportManifestAngleV1>,
     manifest_channels: Vec<PreviewExportManifestChannelV1>,
 }
 
@@ -127,6 +150,18 @@ struct PreviewExportCameraManifestV1 {
     yaw: f32,
     pitch: f32,
     distance: f32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct PreviewExportManifestAngleV1 {
+    index: usize,
+    label: String,
+    file: String,
+    yaw: f32,
+    pitch: f32,
+    distance: f32,
+    channel: String,
+    sample_secs: f32,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -149,6 +184,7 @@ struct PreviewExportManifestV1 {
     height_px: u32,
     out_dir: String,
     camera: PreviewExportCameraManifestV1,
+    angles: Vec<PreviewExportManifestAngleV1>,
     channels: Vec<PreviewExportManifestChannelV1>,
 }
 
@@ -268,7 +304,6 @@ pub(crate) fn gen3d_preview_export_status_payload(
 }
 
 pub(crate) fn gen3d_preview_export_poll(
-    build_scene: Res<State<BuildScene>>,
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     assets: Res<SceneAssets>,
@@ -280,7 +315,6 @@ pub(crate) fn gen3d_preview_export_poll(
     mut library: ResMut<ObjectLibrary>,
     draft: Res<Gen3dDraft>,
     preview: Res<Gen3dPreview>,
-    camera_transforms: Query<&Transform, With<Gen3dPreviewCamera>>,
     mut export_roots: Query<
         (
             &mut AnimationChannelsActive,
@@ -294,18 +328,6 @@ pub(crate) fn gen3d_preview_export_poll(
     mut runtime: ResMut<Gen3dPreviewExportRuntime>,
 ) {
     if !runtime.is_running() {
-        return;
-    }
-
-    if !matches!(build_scene.get(), BuildScene::Preview) {
-        fail_preview_export(
-            &mut commands,
-            &mut images,
-            &mut runtime,
-            None,
-            "Gen3D preview export canceled because BuildScene::Preview is no longer active."
-                .to_string(),
-        );
         return;
     }
 
@@ -338,16 +360,22 @@ pub(crate) fn gen3d_preview_export_poll(
             &mut library,
             &draft,
             &preview,
-            &camera_transforms,
             pending,
         ) {
             Ok(active) => {
-                runtime.status.message = format!(
-                    "Exporting {} ({}/{})…",
-                    active.channels[0].channel,
-                    1,
-                    active.channels.len()
-                );
+                if let Some(first_angle) = active.angles.first() {
+                    runtime.status.current_channel =
+                        Some(format!("angle/{}", first_angle.label.as_str()));
+                    runtime.status.message = format!("Exporting angle {}…", first_angle.label);
+                } else if let Some(first_channel) = active.channels.first() {
+                    runtime.status.current_channel = Some(first_channel.channel.clone());
+                    runtime.status.message = format!(
+                        "Exporting {} ({}/{})…",
+                        first_channel.channel,
+                        1,
+                        active.channels.len()
+                    );
+                }
                 runtime.active = Some(active);
                 // The camera/model entities are spawned via Commands, so they are not available
                 // to queries until the next frame after Commands have been applied.
@@ -360,10 +388,6 @@ pub(crate) fn gen3d_preview_export_poll(
     let Some(mut active) = runtime.active.take() else {
         return;
     };
-    if active.channel_index >= active.channels.len() {
-        runtime.active = Some(active);
-        return;
-    }
 
     if let Some(pending_capture) = active.pending_capture.as_ref() {
         let completed = active
@@ -372,16 +396,52 @@ pub(crate) fn gen3d_preview_export_poll(
             .map(|guard| guard.completed)
             .unwrap_or(0);
         if completed >= pending_capture.expected_completed {
-            active.frame_paths.push(pending_capture.frame_path.clone());
+            match &pending_capture.kind {
+                PendingPreviewCaptureKind::Angle { .. } => {
+                    let Some(plan) = active.angles.get(active.angle_index).cloned() else {
+                        fail_preview_export(
+                            &mut commands,
+                            &mut images,
+                            &mut runtime,
+                            Some(active),
+                            "Preview export angle plan is missing.".to_string(),
+                        );
+                        return;
+                    };
+                    active.manifest_angles.push(PreviewExportManifestAngleV1 {
+                        index: active.manifest_angles.len().saturating_add(1),
+                        label: plan.label.clone(),
+                        file: plan.file_name.clone(),
+                        yaw: plan.yaw,
+                        pitch: active.pitch,
+                        distance: active.distance,
+                        channel: active.angle_channel.clone(),
+                        sample_secs: pending_capture.sample_secs,
+                    });
+                    active.angle_index = active.angle_index.saturating_add(1);
+                }
+                PendingPreviewCaptureKind::MotionFrame => {
+                    active.frame_paths.push(pending_capture.path.clone());
+                }
+            }
             active.pending_capture = None;
         } else if pending_capture.requested_at.elapsed() > GEN3D_PREVIEW_EXPORT_CAPTURE_TIMEOUT {
-            let channel = active.channels[active.channel_index].channel.clone();
+            let label = match &pending_capture.kind {
+                PendingPreviewCaptureKind::Angle { label } => {
+                    format!("angle `{}`", label.as_str())
+                }
+                PendingPreviewCaptureKind::MotionFrame => active
+                    .channels
+                    .get(active.channel_index)
+                    .map(|plan| format!("channel `{}`", plan.channel.as_str()))
+                    .unwrap_or_else(|| "channel".to_string()),
+            };
             fail_preview_export(
                 &mut commands,
                 &mut images,
                 &mut runtime,
                 Some(active),
-                format!("Timed out while capturing preview frame for channel `{channel}`."),
+                format!("Timed out while capturing preview frame for {label}."),
             );
             return;
         } else {
@@ -389,6 +449,90 @@ pub(crate) fn gen3d_preview_export_poll(
             return;
         }
     }
+
+    if active.angle_index < active.angles.len() {
+        let Some(plan) = active.angles.get(active.angle_index).cloned() else {
+            fail_preview_export(
+                &mut commands,
+                &mut images,
+                &mut runtime,
+                Some(active),
+                "Preview export angle plan is missing.".to_string(),
+            );
+            return;
+        };
+
+        let Ok((mut channels, mut locomotion, mut attack, mut action, mut forced)) =
+            export_roots.get_mut(active.model_root)
+        else {
+            fail_preview_export(
+                &mut commands,
+                &mut images,
+                &mut runtime,
+                Some(active),
+                "Preview export model is no longer available.".to_string(),
+            );
+            return;
+        };
+
+        apply_preview_export_sample(
+            &library,
+            super::gen3d_draft_object_id(),
+            &active.angle_channel,
+            0.0,
+            &mut channels,
+            &mut locomotion,
+            &mut attack,
+            &mut action,
+            &mut forced,
+        );
+
+        runtime.status.current_channel = Some(format!("angle/{}", plan.label.as_str()));
+        runtime.status.message = format!("Exporting angle {}…", plan.label);
+
+        let angle_transform =
+            crate::orbit_capture::orbit_transform(plan.yaw, active.pitch, active.distance, active.focus);
+        commands.entity(active.camera).insert(angle_transform);
+
+        let path = active.out_dir.join(&plan.file_name);
+        let expected_completed = active
+            .capture_progress
+            .lock()
+            .map(|guard| guard.completed.saturating_add(1))
+            .unwrap_or(1);
+        let progress = active.capture_progress.clone();
+        let path_for_capture = path.clone();
+        commands
+            .spawn(Screenshot::image(active.target.clone()))
+            .observe(move |event: On<ScreenshotCaptured>| {
+                if let Some(parent) = path_for_capture.parent() {
+                    if let Err(err) = std::fs::create_dir_all(parent) {
+                        error!(
+                            "Gen3D preview export: failed to create directory {}: {err}",
+                            parent.display()
+                        );
+                    }
+                }
+                let mut saver = save_to_disk(path_for_capture.clone());
+                saver(event);
+                if let Ok(mut guard) = progress.lock() {
+                    guard.completed = guard.completed.saturating_add(1);
+                }
+            });
+
+        active.pending_capture = Some(PendingPreviewCapture {
+            kind: PendingPreviewCaptureKind::Angle {
+                label: plan.label.clone(),
+            },
+            path,
+            sample_secs: 0.0,
+            expected_completed,
+            requested_at: Instant::now(),
+        });
+        runtime.active = Some(active);
+        return;
+    }
+
     if active.frame_paths.len() >= GEN3D_PREVIEW_EXPORT_FRAME_COUNT {
         if let Err(err) = finalize_preview_export_channel(&mut active) {
             fail_preview_export(&mut commands, &mut images, &mut runtime, Some(active), err);
@@ -397,7 +541,7 @@ pub(crate) fn gen3d_preview_export_poll(
 
         runtime.status.completed_channels = active.channel_index;
         if active.channel_index >= active.channels.len() {
-            match finalize_preview_export_manifest(&active, &preview) {
+            match finalize_preview_export_manifest(&active) {
                 Ok(manifest_path) => {
                     runtime.status.phase = Gen3dPreviewExportPhase::Completed;
                     runtime.status.completed_channels = runtime.status.total_channels;
@@ -429,6 +573,13 @@ pub(crate) fn gen3d_preview_export_poll(
     }
 
     let plan = active.channels[active.channel_index].clone();
+    runtime.status.current_channel = Some(plan.channel.clone());
+    runtime.status.message = format!(
+        "Exporting {} ({}/{})…",
+        plan.channel,
+        active.channel_index + 1,
+        active.channels.len()
+    );
     let sample_index = active.frame_paths.len();
     let sample_secs =
         preview_export_sample_secs(&plan, sample_index, GEN3D_PREVIEW_EXPORT_FRAME_COUNT);
@@ -446,10 +597,7 @@ pub(crate) fn gen3d_preview_export_poll(
             &mut images,
             &mut runtime,
             Some(active),
-            format!(
-                "Preview export model is no longer available (BuildScene={:?}).",
-                build_scene.get()
-            ),
+            "Preview export model is no longer available.".to_string(),
         );
         return;
     };
@@ -473,9 +621,20 @@ pub(crate) fn gen3d_preview_export_poll(
         .unwrap_or(1);
     let progress = active.capture_progress.clone();
     let frame_path_for_capture = frame_path.clone();
+    let front_transform =
+        crate::orbit_capture::orbit_transform(active.yaw, active.pitch, active.distance, active.focus);
+    commands.entity(active.camera).insert(front_transform);
     commands
         .spawn(Screenshot::image(active.target.clone()))
         .observe(move |event: On<ScreenshotCaptured>| {
+            if let Some(parent) = frame_path_for_capture.parent() {
+                if let Err(err) = std::fs::create_dir_all(parent) {
+                    error!(
+                        "Gen3D preview export: failed to create directory {}: {err}",
+                        parent.display()
+                    );
+                }
+            }
             let mut saver = save_to_disk(frame_path_for_capture.clone());
             saver(event);
             if let Ok(mut guard) = progress.lock() {
@@ -483,8 +642,9 @@ pub(crate) fn gen3d_preview_export_poll(
             }
         });
 
-    active.pending_capture = Some(PendingPreviewFrameCapture {
-        frame_path,
+    active.pending_capture = Some(PendingPreviewCapture {
+        kind: PendingPreviewCaptureKind::MotionFrame,
+        path: frame_path,
         sample_secs,
         expected_completed,
         requested_at: Instant::now(),
@@ -504,19 +664,56 @@ fn start_preview_export(
     library: &mut ObjectLibrary,
     draft: &Gen3dDraft,
     preview: &Gen3dPreview,
-    camera_transforms: &Query<&Transform, With<Gen3dPreviewCamera>>,
     pending: PendingGen3dPreviewExport,
 ) -> Result<ActiveGen3dPreviewExport, String> {
     let Some(preview_root) = preview.root else {
         return Err("Gen3D preview scene root is missing.".to_string());
     };
-    let Some(preview_camera) = preview.camera else {
-        return Err("Gen3D preview camera is missing.".to_string());
-    };
-    let camera_transform = camera_transforms
-        .get(preview_camera)
-        .copied()
-        .map_err(|_| "Gen3D preview camera transform is unavailable.".to_string())?;
+
+    fn finite_or(value: f32, default: f32) -> f32 {
+        if value.is_finite() {
+            value
+        } else {
+            default
+        }
+    }
+
+    let focus = super::effective_preview_camera_focus(preview, None);
+    let focus = if focus.is_finite() { focus } else { Vec3::ZERO };
+    let yaw = finite_or(preview.yaw, super::GEN3D_PREVIEW_DEFAULT_YAW);
+    let pitch = finite_or(preview.pitch, super::GEN3D_PREVIEW_DEFAULT_PITCH);
+    let mut distance = finite_or(preview.distance, super::GEN3D_PREVIEW_DEFAULT_DISTANCE);
+    if !distance.is_finite() || distance <= 1e-3 {
+        distance = super::GEN3D_PREVIEW_DEFAULT_DISTANCE;
+    }
+    distance = distance.clamp(0.25, 100.0);
+    let camera_transform = crate::orbit_capture::orbit_transform(yaw, pitch, distance, focus);
+
+    let angle_channel = pending
+        .channels
+        .iter()
+        .find(|plan| plan.channel.eq_ignore_ascii_case("idle"))
+        .map(|plan| plan.channel.clone())
+        .or_else(|| pending.channels.first().map(|plan| plan.channel.clone()))
+        .unwrap_or_else(|| "idle".to_string());
+
+    let angles = vec![
+        PreviewExportAnglePlan {
+            label: "front".to_string(),
+            file_name: "angle_front.png".to_string(),
+            yaw,
+        },
+        PreviewExportAnglePlan {
+            label: "left_front".to_string(),
+            file_name: "angle_left_front.png".to_string(),
+            yaw: yaw - GEN3D_PREVIEW_EXPORT_ANGLE_YAW_OFFSET,
+        },
+        PreviewExportAnglePlan {
+            label: "right_front".to_string(),
+            file_name: "angle_right_front.png".to_string(),
+            yaw: yaw + GEN3D_PREVIEW_EXPORT_ANGLE_YAW_OFFSET,
+        },
+    ];
 
     std::fs::create_dir_all(&pending.out_dir).map_err(|err| {
         format!(
@@ -608,11 +805,19 @@ fn start_preview_export(
         target,
         camera,
         model_root,
+        focus,
+        yaw,
+        pitch,
+        distance,
+        angle_channel,
+        angles,
+        angle_index: 0,
         channels: pending.channels,
         channel_index: 0,
         frame_paths: Vec::new(),
         pending_capture: None,
         capture_progress: Arc::new(Mutex::new(PreviewExportCaptureProgress::default())),
+        manifest_angles: Vec::new(),
         manifest_channels: Vec::new(),
     })
 }
@@ -692,13 +897,8 @@ fn finalize_preview_export_channel(active: &mut ActiveGen3dPreviewExport) -> Res
         GEN3D_PREVIEW_EXPORT_FRAME_COUNT,
     )?;
 
-    let still_sample_secs = active
-        .pending_capture
-        .as_ref()
-        .map(|capture| capture.sample_secs)
-        .unwrap_or_else(|| {
-            preview_export_sample_secs(&channel_plan, still_index, GEN3D_PREVIEW_EXPORT_FRAME_COUNT)
-        });
+    let still_sample_secs =
+        preview_export_sample_secs(&channel_plan, still_index, GEN3D_PREVIEW_EXPORT_FRAME_COUNT);
     active
         .manifest_channels
         .push(PreviewExportManifestChannelV1 {
@@ -721,7 +921,6 @@ fn finalize_preview_export_channel(active: &mut ActiveGen3dPreviewExport) -> Res
 
 fn finalize_preview_export_manifest(
     active: &ActiveGen3dPreviewExport,
-    preview: &Gen3dPreview,
 ) -> Result<PathBuf, String> {
     let manifest_path = active.out_dir.join("manifest.json");
     let doc = PreviewExportManifestV1 {
@@ -731,10 +930,11 @@ fn finalize_preview_export_manifest(
         height_px: super::GEN3D_PREVIEW_HEIGHT_PX,
         out_dir: active.out_dir.display().to_string(),
         camera: PreviewExportCameraManifestV1 {
-            yaw: preview.yaw,
-            pitch: preview.pitch,
-            distance: preview.distance,
+            yaw: active.yaw,
+            pitch: active.pitch,
+            distance: active.distance,
         },
+        angles: active.manifest_angles.clone(),
         channels: active.manifest_channels.clone(),
     };
     write_json_atomic(&manifest_path, &doc)?;
