@@ -3184,10 +3184,13 @@ pub(crate) fn floor_library_item_button_interactions(
 }
 
 pub(crate) fn floor_library_update_list_item_styles(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
     state: Res<FloorLibraryUiState>,
     mut last_selected: Local<Option<u128>>,
     mut last_multi_mode: Local<bool>,
     mut last_multi: Local<Vec<u128>>,
+    mut last_panel_visible: Local<bool>,
     mut buttons: Query<
         (
             Ref<Interaction>,
@@ -3211,6 +3214,14 @@ pub(crate) fn floor_library_update_list_item_styles(
         Without<FloorLibrarySelectionMark>,
     >,
 ) {
+    let panel_visible = state.is_open()
+        && matches!(mode.get(), GameMode::Build)
+        && matches!(build_scene.get(), BuildScene::Realm);
+    let panel_visibility_changed = *last_panel_visible != panel_visible;
+    if panel_visibility_changed {
+        *last_panel_visible = panel_visible;
+    }
+
     let selected_id = state.selected_floor_id();
     let mut multi_ids: Vec<u128> = if state.multi_select_mode {
         state.multi_selected_floors.iter().copied().collect()
@@ -3229,15 +3240,29 @@ pub(crate) fn floor_library_update_list_item_styles(
         *last_multi = multi_ids;
     }
 
-    let selection_changed = if state.multi_select_mode {
-        multi_mode_changed || multi_changed
-    } else {
-        let changed = *last_selected != selected_id;
-        if changed {
-            *last_selected = selected_id;
+    let selection_changed = panel_visibility_changed
+        || if state.multi_select_mode {
+            multi_mode_changed || multi_changed
+        } else {
+            let changed = *last_selected != selected_id;
+            if changed {
+                *last_selected = selected_id;
+            }
+            changed || multi_mode_changed
+        };
+
+    if !panel_visible {
+        for (_mark, mut vis) in &mut marks {
+            *vis = Visibility::Hidden;
         }
-        changed || multi_mode_changed
-    };
+        for (_radio, mut node, _border) in &mut radios {
+            node.display = Display::None;
+        }
+        for (_dot, mut vis) in &mut dots {
+            *vis = Visibility::Hidden;
+        }
+        return;
+    }
 
     for (interaction, button, mut bg, mut border) in &mut buttons {
         if !selection_changed && !interaction.is_changed() && !interaction.is_added() {
@@ -3696,5 +3721,59 @@ mod tests {
 
         let interaction = app.world().get::<Interaction>(button).copied();
         assert_eq!(interaction, Some(Interaction::None));
+    }
+
+    #[test]
+    fn selection_mark_hides_when_panel_closes_and_restores_on_reopen() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<GameMode>();
+        app.init_state::<BuildScene>();
+
+        let mut state = FloorLibraryUiState::default();
+        state.open = true;
+        state.selected_floor_id = Some(7);
+        app.insert_resource(state);
+
+        let _button = app
+            .world_mut()
+            .spawn((
+                FloorLibraryListItem,
+                FloorLibraryItemButton { floor_id: 7 },
+                Interaction::None,
+                BackgroundColor(Color::NONE),
+                BorderColor::all(Color::NONE),
+            ))
+            .id();
+        let mark = app
+            .world_mut()
+            .spawn((
+                FloorLibrarySelectionMark { floor_id: 7 },
+                Visibility::Hidden,
+            ))
+            .id();
+
+        app.add_systems(Update, floor_library_update_list_item_styles);
+
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(mark).copied(),
+            Some(Visibility::Visible)
+        );
+
+        app.world_mut().resource_mut::<FloorLibraryUiState>().open = false;
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(mark).copied(),
+            Some(Visibility::Hidden)
+        );
+
+        app.world_mut().resource_mut::<FloorLibraryUiState>().open = true;
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(mark).copied(),
+            Some(Visibility::Visible)
+        );
     }
 }
