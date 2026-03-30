@@ -299,6 +299,72 @@ mod tests {
             pos
         );
     }
+
+    #[test]
+    fn player_fire_direction_prefers_cursor_target_over_motion_and_facing() {
+        let locomotion = LocomotionClock {
+            t: 0.0,
+            distance_m: 0.0,
+            signed_distance_m: 0.0,
+            speed_mps: 0.0,
+            last_translation: Vec3::ZERO,
+            last_move_dir_xz: Vec2::NEG_Y,
+        };
+
+        let direction =
+            select_player_fire_direction(Some(Vec3::X), Some(&locomotion), Quat::IDENTITY);
+
+        assert!(
+            (direction - Vec3::X).length() < 1e-5,
+            "direction={direction:?}"
+        );
+    }
+
+    #[test]
+    fn player_fire_direction_falls_back_to_motion_then_facing() {
+        let locomotion = LocomotionClock {
+            t: 0.0,
+            distance_m: 0.0,
+            signed_distance_m: 0.0,
+            speed_mps: 0.0,
+            last_translation: Vec3::ZERO,
+            last_move_dir_xz: Vec2::X,
+        };
+
+        let from_motion = select_player_fire_direction(None, Some(&locomotion), Quat::IDENTITY);
+        assert!(
+            (from_motion - Vec3::X).length() < 1e-5,
+            "direction={from_motion:?}"
+        );
+
+        let from_facing = select_player_fire_direction(
+            None,
+            None,
+            Quat::from_rotation_y(-core::f32::consts::FRAC_PI_2),
+        );
+        assert!(
+            (from_facing - Vec3::NEG_X).length() < 1e-5,
+            "direction={from_facing:?}"
+        );
+    }
+}
+
+fn select_player_fire_direction(
+    target_direction: Option<Vec3>,
+    locomotion: Option<&LocomotionClock>,
+    facing: Quat,
+) -> Vec3 {
+    target_direction
+        .and_then(normalize_flat_direction)
+        .or_else(|| {
+            locomotion
+                .map(|clock| clock.last_move_dir_xz)
+                .filter(|dir| dir.length_squared() > 1e-6)
+                .map(|dir| Vec3::new(dir.x, 0.0, dir.y))
+                .and_then(normalize_flat_direction)
+        })
+        .or_else(|| normalize_flat_direction(facing * Vec3::Z))
+        .unwrap_or(Vec3::Z)
 }
 
 fn fire_direction_from_target(
@@ -719,14 +785,11 @@ pub(crate) fn player_fire(
     if !selection.selected.contains(&player_entity) {
         return;
     }
-    let direction = locomotion
-        .map(|clock| clock.last_move_dir_xz)
-        .filter(|dir| dir.length_squared() > 1e-6)
-        .map(|dir| Vec3::new(dir.x, 0.0, dir.y))
-        .and_then(normalize_flat_direction)
-        .or_else(|| normalize_flat_direction(player_transform.rotation * Vec3::Z))
-        .or_else(|| fire_direction_from_target(player_transform.translation, fire.target, &units))
-        .unwrap_or(Vec3::Z);
+    let direction = select_player_fire_direction(
+        fire_direction_from_target(player_transform.translation, fire.target, &units),
+        locomotion,
+        player_transform.rotation,
+    );
     let yaw = direction.x.atan2(direction.z);
     player_transform.rotation = Quat::from_rotation_y(yaw);
 
