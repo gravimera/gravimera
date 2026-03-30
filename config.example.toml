@@ -48,7 +48,7 @@
 # mode = "embedded"
 # addr = "127.0.0.1:8792" # sidecar addr; embedded bind addr (use "127.0.0.1:0" for a random port)
 # token = "CHANGE_ME" # optional; requires `Authorization: Bearer <token>`
-# tick_interval_secs = 1 # host tick interval for standalone brains; minimum 1 second
+# ticks_per_sec = 6 # standalone-brain host tick rate
 #
 # Dev-only: spawn a demo commandable unit with a demo standalone brain (`demo.orbit.v1`).
 # debug_spawn_unit = false

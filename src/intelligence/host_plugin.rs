@@ -56,9 +56,8 @@ pub(crate) struct IntelligenceHostRuntime {
     pub(crate) token: Option<String>,
     pub(crate) connected: bool,
     pub(crate) modules_loaded: std::collections::HashSet<String>,
-    pub(crate) last_connect_attempt_at_secs: f64,
-    pub(crate) next_tick_index: u64,
-    pub(crate) tick_accumulator_secs: f64,
+    pub(crate) last_connect_attempt_tick: u64,
+    pub(crate) last_service_tick: Option<u64>,
     embedded_service: Option<crate::intelligence::service::EmbeddedIntelligenceService>,
 }
 
@@ -83,7 +82,7 @@ impl StandaloneBrain {
             config: json!({
                 "center": [0.0, 0.0],
                 "radius": 10.0,
-                "rads_per_sec": 3.0
+                "rads_per_tick": 0.05
             }),
             capabilities: vec!["brain.move".into()],
             brain_instance_id: None,
@@ -97,9 +96,8 @@ fn intelligence_host_init(mut runtime: ResMut<IntelligenceHostRuntime>, config: 
     runtime.token = config.intelligence_service_token.clone();
     runtime.connected = false;
     runtime.modules_loaded.clear();
-    runtime.last_connect_attempt_at_secs = f64::NEG_INFINITY;
-    runtime.next_tick_index = 0;
-    runtime.tick_accumulator_secs = 0.0;
+    runtime.last_connect_attempt_tick = 0;
+    runtime.last_service_tick = None;
     runtime.embedded_service = None;
 
     runtime.service_addr = None;
@@ -343,7 +341,7 @@ fn looks_like_intelligence_disconnect(err: &str) -> bool {
 fn mark_intelligence_disconnected(runtime: &mut IntelligenceHostRuntime) {
     runtime.connected = false;
     runtime.modules_loaded.clear();
-    runtime.tick_accumulator_secs = 0.0;
+    runtime.last_service_tick = None;
 }
 
 fn intelligence_tick(
@@ -397,8 +395,6 @@ fn intelligence_tick(
         With<BuildObject>,
     >,
 ) {
-    const CONNECT_RETRY_SECS: f64 = 1.0;
-
     if !config.intelligence_service_enabled || !config.intelligence_service_mode.enabled() {
         runtime.enabled = false;
         return;
@@ -408,24 +404,28 @@ fn intelligence_tick(
         return;
     };
     let client = SidecarClient::new(addr, runtime.token.clone());
-    let now_secs = time.elapsed_secs_f64();
-    let tick_interval_secs = config.intelligence_service_tick_interval_secs.max(1) as f64;
+    let intelligence_ticks_per_sec = config.intelligence_service_ticks_per_sec.max(0.001);
+    let connect_retry_ticks = (intelligence_ticks_per_sec * 0.5).ceil().max(1.0) as u64;
+
+    // Cheap, tick-index-like counter: use a monotonic u64 based on frames elapsed.
+    // This is sufficient for the MVP; deterministic stepping uses Automation's fixed dt.
+    let tick_index = (time.elapsed_secs_f64() * intelligence_ticks_per_sec)
+        .floor()
+        .max(0.0) as u64;
 
     if !runtime.connected {
-        runtime.tick_accumulator_secs = 0.0;
-        if now_secs - runtime.last_connect_attempt_at_secs < CONNECT_RETRY_SECS {
+        // Avoid spamming connect attempts every frame.
+        if tick_index.saturating_sub(runtime.last_connect_attempt_tick) < connect_retry_ticks {
             return;
         }
-        runtime.last_connect_attempt_at_secs = now_secs;
+        runtime.last_connect_attempt_tick = tick_index;
         match client.health() {
             Ok(resp) if resp.protocol_version == PROTOCOL_VERSION => {
                 runtime.connected = true;
-                runtime.tick_accumulator_secs = 0.0;
                 info!(
                     "Intelligence service connected: {} (protocol_version={})",
                     addr, resp.protocol_version
                 );
-                return;
             }
             Ok(resp) => {
                 warn!(
@@ -501,17 +501,22 @@ fn intelligence_tick(
         }
     }
 
-    runtime.tick_accumulator_secs += time.delta_secs_f64().max(0.0);
-    if runtime.tick_accumulator_secs < tick_interval_secs {
+    if runtime
+        .last_service_tick
+        .is_some_and(|last_tick| tick_index <= last_tick)
+    {
         return;
     }
+    let ticks_since_last_service_tick = runtime
+        .last_service_tick
+        .map(|last_tick| tick_index.saturating_sub(last_tick))
+        .unwrap_or(1)
+        .max(1);
+    runtime.last_service_tick = Some(tick_index);
 
-    let dt_ms = (runtime.tick_accumulator_secs * 1000.0)
+    let dt_ms = ((ticks_since_last_service_tick as f64) * 1000.0 / intelligence_ticks_per_sec)
         .round()
         .clamp(1.0, u32::MAX as f64) as u32;
-    runtime.tick_accumulator_secs = 0.0;
-    let tick_index = runtime.next_tick_index;
-    runtime.next_tick_index = runtime.next_tick_index.saturating_add(1);
     if dt_ms == 0 {
         return;
     }

@@ -10,7 +10,6 @@ const MODULE_DEMO_ORBIT: &str = "demo.orbit.v1";
 const MODULE_DEMO_COWARD: &str = "demo.coward.v1";
 const MODULE_DEMO_OPPORTUNIST: &str = "demo.opportunist.v1";
 const MODULE_DEMO_BELLIGERENT: &str = "demo.belligerent.v1";
-const LEGACY_BRAIN_TICKS_PER_SEC: f32 = 60.0;
 
 pub fn run_intelligence_service_blocking(bind: &str, token: Option<String>) -> Result<(), String> {
     let server = match tiny_http::Server::http(bind) {
@@ -92,11 +91,6 @@ impl Default for CowardMode {
 }
 
 #[derive(Debug, Default)]
-struct DemoOrbitBrain {
-    angle_rads: f32,
-}
-
-#[derive(Debug, Default)]
 struct CowardBrain {
     mode: CowardMode,
     mode_until_tick: u64,
@@ -151,7 +145,7 @@ struct BelligerentBrain {
 
 #[derive(Debug)]
 enum BrainModuleState {
-    DemoOrbit(DemoOrbitBrain),
+    DemoOrbit,
     DemoCoward(CowardBrain),
     DemoOpportunist(OpportunistBrain),
     DemoBelligerent(BelligerentBrain),
@@ -365,7 +359,7 @@ fn handle_http_request(
 
             let brain_instance_id = uuid::Uuid::new_v4().to_string();
             let module_state = match module_id.as_str() {
-                MODULE_DEMO_ORBIT => BrainModuleState::DemoOrbit(DemoOrbitBrain::default()),
+                MODULE_DEMO_ORBIT => BrainModuleState::DemoOrbit,
                 MODULE_DEMO_COWARD => BrainModuleState::DemoCoward(CowardBrain::default()),
                 MODULE_DEMO_OPPORTUNIST => {
                     BrainModuleState::DemoOpportunist(OpportunistBrain::default())
@@ -373,7 +367,7 @@ fn handle_http_request(
                 MODULE_DEMO_BELLIGERENT => {
                     BrainModuleState::DemoBelligerent(BelligerentBrain::default())
                 }
-                _ => BrainModuleState::DemoOrbit(DemoOrbitBrain::default()),
+                _ => BrainModuleState::DemoOrbit,
             };
             let instance = BrainInstance {
                 config: req.config,
@@ -494,7 +488,7 @@ fn tick_brain(instance: &mut BrainInstance, input: &TickInput) -> TickOutput {
     let config = &instance.config;
     let capabilities = &instance.capabilities;
     match &mut instance.module_state {
-        BrainModuleState::DemoOrbit(state) => tick_demo_orbit(config, capabilities, state, input),
+        BrainModuleState::DemoOrbit => tick_demo_orbit(config, capabilities, input),
         BrainModuleState::DemoCoward(state) => tick_demo_coward(config, capabilities, state, input),
         BrainModuleState::DemoOpportunist(state) => {
             tick_demo_opportunist(config, capabilities, state, input)
@@ -563,29 +557,6 @@ fn config_u32(config: &serde_json::Value, key: &str, default: u32, min: u32, max
         .and_then(|v| u32::try_from(v).ok())
         .unwrap_or(default)
         .clamp(min, max)
-}
-
-fn tick_dt_secs(input: &TickInput) -> f32 {
-    (input.dt_ms.max(1) as f32) / 1000.0
-}
-
-fn host_ticks_for_duration_secs(input: &TickInput, secs: f32) -> u64 {
-    if !secs.is_finite() || secs <= 0.0 {
-        return 0;
-    }
-    let ticks = (secs / tick_dt_secs(input)).ceil().max(1.0);
-    ticks.min(u32::MAX as f32) as u64
-}
-
-fn host_ticks_for_legacy_ticks(input: &TickInput, legacy_ticks: u32) -> u64 {
-    if legacy_ticks == 0 {
-        return 0;
-    }
-    host_ticks_for_duration_secs(input, legacy_ticks as f32 / LEGACY_BRAIN_TICKS_PER_SEC)
-}
-
-fn tick_after_legacy_ticks(tick: u64, input: &TickInput, legacy_ticks: u32) -> u64 {
-    tick.saturating_add(host_ticks_for_legacy_ticks(input, legacy_ticks))
 }
 
 fn cap_enabled(capabilities: &HashSet<String>, cap: &str) -> bool {
@@ -693,7 +664,6 @@ fn nearest_entity<'a>(
 fn tick_demo_orbit(
     config: &serde_json::Value,
     capabilities: &HashSet<String>,
-    state: &mut DemoOrbitBrain,
     input: &TickInput,
 ) -> TickOutput {
     // Only emit movement commands if allowed by capabilities.
@@ -704,8 +674,7 @@ fn tick_demo_orbit(
         };
     }
 
-    // Config (optional): { "center": [x,z], "radius": f32, "rads_per_sec": f32 }.
-    // Legacy `rads_per_tick` is still accepted and interpreted as 60 Hz brain ticks.
+    // Config (optional): { "center": [x,z], "radius": f32, "rads_per_tick": f32 }
     let (center_x, center_z) = config
         .get("center")
         .and_then(|v| v.as_array())
@@ -726,23 +695,15 @@ fn tick_demo_orbit(
         .unwrap_or(6.0)
         .abs()
         .clamp(0.5, 200.0);
-    let rads_per_sec = config
-        .get("rads_per_sec")
+    let rads_per_tick = config
+        .get("rads_per_tick")
         .and_then(|v| v.as_f64())
         .map(|v| v as f32)
-        .or_else(|| {
-            config
-                .get("rads_per_tick")
-                .and_then(|v| v.as_f64())
-                .map(|v| v as f32 * LEGACY_BRAIN_TICKS_PER_SEC)
-        })
-        .unwrap_or(3.0)
+        .unwrap_or(0.05)
         .abs()
-        .clamp(0.0, LEGACY_BRAIN_TICKS_PER_SEC);
+        .clamp(0.0, 1.0);
 
-    state.angle_rads =
-        (state.angle_rads + rads_per_sec * tick_dt_secs(input)).rem_euclid(std::f32::consts::TAU);
-    let a = state.angle_rads;
+    let a = (input.tick_index as f32) * rads_per_tick;
     let x = center_x + a.cos() * radius;
     let z = center_z + a.sin() * radius;
     let y = input.self_state.pos[1];
@@ -750,7 +711,7 @@ fn tick_demo_orbit(
     TickOutput {
         commands: vec![BrainCommand::MoveTo {
             pos: [x, y, z],
-            valid_until_tick: Some(tick_after_legacy_ticks(input.tick_index, input, 10)),
+            valid_until_tick: Some(input.tick_index.saturating_add(10)),
         }],
         meta: TickOutputMeta::default(),
     }
@@ -762,6 +723,7 @@ fn tick_demo_coward(
     state: &mut CowardBrain,
     input: &TickInput,
 ) -> TickOutput {
+    const TICKS_PER_SEC: u64 = 60;
     let tick = input.tick_index;
     let mut rng = SplitMix64::new(input.rng_seed ^ 0xC0B4_12D3_4A6E_9F01);
 
@@ -773,20 +735,14 @@ fn tick_demo_coward(
     let flee_distance_m = config_f32(config, "flee_distance_m", 12.0, 2.0, 200.0);
     let wander_radius_m = config_f32(config, "wander_radius_m", 8.0, 0.5, 200.0);
     let wander_arrival_m = config_f32(config, "wander_arrival_m", 0.8, 0.1, 10.0);
-    let panic_hide_ticks = host_ticks_for_legacy_ticks(
-        input,
-        config_u32(config, "panic_hide_ticks", 600, 0, 60_000),
-    );
-    let dangerous_ticks = host_ticks_for_legacy_ticks(
-        input,
-        config_u32(
-            config,
-            "dangerous_ticks",
-            (LEGACY_BRAIN_TICKS_PER_SEC as u32) * 60,
-            1,
-            1_000_000,
-        ),
-    );
+    let panic_hide_ticks = config_u32(config, "panic_hide_ticks", 600, 0, 60_000) as u64;
+    let dangerous_ticks = config_u32(
+        config,
+        "dangerous_ticks",
+        (TICKS_PER_SEC * 60) as u32,
+        1,
+        1_000_000,
+    ) as u64;
     let hide_buffer_m = config_f32(config, "hide_buffer_m", 1.2, 0.1, 20.0);
 
     // Update / expire danger marks.
@@ -912,12 +868,10 @@ fn tick_demo_coward(
         if can_move {
             commands.push(BrainCommand::MoveTo {
                 pos: goal,
-                valid_until_tick: Some(tick_after_legacy_ticks(tick, input, 30)),
+                valid_until_tick: Some(tick.saturating_add(30)),
             });
         }
-        commands.push(BrainCommand::SleepForTicks {
-            ticks: host_ticks_for_legacy_ticks(input, 6) as u32,
-        });
+        commands.push(BrainCommand::SleepForTicks { ticks: 6 });
         return TickOutput {
             commands,
             meta: TickOutputMeta::default(),
@@ -929,17 +883,15 @@ fn tick_demo_coward(
         let r = rng.next_f32();
         if r < 0.55 {
             state.mode = CowardMode::Wander;
-            state.mode_until_tick =
-                tick_after_legacy_ticks(tick, input, rng.gen_range_u32(120, 240));
+            state.mode_until_tick = tick.saturating_add(rng.gen_range_u32(120, 240) as u64);
             state.wander_target = Some(random_wander_target(self_pos, wander_radius_m, &mut rng));
         } else if r < 0.85 {
             state.mode = CowardMode::Rest;
-            state.mode_until_tick =
-                tick_after_legacy_ticks(tick, input, rng.gen_range_u32(90, 210));
+            state.mode_until_tick = tick.saturating_add(rng.gen_range_u32(90, 210) as u64);
             state.wander_target = None;
         } else {
             state.mode = CowardMode::Look;
-            state.mode_until_tick = tick_after_legacy_ticks(tick, input, rng.gen_range_u32(30, 90));
+            state.mode_until_tick = tick.saturating_add(rng.gen_range_u32(30, 90) as u64);
             state.wander_target = None;
         }
     }
@@ -965,26 +917,20 @@ fn tick_demo_coward(
                 if let Some(target) = state.wander_target {
                     commands.push(BrainCommand::MoveTo {
                         pos: target,
-                        valid_until_tick: Some(tick_after_legacy_ticks(tick, input, 60)),
+                        valid_until_tick: Some(tick.saturating_add(60)),
                     });
                 }
             }
-            commands.push(BrainCommand::SleepForTicks {
-                ticks: host_ticks_for_legacy_ticks(input, 18) as u32,
-            });
+            commands.push(BrainCommand::SleepForTicks { ticks: 18 });
         }
         CowardMode::Rest => {
             let remaining = state.mode_until_tick.saturating_sub(tick);
-            let sleep = remaining
-                .min(host_ticks_for_legacy_ticks(input, 30))
-                .max(host_ticks_for_legacy_ticks(input, 6)) as u32;
+            let sleep = remaining.min(30).max(6) as u32;
             commands.push(BrainCommand::SleepForTicks { ticks: sleep });
         }
         CowardMode::Look => {
             let remaining = state.mode_until_tick.saturating_sub(tick);
-            let sleep = remaining
-                .min(host_ticks_for_legacy_ticks(input, 18))
-                .max(host_ticks_for_legacy_ticks(input, 6)) as u32;
+            let sleep = remaining.min(18).max(6) as u32;
             commands.push(BrainCommand::SleepForTicks { ticks: sleep });
         }
     }
@@ -1001,6 +947,7 @@ fn tick_demo_opportunist(
     state: &mut OpportunistBrain,
     input: &TickInput,
 ) -> TickOutput {
+    const TICKS_PER_SEC: u64 = 60;
     let tick = input.tick_index;
     let mut rng = SplitMix64::new(input.rng_seed ^ 0x0F70_12A9_84B1_4C5E);
 
@@ -1025,11 +972,10 @@ fn tick_demo_opportunist(
     let forget_target_ticks = config_u32(
         config,
         "forget_target_ticks",
-        (LEGACY_BRAIN_TICKS_PER_SEC as u32) * 10,
+        (TICKS_PER_SEC * 10) as u32,
         1,
         1_000_000,
-    );
-    let forget_target_ticks = host_ticks_for_legacy_ticks(input, forget_target_ticks);
+    ) as u64;
 
     if let Some(max) = input.self_state.health_max {
         state.health_max_est = Some(max.max(1));
@@ -1121,18 +1067,16 @@ fn tick_demo_opportunist(
             if can_combat {
                 commands.push(BrainCommand::AttackTarget {
                     target_id: target.id.clone(),
-                    valid_until_tick: Some(tick_after_legacy_ticks(tick, input, 30)),
+                    valid_until_tick: Some(tick.saturating_add(30)),
                 });
             }
             if can_move && !is_ranged {
                 commands.push(BrainCommand::MoveTo {
                     pos: target.last_known_pos,
-                    valid_until_tick: Some(tick_after_legacy_ticks(tick, input, 60)),
+                    valid_until_tick: Some(tick.saturating_add(60)),
                 });
             }
-            commands.push(BrainCommand::SleepForTicks {
-                ticks: host_ticks_for_legacy_ticks(input, 6) as u32,
-            });
+            commands.push(BrainCommand::SleepForTicks { ticks: 6 });
             return TickOutput {
                 commands,
                 meta: TickOutputMeta::default(),
@@ -1153,11 +1097,9 @@ fn tick_demo_opportunist(
                 commands: vec![
                     BrainCommand::MoveTo {
                         pos: goal,
-                        valid_until_tick: Some(tick_after_legacy_ticks(tick, input, 60)),
+                        valid_until_tick: Some(tick.saturating_add(60)),
                     },
-                    BrainCommand::SleepForTicks {
-                        ticks: host_ticks_for_legacy_ticks(input, 12) as u32,
-                    },
+                    BrainCommand::SleepForTicks { ticks: 12 },
                 ],
                 meta: TickOutputMeta::default(),
             };
@@ -1220,13 +1162,11 @@ fn tick_demo_opportunist(
         let r = rng.next_f32();
         if r < 0.75 {
             state.mode = OpportunistMode::Rest;
-            state.mode_until_tick =
-                tick_after_legacy_ticks(tick, input, rng.gen_range_u32(180, 360));
+            state.mode_until_tick = tick.saturating_add(rng.gen_range_u32(180, 360) as u64);
             state.wander_target = None;
         } else {
             state.mode = OpportunistMode::Wander;
-            state.mode_until_tick =
-                tick_after_legacy_ticks(tick, input, rng.gen_range_u32(120, 240));
+            state.mode_until_tick = tick.saturating_add(rng.gen_range_u32(120, 240) as u64);
             state.wander_target = Some(random_wander_target(self_pos, wander_radius_m, &mut rng));
         }
     }
@@ -1235,9 +1175,7 @@ fn tick_demo_opportunist(
     match state.mode {
         OpportunistMode::Rest => {
             let remaining = state.mode_until_tick.saturating_sub(tick);
-            let sleep = remaining
-                .min(host_ticks_for_legacy_ticks(input, 60))
-                .max(host_ticks_for_legacy_ticks(input, 12)) as u32;
+            let sleep = remaining.min(60).max(12) as u32;
             commands.push(BrainCommand::SleepForTicks { ticks: sleep });
         }
         OpportunistMode::Wander => {
@@ -1259,13 +1197,11 @@ fn tick_demo_opportunist(
                 if let Some(target) = state.wander_target {
                     commands.push(BrainCommand::MoveTo {
                         pos: target,
-                        valid_until_tick: Some(tick_after_legacy_ticks(tick, input, 60)),
+                        valid_until_tick: Some(tick.saturating_add(60)),
                     });
                 }
             }
-            commands.push(BrainCommand::SleepForTicks {
-                ticks: host_ticks_for_legacy_ticks(input, 18) as u32,
-            });
+            commands.push(BrainCommand::SleepForTicks { ticks: 18 });
         }
     }
 
@@ -1281,6 +1217,7 @@ fn tick_demo_belligerent(
     state: &mut BelligerentBrain,
     input: &TickInput,
 ) -> TickOutput {
+    const TICKS_PER_SEC: u64 = 60;
     let tick = input.tick_index;
     let mut rng = SplitMix64::new(input.rng_seed ^ 0x1A45_5A6B_81E3_901C);
 
@@ -1303,29 +1240,24 @@ fn tick_demo_belligerent(
     let forget_target_ticks = config_u32(
         config,
         "forget_target_ticks",
-        (LEGACY_BRAIN_TICKS_PER_SEC as u32) * 8,
+        (TICKS_PER_SEC * 8) as u32,
         1,
         1_000_000,
-    );
+    ) as u64;
     let attacker_focus_forget_ticks = config_u32(
         config,
         "attacker_focus_forget_ticks",
-        (LEGACY_BRAIN_TICKS_PER_SEC as u32) * 15,
+        (TICKS_PER_SEC * 15) as u32,
         1,
         1_000_000,
-    );
+    ) as u64;
     let attacker_focus_arrival_grace_ticks = config_u32(
         config,
         "attacker_focus_arrival_grace_ticks",
-        LEGACY_BRAIN_TICKS_PER_SEC as u32,
+        (TICKS_PER_SEC * 1) as u32,
         0,
         1_000_000,
-    );
-    let forget_target_ticks = host_ticks_for_legacy_ticks(input, forget_target_ticks);
-    let attacker_focus_forget_ticks =
-        host_ticks_for_legacy_ticks(input, attacker_focus_forget_ticks);
-    let attacker_focus_arrival_grace_ticks =
-        host_ticks_for_legacy_ticks(input, attacker_focus_arrival_grace_ticks);
+    ) as u64;
     let attacker_focus_arrival_m = config_f32(config, "attacker_focus_arrival_m", 1.0, 0.1, 50.0);
 
     if let Some(max) = input.self_state.health_max {
@@ -1457,18 +1389,16 @@ fn tick_demo_belligerent(
         if can_combat {
             commands.push(BrainCommand::AttackTarget {
                 target_id: target.id.clone(),
-                valid_until_tick: Some(tick_after_legacy_ticks(tick, input, 30)),
+                valid_until_tick: Some(tick.saturating_add(30)),
             });
         }
         if can_move && !is_ranged {
             commands.push(BrainCommand::MoveTo {
                 pos: target.last_known_pos,
-                valid_until_tick: Some(tick_after_legacy_ticks(tick, input, 60)),
+                valid_until_tick: Some(tick.saturating_add(60)),
             });
         }
-        commands.push(BrainCommand::SleepForTicks {
-            ticks: host_ticks_for_legacy_ticks(input, 6) as u32,
-        });
+        commands.push(BrainCommand::SleepForTicks { ticks: 6 });
         return TickOutput {
             commands,
             meta: TickOutputMeta::default(),
@@ -1479,12 +1409,10 @@ fn tick_demo_belligerent(
     if tick >= state.mode_until_tick {
         let r = rng.next_f32();
         if r < 0.60 {
-            state.mode_until_tick =
-                tick_after_legacy_ticks(tick, input, rng.gen_range_u32(90, 180));
+            state.mode_until_tick = tick.saturating_add(rng.gen_range_u32(90, 180) as u64);
             state.wander_target = Some(random_wander_target(self_pos, wander_radius_m, &mut rng));
         } else {
-            state.mode_until_tick =
-                tick_after_legacy_ticks(tick, input, rng.gen_range_u32(60, 150));
+            state.mode_until_tick = tick.saturating_add(rng.gen_range_u32(60, 150) as u64);
             state.wander_target = None;
         }
     }
@@ -1503,18 +1431,14 @@ fn tick_demo_belligerent(
             if let Some(target) = state.wander_target {
                 commands.push(BrainCommand::MoveTo {
                     pos: target,
-                    valid_until_tick: Some(tick_after_legacy_ticks(tick, input, 60)),
+                    valid_until_tick: Some(tick.saturating_add(60)),
                 });
             }
         }
-        commands.push(BrainCommand::SleepForTicks {
-            ticks: host_ticks_for_legacy_ticks(input, 18) as u32,
-        });
+        commands.push(BrainCommand::SleepForTicks { ticks: 18 });
     } else {
         let remaining = state.mode_until_tick.saturating_sub(tick);
-        let sleep = remaining
-            .min(host_ticks_for_legacy_ticks(input, 48))
-            .max(host_ticks_for_legacy_ticks(input, 12)) as u32;
+        let sleep = remaining.min(48).max(12) as u32;
         commands.push(BrainCommand::SleepForTicks { ticks: sleep });
     }
 
