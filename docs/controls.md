@@ -27,7 +27,7 @@ Gravimera is a sandbox with multiple modes. Some inputs are mode-dependent.
 - Camera pan (mouse): move cursor near the window edge
 - Camera pan (keyboard): `W` / `A` / `S` / `D` when nothing is selected
 - Camera rotate: `Z` / `X` / `Q` / `E` (Up/Down/Left/Right)
-- Direct move (selected units/build objects): `W` / `A` / `S` / `D` (camera-relative; camera follows selection with slack)
+- Direct move (selected units/build objects): `W` / `A` / `S` / `D` (camera-relative; camera follows selection horizontally with slack)
 - Slow move (selected units): `CapsLock` (toggle; 1/3 speed)
 
 ## Selection

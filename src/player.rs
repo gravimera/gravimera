@@ -125,6 +125,16 @@ fn edge_pan_factor(window: &Window) -> Option<(Vec2, Vec2)> {
     Some((cursor, factor))
 }
 
+fn sorted_selection_entity_bits(selection: &SelectionState) -> Vec<u64> {
+    let mut entities: Vec<u64> = selection
+        .selected
+        .iter()
+        .map(|entity| entity.to_bits())
+        .collect();
+    entities.sort_unstable();
+    entities
+}
+
 pub(crate) fn camera_keyboard_rotate(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -335,6 +345,7 @@ pub(crate) fn camera_follow_selection(
     selection: Res<SelectionState>,
     active_floor: Res<ActiveWorldFloor>,
     mut focus: ResMut<CameraFocus>,
+    mut last_selected_entities: Local<Vec<u64>>,
     transforms: Query<&Transform, Without<MainCamera>>,
 ) {
     if console.open {
@@ -342,8 +353,12 @@ pub(crate) fn camera_follow_selection(
     }
 
     if selection.selected.is_empty() {
+        last_selected_entities.clear();
         return;
     }
+
+    let selected_entities = sorted_selection_entity_bits(&selection);
+    let selection_changed = last_selected_entities.as_slice() != selected_entities.as_slice();
 
     let mut min_x = f32::INFINITY;
     let mut min_z = f32::INFINITY;
@@ -366,6 +381,7 @@ pub(crate) fn camera_follow_selection(
     }
 
     if count == 0 {
+        *last_selected_entities = selected_entities;
         return;
     }
 
@@ -378,10 +394,15 @@ pub(crate) fn camera_follow_selection(
     if !focus.initialized {
         focus.position = target;
         focus.initialized = true;
+        *last_selected_entities = selected_entities;
         return;
     }
 
-    focus.position.y = target.y;
+    if selection_changed {
+        // Keep the RTS camera height stable while the same selection walks across uneven terrain.
+        focus.position.y = target.y;
+    }
+    *last_selected_entities = selected_entities;
 
     let delta = Vec2::new(target.x - focus.position.x, target.z - focus.position.z);
     let deadzone = CAMERA_FOLLOW_SELECTION_DEADZONE_UNITS.max(0.0);
@@ -617,6 +638,7 @@ pub(crate) fn update_player_gun_visuals(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::prelude::App;
 
     #[test]
     fn edge_pan_factor_left_is_positive_right_is_negative() {
@@ -647,5 +669,59 @@ mod tests {
     fn edge_pan_arrow_glyph_matches_signs() {
         assert_eq!(edge_pan_arrow_glyph(Vec2::new(1.0, 0.0)), "←");
         assert_eq!(edge_pan_arrow_glyph(Vec2::new(-1.0, 0.0)), "→");
+    }
+
+    #[test]
+    fn camera_follow_selection_keeps_height_stable_for_same_selection() {
+        let mut app = App::new();
+        app.insert_resource(CommandConsole::default());
+        app.insert_resource(SelectionState::default());
+        app.insert_resource(ActiveWorldFloor::default());
+        app.insert_resource(CameraFocus {
+            position: Vec3::new(0.0, 1.0, 0.0),
+            initialized: true,
+        });
+        app.add_systems(Update, camera_follow_selection);
+
+        let first = app
+            .world_mut()
+            .spawn(Transform::from_xyz(2.0, 5.0, 3.0))
+            .id();
+        app.world_mut()
+            .resource_mut::<SelectionState>()
+            .selected
+            .insert(first);
+
+        app.update();
+        assert!(
+            (app.world().resource::<CameraFocus>().position.y - 5.0).abs() < 1e-5,
+            "initial selection change should realign camera height"
+        );
+
+        app.world_mut()
+            .entity_mut(first)
+            .insert(Transform::from_xyz(2.0, 8.0, 3.0));
+
+        app.update();
+        assert!(
+            (app.world().resource::<CameraFocus>().position.y - 5.0).abs() < 1e-5,
+            "same selection moving over uneven terrain should not tug camera height"
+        );
+
+        let second = app
+            .world_mut()
+            .spawn(Transform::from_xyz(-1.0, 9.0, -1.0))
+            .id();
+        {
+            let mut selection = app.world_mut().resource_mut::<SelectionState>();
+            selection.selected.clear();
+            selection.selected.insert(second);
+        }
+
+        app.update();
+        assert!(
+            (app.world().resource::<CameraFocus>().position.y - 9.0).abs() < 1e-5,
+            "changing selection should still realign camera height"
+        );
     }
 }
