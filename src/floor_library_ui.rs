@@ -25,6 +25,7 @@ use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
 const PANEL_WIDTH_PX: f32 = 260.0;
 const PANEL_WIDTH_MANAGE_PX: f32 = 320.0;
 const LIST_SCROLLBAR_WIDTH_PX: f32 = 14.0;
+const LIST_THUMBNAIL_SIZE_PX: f32 = 42.0;
 const PANEL_Z_INDEX: i32 = 920;
 const FLOOR_PREVIEW_Z_INDEX: i32 = 1200;
 const FLOOR_PREVIEW_MODAL_Z_INDEX: i32 = FLOOR_PREVIEW_Z_INDEX + 20;
@@ -2186,8 +2187,11 @@ pub(crate) fn floor_library_rebuild_list_ui(
                 .with_children(|left| {
                     left.spawn((
                         Node {
-                            width: Val::Px(42.0),
-                            height: Val::Px(42.0),
+                            width: Val::Px(LIST_THUMBNAIL_SIZE_PX),
+                            height: Val::Px(LIST_THUMBNAIL_SIZE_PX),
+                            min_width: Val::Px(LIST_THUMBNAIL_SIZE_PX),
+                            min_height: Val::Px(LIST_THUMBNAIL_SIZE_PX),
+                            flex_shrink: 0.0,
                             border: UiRect::all(Val::Px(1.0)),
                             ..default()
                         },
@@ -2429,8 +2433,11 @@ pub(crate) fn floor_library_sync_genfloor_placeholders(
             .with_children(|b| {
                 b.spawn((
                     Node {
-                        width: Val::Px(42.0),
-                        height: Val::Px(42.0),
+                        width: Val::Px(LIST_THUMBNAIL_SIZE_PX),
+                        height: Val::Px(LIST_THUMBNAIL_SIZE_PX),
+                        min_width: Val::Px(LIST_THUMBNAIL_SIZE_PX),
+                        min_height: Val::Px(LIST_THUMBNAIL_SIZE_PX),
+                        flex_shrink: 0.0,
                         border: UiRect::all(Val::Px(1.0)),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
