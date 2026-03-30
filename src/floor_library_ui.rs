@@ -3827,6 +3827,7 @@ mod tests {
             .resource_mut::<crate::genfloor::GenFloorAiJob>();
         job.set_edit_base_floor_id(Some(123));
         job.set_last_saved_floor_id(Some(123));
+        job.set_save_overwrite_floor_id(Some(123));
 
         let mut workshop = app
             .world_mut()
@@ -3864,6 +3865,7 @@ mod tests {
 
         let job = app.world().resource::<crate::genfloor::GenFloorAiJob>();
         assert!(job.edit_base_floor_id().is_none());
+        assert!(job.save_overwrite_floor_id().is_none());
         assert!(job.last_saved_floor_id.is_none());
 
         let workshop = app.world().resource::<crate::genfloor::GenFloorWorkshop>();

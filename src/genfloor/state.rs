@@ -43,6 +43,7 @@ pub(crate) struct GenFloorAiJob {
     pub(crate) run_tokens: u64,
     pub(crate) total_tokens: u64,
     pub(crate) edit_base_floor_id: Option<u128>,
+    pub(crate) save_overwrite_floor_id: Option<u128>,
     pub(crate) last_saved_floor_id: Option<u128>,
     pub(crate) shared: Option<SharedResult<GenFloorAiResult, String>>,
 }
@@ -66,6 +67,14 @@ impl GenFloorAiJob {
         self.edit_base_floor_id = floor_id;
     }
 
+    pub(crate) fn save_overwrite_floor_id(&self) -> Option<u128> {
+        self.save_overwrite_floor_id
+    }
+
+    pub(crate) fn set_save_overwrite_floor_id(&mut self, floor_id: Option<u128>) {
+        self.save_overwrite_floor_id = floor_id;
+    }
+
     pub(crate) fn set_last_saved_floor_id(&mut self, floor_id: Option<u128>) {
         self.last_saved_floor_id = floor_id;
     }
@@ -80,6 +89,7 @@ impl GenFloorAiJob {
         self.last_run_elapsed = None;
         self.run_tokens = 0;
         self.edit_base_floor_id = None;
+        self.save_overwrite_floor_id = None;
         self.last_saved_floor_id = None;
         self.shared = None;
     }

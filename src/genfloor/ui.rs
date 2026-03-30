@@ -156,6 +156,7 @@ pub(crate) fn genfloor_save_button(
     mut floor_workshop: ResMut<GenFloorWorkshop>,
     mut workshop: ResMut<Gen3dWorkshop>,
     mut floor_library: ResMut<crate::floor_library_ui::FloorLibraryUiState>,
+    mut genfloor_job: ResMut<crate::genfloor::GenFloorAiJob>,
     mut thumbnail_capture: ResMut<crate::genfloor::GenfloorThumbnailCaptureRuntime>,
     mut top_panel: ResMut<TopPanelUiState>,
     mut next_build_scene: ResMut<NextState<BuildScene>>,
@@ -211,7 +212,9 @@ pub(crate) fn genfloor_save_button(
             }
 
             if let Some(def) = floor_workshop.draft.take() {
-                let floor_id = uuid::Uuid::new_v4().as_u128();
+                let floor_id = genfloor_job
+                    .save_overwrite_floor_id()
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().as_u128());
                 if let Err(err) =
                     realm_floor_packages::save_realm_floor_def(&active.realm_id, floor_id, &def)
                 {
@@ -228,6 +231,9 @@ pub(crate) fn genfloor_save_button(
                         active.realm_id.clone(),
                         floor_id,
                     );
+                    genfloor_job.set_edit_base_floor_id(Some(floor_id));
+                    genfloor_job.set_save_overwrite_floor_id(Some(floor_id));
+                    genfloor_job.set_last_saved_floor_id(Some(floor_id));
                     floor_library.mark_models_dirty();
                     workshop.status = "Terrain saved.".to_string();
                     match crate::scene_floor_selection::save_scene_floor_selection(

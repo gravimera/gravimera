@@ -156,7 +156,7 @@ pub(crate) fn genfloor_poll_ai_job(
             res.def.canonicalize_in_place();
 
             let floor_id = job
-                .edit_base_floor_id()
+                .save_overwrite_floor_id()
                 .unwrap_or_else(|| uuid::Uuid::new_v4().as_u128());
             match crate::realm_floor_packages::save_realm_floor_def(
                 &active.realm_id,
@@ -189,9 +189,8 @@ pub(crate) fn genfloor_poll_ai_job(
                     } else {
                         workshop.error = None;
                     }
-                    if job.edit_base_floor_id().is_none() {
-                        job.set_edit_base_floor_id(Some(floor_id));
-                    }
+                    job.set_edit_base_floor_id(Some(floor_id));
+                    job.set_save_overwrite_floor_id(Some(floor_id));
                     job.set_last_saved_floor_id(Some(floor_id));
                     floor_workshop.draft = Some(res.def);
                     workshop.status = "Build finished. Terrain saved. Click Edit to run again (auto-save overwrites the same terrain).".to_string();
