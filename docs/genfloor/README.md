@@ -49,6 +49,10 @@ Note: `mesh.size_m` is clamped to at least the default terrain size so generated
 
 - `ActiveWorldFloor` stores the active terrain package and is applied to the live world terrain.
 - Terrain Preview uses the same `ActiveWorldFloor` data so the preview and runtime match.
+- Terrain height sampling for grounding/pathing uses relief only (ignores animated waves).
+- Grounding uses the maximum relief height under an instance footprint, then applies a 0.02m sink
+  via `apply_floor_sink` (skip the sink when the height is exactly 0).
+- Relief heights below 0 are treated as water for ground placement/pathing; air units ignore water.
 
 ## Notes
 

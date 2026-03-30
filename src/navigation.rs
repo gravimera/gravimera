@@ -136,6 +136,7 @@ pub(crate) fn find_path_height_aware(
     world_half_size: f32,
     grid: f32,
     obstacles: &[NavObstacle],
+    is_walkable: &impl Fn(Vec2) -> bool,
 ) -> Option<Vec<Vec2>> {
     if grid <= 0.001 {
         return None;
@@ -148,6 +149,10 @@ pub(crate) fn find_path_height_aware(
 
     let start_ground_units = quantize_units(start_ground_y.max(0.0), NAV_HEIGHT_QUANT_SIZE).max(0);
     let goal_ground_units = quantize_units(goal_ground_y.max(0.0), NAV_HEIGHT_QUANT_SIZE).max(0);
+
+    if !is_walkable(start_world) || !is_walkable(goal_world) {
+        return None;
+    }
 
     if blocked_at(
         goal_world,
@@ -245,31 +250,28 @@ pub(crate) fn find_path_height_aware(
             if dx != 0 && dy != 0 {
                 let a_cell = IVec2::new(node.key.cell.x + dx, node.key.cell.y);
                 let b_cell = IVec2::new(node.key.cell.x, node.key.cell.y + dy);
-                if in_bounds(a_cell, min_cell, max_cell)
-                    && blocked_at(
-                        cell_center(a_cell, grid),
-                        radius,
-                        current_ground_y,
-                        character_height,
-                        obstacles,
-                    )
-                {
-                    continue;
+                if in_bounds(a_cell, min_cell, max_cell) {
+                    let a_pos = cell_center(a_cell, grid);
+                    if !is_walkable(a_pos)
+                        || blocked_at(a_pos, radius, current_ground_y, character_height, obstacles)
+                    {
+                        continue;
+                    }
                 }
-                if in_bounds(b_cell, min_cell, max_cell)
-                    && blocked_at(
-                        cell_center(b_cell, grid),
-                        radius,
-                        current_ground_y,
-                        character_height,
-                        obstacles,
-                    )
-                {
-                    continue;
+                if in_bounds(b_cell, min_cell, max_cell) {
+                    let b_pos = cell_center(b_cell, grid);
+                    if !is_walkable(b_pos)
+                        || blocked_at(b_pos, radius, current_ground_y, character_height, obstacles)
+                    {
+                        continue;
+                    }
                 }
             }
 
             let next_world = cell_center(next_cell, grid);
+            if !is_walkable(next_world) {
+                continue;
+            }
             if blocked_at(
                 next_world,
                 radius,
@@ -324,6 +326,7 @@ fn walk_segment_height_aware(
     character_height: f32,
     grid: f32,
     obstacles: &[NavObstacle],
+    is_walkable: &impl Fn(Vec2) -> bool,
 ) -> Option<f32> {
     let delta = to - from;
     let dist = delta.length();
@@ -337,6 +340,9 @@ fn walk_segment_height_aware(
     for i in 1..=steps {
         let t = i as f32 / steps as f32;
         let pos = from + delta * t;
+        if !is_walkable(pos) {
+            return None;
+        }
         if blocked_at(pos, radius, ground_y, character_height, obstacles) {
             return None;
         }
@@ -359,6 +365,7 @@ pub(crate) fn smooth_path_height_aware(
     character_height: f32,
     grid: f32,
     obstacles: &[NavObstacle],
+    is_walkable: &impl Fn(Vec2) -> bool,
 ) -> Vec<Vec2> {
     if path.len() <= 2 {
         return path;
@@ -401,6 +408,7 @@ pub(crate) fn smooth_path_height_aware(
                 character_height,
                 grid,
                 obstacles,
+                is_walkable,
             ) {
                 best = j;
                 best_ground_y = Some(end_ground_y);

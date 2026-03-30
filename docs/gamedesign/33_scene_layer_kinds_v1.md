@@ -71,10 +71,12 @@ Generate one instance with:
 
 Placement notes (non-normative):
 
-- `origin.y` is the origin height of the placed instances. To rest objects on the ground plane (y=0),
-  choose:
-  - `origin.y = ground_origin_y * abs(scale.y)` when the prefab defines `ground_origin_y`.
-  - otherwise `origin.y = (prefab_size.y * abs(scale.y)) / 2`.
+- `origin.y` is the origin height of the placed instances. To rest objects on terrain, derive a base ground height from relief (ignore animated waves):
+  - Sample terrain heights under the instance footprint and take the maximum height as `base_ground_y`.
+  - Apply a 0.02m sink for visual grounding, but skip the sink when `base_ground_y == 0`.
+  - `origin.y = base_ground_y + ground_origin_y * abs(scale.y)` when the prefab defines `ground_origin_y`.
+  - otherwise `origin.y = base_ground_y + (prefab_size.y * abs(scale.y)) / 2`.
+- If any sampled terrain height under the footprint is below 0, treat the area as water: ground/static instances should not be placed there unless a `supports_standing` object provides support (air units are exempt).
 
 Constraints:
 
@@ -128,10 +130,12 @@ For each `k` in `[0, count)`:
 
 Placement notes (non-normative):
 
-- The `points[].y` values are the origin heights of the placed instances. To rest objects on the ground plane (y=0),
-  author points with:
-  - `y = ground_origin_y * abs(scale.y)` when the prefab defines `ground_origin_y`.
-  - otherwise `y = (prefab_size.y * abs(scale.y)) / 2` (or set `scale` appropriately).
+- The `points[].y` values are the origin heights of the placed instances. To rest objects on terrain, derive a base ground height from relief (ignore animated waves):
+  - Sample terrain heights under the instance footprint and take the maximum height as `base_ground_y`.
+  - Apply a 0.02m sink for visual grounding, but skip the sink when `base_ground_y == 0`.
+  - `y = base_ground_y + ground_origin_y * abs(scale.y)` when the prefab defines `ground_origin_y`.
+  - otherwise `y = base_ground_y + (prefab_size.y * abs(scale.y)) / 2` (or set `scale` appropriately).
+- If any sampled terrain height under the footprint is below 0, treat the area as water: ground/static instances should not be placed there unless a `supports_standing` object provides support (air units are exempt).
 
 Notes:
 

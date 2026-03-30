@@ -18,7 +18,8 @@ use serde::Deserialize;
 use crate::assets::SceneAssets;
 use crate::config::AppConfig;
 use crate::constants::*;
-use crate::geometry::{clamp_world_xz, safe_abs_scale_y, snap_to_grid};
+use crate::genfloor::{apply_floor_sink, sample_floor_footprint, ActiveWorldFloor, FloorFootprint};
+use crate::geometry::{circle_intersects_aabb_xz, clamp_world_xz, safe_abs_scale_y, snap_to_grid};
 use crate::meta_speak::{MetaSpeakOutcome, MetaSpeakRequest, MetaSpeakRuntime, MetaSpeakVoice};
 use crate::navigation;
 use crate::object::registry::ObjectLibrary;
@@ -374,6 +375,7 @@ struct AutomationWorld<'w, 's> {
         &'static bevy::camera::visibility::RenderLayers,
         With<crate::gen3d::Gen3dPreviewCamera>,
     >,
+    active_floor: Res<'w, ActiveWorldFloor>,
     players: Query<'w, 's, (), With<Player>>,
     player_q: Query<'w, 's, (&'static Transform, &'static Collider), With<Player>>,
     status_contents: Query<'w, 's, &'static ObjectStatusBarContent>,
@@ -3483,6 +3485,7 @@ fn handle_request_main_thread<
     let scene_saves = &mut ctx.gen3d.scene_saves;
 
     let windows = &ctx.world.windows;
+    let active_floor = &ctx.world.active_floor;
     let players = &ctx.world.players;
     let player_q = &ctx.world.player_q;
     let commandables = &ctx.world.commandables;
@@ -4330,6 +4333,7 @@ fn handle_request_main_thread<
             let Some(def) = library.get(prefab_id) else {
                 return Some(json_error(404, "Prefab not found."));
             };
+            let mobility_mode = def.mobility.as_ref().map(|mobility| mobility.mode);
 
             let size = def.size.abs();
             let collider_half_xz = match def.collider {
@@ -4368,10 +4372,6 @@ fn handle_request_main_thread<
                 Vec3::new(base.x, req.y.unwrap_or(0.0), base.z)
             };
 
-            if req.y.is_none() {
-                pos.y = library.ground_origin_y_or_default(prefab_id);
-            }
-
             pos.x = pos.x.clamp(
                 -WORLD_HALF_SIZE + collider_half_xz.x,
                 WORLD_HALF_SIZE - collider_half_xz.x,
@@ -4380,6 +4380,38 @@ fn handle_request_main_thread<
                 -WORLD_HALF_SIZE + collider_half_xz.y,
                 WORLD_HALF_SIZE - collider_half_xz.y,
             );
+
+            if req.y.is_none() {
+                let footprint = match def.collider {
+                    crate::object::registry::ColliderProfile::CircleXZ { radius } => {
+                        FloorFootprint::Circle {
+                            radius: radius.max(0.01),
+                        }
+                    }
+                    crate::object::registry::ColliderProfile::AabbXZ { half_extents } => {
+                        FloorFootprint::Aabb {
+                            half: Vec2::new(half_extents.x.abs(), half_extents.y.abs()),
+                        }
+                    }
+                    crate::object::registry::ColliderProfile::None => {
+                        FloorFootprint::Aabb { half: collider_half_xz }
+                    }
+                };
+                let sample = sample_floor_footprint(
+                    active_floor,
+                    Vec2::new(pos.x, pos.z),
+                    footprint,
+                );
+                if sample.is_water && mobility_mode != Some(crate::object::registry::MobilityMode::Air)
+                {
+                    return Some(json_error(
+                        409,
+                        "Cannot spawn ground/static objects on water without explicit y.",
+                    ));
+                }
+                let ground_y = apply_floor_sink(sample.max_height);
+                pos.y = ground_y + library.ground_origin_y_or_default(prefab_id);
+            }
 
             let yaw = req.yaw.unwrap_or(0.0);
             let mut transform = Transform::from_translation(pos);
@@ -4493,7 +4525,6 @@ fn handle_request_main_thread<
                 Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
             };
             let goal = Vec2::new(req.x, req.z);
-            let goal_ground_y = req.y.unwrap_or(0.0).max(0.0);
 
             let obstacles = collect_nav_obstacles(build_objects, library);
             let mut any_action = false;
@@ -4512,6 +4543,23 @@ fn handle_request_main_thread<
                             let origin_y =
                                 library.ground_origin_y_or_default(prefab_id.0) * scale_y;
                             next.translation.y = (goal_ground_y.max(0.0) + origin_y).max(0.0);
+                        } else {
+                            let footprint = FloorFootprint::Aabb {
+                                half: collider.half_extents,
+                            };
+                            let sample = sample_floor_footprint(
+                                active_floor,
+                                Vec2::new(next.translation.x, next.translation.z),
+                                footprint,
+                            );
+                            if sample.is_water {
+                                continue;
+                            }
+                            let scale_y = safe_abs_scale_y(next.scale);
+                            let origin_y =
+                                library.ground_origin_y_or_default(prefab_id.0) * scale_y;
+                            let ground_y = apply_floor_sink(sample.max_height);
+                            next.translation.y = (ground_y + origin_y).max(0.0);
                         }
 
                         commands.entity(entity).insert(next);
@@ -4547,6 +4595,41 @@ fn handle_request_main_thread<
                         order.target = Some(clamped_goal);
                     }
                     crate::object::registry::MobilityMode::Ground => {
+                        let goal_ground_y = if let Some(goal_ground_y) = req.y {
+                            goal_ground_y.max(0.0)
+                        } else {
+                            let footprint = FloorFootprint::Circle {
+                                radius: radius.max(0.01),
+                            };
+                            let sample = sample_floor_footprint(
+                                active_floor,
+                                clamped_goal,
+                                footprint,
+                            );
+                            if sample.is_water {
+                                commands.entity(entity).remove::<MoveOrder>();
+                                continue;
+                            }
+                            apply_floor_sink(sample.max_height)
+                        };
+
+                        let is_walkable = |pos: Vec2| {
+                            let footprint = FloorFootprint::Circle {
+                                radius: radius.max(0.01),
+                            };
+                            let sample = sample_floor_footprint(
+                                active_floor,
+                                pos,
+                                footprint,
+                            );
+                            if !sample.is_water {
+                                return true;
+                            }
+                            obstacles.iter().any(|ob| {
+                                ob.supports_standing
+                                    && circle_intersects_aabb_xz(pos, radius, ob.center, ob.half)
+                            })
+                        };
                         let Some(path) = navigation::find_path_height_aware(
                             start,
                             current_ground_y,
@@ -4557,6 +4640,7 @@ fn handle_request_main_thread<
                             WORLD_HALF_SIZE,
                             NAV_GRID_SIZE,
                             &obstacles,
+                            &is_walkable,
                         ) else {
                             commands.entity(entity).remove::<MoveOrder>();
                             continue;
@@ -4569,6 +4653,7 @@ fn handle_request_main_thread<
                             height,
                             NAV_GRID_SIZE,
                             &obstacles,
+                            &is_walkable,
                         );
                         order.path = path.into();
                         order.target = Some(clamped_goal);

@@ -6,7 +6,11 @@ use std::collections::{HashMap, HashSet};
 use crate::action_log::{ActionLogSource, ActionLogState, ActionLogWriter};
 use crate::assets::SceneAssets;
 use crate::constants::*;
-use crate::geometry::{clamp_world_xz, point_inside_aabb_xz, safe_abs_scale_y, snap_to_grid};
+use crate::genfloor::{apply_floor_sink, sample_floor_footprint, ActiveWorldFloor, FloorFootprint};
+use crate::geometry::{
+    circle_intersects_aabb_xz, clamp_world_xz, point_inside_aabb_xz, safe_abs_scale_y,
+    snap_to_grid,
+};
 use crate::navigation;
 use crate::object::registry::ObjectLibrary;
 use crate::object::types::effects as effect_types;
@@ -35,6 +39,36 @@ pub(crate) struct SelectionInputUi<'w> {
     model_library: ResMut<'w, crate::model_library_ui::ModelLibraryUiState>,
     top_panel: ResMut<'w, crate::workspace_ui::TopPanelUiState>,
     next_mode: ResMut<'w, NextState<GameMode>>,
+}
+
+#[derive(SystemParam)]
+pub(crate) struct MoveCommandWorld<'w, 's> {
+    active_floor: Res<'w, ActiveWorldFloor>,
+    assets: Res<'w, SceneAssets>,
+    objects: Query<
+        'w,
+        's,
+        (
+            &'static Transform,
+            &'static AabbCollider,
+            &'static BuildDimensions,
+            &'static ObjectPrefabId,
+        ),
+        With<BuildObject>,
+    >,
+    enemies: Query<
+        'w,
+        's,
+        (&'static Transform, &'static Enemy, &'static ObjectPrefabId),
+        With<Enemy>,
+    >,
+    players: Query<'w, 's, (), With<Player>>,
+    commandables: Query<
+        'w,
+        's,
+        (Entity, &'static Transform, &'static Collider, &'static ObjectPrefabId),
+        With<Commandable>,
+    >,
 }
 
 fn wrap_angle(angle: f32) -> f32 {
@@ -727,14 +761,7 @@ pub(crate) fn move_command_input(
     ui_capture: crate::model_library_ui::ModelLibraryPreviewInputCapture,
     camera_q: Query<(&Camera, &Transform), With<MainCamera>>,
     library: Res<ObjectLibrary>,
-    assets: Res<SceneAssets>,
-    objects: Query<
-        (&Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId),
-        With<BuildObject>,
-    >,
-    enemies: Query<(&Transform, &Enemy, &ObjectPrefabId), With<Enemy>>,
-    players: Query<(), With<Player>>,
-    commandables: Query<(Entity, &Transform, &Collider, &ObjectPrefabId), With<Commandable>>,
+    world: MoveCommandWorld,
     selection: Res<SelectionState>,
     mut move_state: ResMut<MoveCommandState>,
     mut action_log: ActionLogWriter,
@@ -765,7 +792,7 @@ pub(crate) fn move_command_input(
         if let Ok(ray) = camera.viewport_to_world(&camera_global, cursor) {
             if let Some(hit) = ray_plane_intersection_y(ray, 0.0) {
                 let point = Vec2::new(hit.x, hit.z);
-                for (transform, collider, _dimensions, _prefab) in objects.iter() {
+                for (transform, collider, _dimensions, _prefab) in world.objects.iter() {
                     let center = Vec2::new(transform.translation.x, transform.translation.z);
                     if point_inside_aabb_xz(point, center, collider.half_extents) {
                         return;
@@ -779,60 +806,74 @@ pub(crate) fn move_command_input(
         return;
     }
 
-    let goal_pick = if matches!(mode.get(), GameMode::Play) {
-        pick_enemy_under_cursor(cursor, camera, &camera_global, &library, &enemies).or_else(|| {
-            crate::cursor_pick::cursor_surface_pick(
-                window,
-                camera,
-                &camera_global,
-                &library,
-                &objects,
-            )
-            .map(|pick| {
-                let mut goal = Vec2::new(pick.hit.x, pick.hit.z);
-                if let Some((center, half)) = pick.block_top {
-                    let min_half = BUILD_UNIT_SIZE * 0.5;
-                    if half.x > min_half && half.y > min_half {
-                        goal.x = goal
-                            .x
-                            .clamp(center.x - half.x + min_half, center.x + half.x - min_half);
-                        goal.y = goal
-                            .y
-                            .clamp(center.y - half.y + min_half, center.y + half.y - min_half);
+    let goal_pick: Option<(Vec2, Option<f32>)> = if matches!(mode.get(), GameMode::Play) {
+        pick_enemy_under_cursor(cursor, camera, &camera_global, &library, &world.enemies)
+            .map(|(goal, ground_y)| (goal, Some(ground_y)))
+            .or_else(|| {
+                crate::cursor_pick::cursor_surface_pick(
+                    window,
+                    camera,
+                    &camera_global,
+                    &library,
+                    &world.active_floor,
+                    &world.objects,
+                )
+                .map(|pick| {
+                    let mut goal = Vec2::new(pick.hit.x, pick.hit.z);
+                    if let Some((center, half)) = pick.block_top {
+                        let min_half = BUILD_UNIT_SIZE * 0.5;
+                        if half.x > min_half && half.y > min_half {
+                            goal.x = goal.x.clamp(
+                                center.x - half.x + min_half,
+                                center.x + half.x - min_half,
+                            );
+                            goal.y = goal.y.clamp(
+                                center.y - half.y + min_half,
+                                center.y + half.y - min_half,
+                            );
+                        }
                     }
-                }
-                (goal, pick.surface_y)
+                    (goal, pick.block_top.map(|_| pick.surface_y))
+                })
             })
-        })
     } else {
-        crate::cursor_pick::cursor_surface_pick(window, camera, &camera_global, &library, &objects)
-            .map(|pick| {
-                let mut goal = Vec2::new(pick.hit.x, pick.hit.z);
-                if let Some((center, half)) = pick.block_top {
-                    let min_half = BUILD_UNIT_SIZE * 0.5;
-                    if half.x > min_half && half.y > min_half {
-                        goal.x = goal
-                            .x
-                            .clamp(center.x - half.x + min_half, center.x + half.x - min_half);
-                        goal.y = goal
-                            .y
-                            .clamp(center.y - half.y + min_half, center.y + half.y - min_half);
-                    }
+        crate::cursor_pick::cursor_surface_pick(
+            window,
+            camera,
+            &camera_global,
+            &library,
+            &world.active_floor,
+            &world.objects,
+        )
+        .map(|pick| {
+            let mut goal = Vec2::new(pick.hit.x, pick.hit.z);
+            if let Some((center, half)) = pick.block_top {
+                let min_half = BUILD_UNIT_SIZE * 0.5;
+                if half.x > min_half && half.y > min_half {
+                    goal.x = goal.x.clamp(
+                        center.x - half.x + min_half,
+                        center.x + half.x - min_half,
+                    );
+                    goal.y = goal.y.clamp(
+                        center.y - half.y + min_half,
+                        center.y + half.y - min_half,
+                    );
                 }
-                (goal, pick.surface_y)
-            })
+            }
+            (goal, pick.block_top.map(|_| pick.surface_y))
+        })
     };
 
-    let Some((goal, goal_ground_y)) = goal_pick else {
+    let Some((goal, block_top_y)) = goal_pick else {
         return;
     };
 
-    let obstacles = collect_nav_obstacles(&objects, &library);
+    let obstacles = collect_nav_obstacles(&world.objects, &library);
 
     let mut any_order = false;
     let mut moved_count: usize = 0;
     for entity in selection.selected.iter().copied() {
-        let Ok((_entity, transform, collider, prefab_id)) = commandables.get(entity) else {
+        let Ok((_entity, transform, collider, prefab_id)) = world.commandables.get(entity) else {
             continue;
         };
         let Some(mobility) = library.mobility(prefab_id.0) else {
@@ -846,7 +887,7 @@ pub(crate) fn move_command_input(
         let clamped_goal = goal.clamp(min, max);
 
         let start = Vec2::new(transform.translation.x, transform.translation.z);
-        let origin_y = if players.contains(entity) {
+        let origin_y = if world.players.contains(entity) {
             PLAYER_Y
         } else {
             library.ground_origin_y_or_default(prefab_id.0) * scale_y
@@ -863,6 +904,34 @@ pub(crate) fn move_command_input(
                 order.target = Some(clamped_goal);
             }
             crate::object::registry::MobilityMode::Ground => {
+                let goal_ground_y = if let Some(top_y) = block_top_y {
+                    top_y
+                } else {
+                    let footprint = FloorFootprint::Circle {
+                        radius: radius.max(0.01),
+                    };
+                    let sample =
+                        sample_floor_footprint(&world.active_floor, clamped_goal, footprint);
+                    if sample.is_water {
+                        commands.entity(entity).remove::<MoveOrder>();
+                        continue;
+                    }
+                    apply_floor_sink(sample.max_height)
+                };
+
+                let is_walkable = |pos: Vec2| {
+                    let footprint = FloorFootprint::Circle {
+                        radius: radius.max(0.01),
+                    };
+                    let sample = sample_floor_footprint(&world.active_floor, pos, footprint);
+                    if !sample.is_water {
+                        return true;
+                    }
+                    obstacles.iter().any(|ob| {
+                        ob.supports_standing
+                            && circle_intersects_aabb_xz(pos, radius, ob.center, ob.half)
+                    })
+                };
                 let Some(path) = navigation::find_path_height_aware(
                     start,
                     current_ground_y,
@@ -873,6 +942,7 @@ pub(crate) fn move_command_input(
                     WORLD_HALF_SIZE,
                     NAV_GRID_SIZE,
                     &obstacles,
+                    &is_walkable,
                 ) else {
                     commands.entity(entity).remove::<MoveOrder>();
                     continue;
@@ -885,6 +955,7 @@ pub(crate) fn move_command_input(
                     height,
                     NAV_GRID_SIZE,
                     &obstacles,
+                    &is_walkable,
                 );
                 order.path = path.into();
                 order.target = Some(clamped_goal);
@@ -914,15 +985,28 @@ pub(crate) fn move_command_input(
         );
     }
 
+    let marker_ground_y = if let Some(top_y) = block_top_y {
+        top_y
+    } else {
+        let sample = sample_floor_footprint(
+            &world.active_floor,
+            goal,
+            FloorFootprint::Circle {
+                radius: BUILD_UNIT_SIZE * 0.5,
+            },
+        );
+        apply_floor_sink(sample.max_height)
+    };
+
     let marker = commands
         .spawn((
             ObjectId::new_v4(),
             ObjectPrefabId(effect_types::move_target_marker::object_id()),
-            Mesh3d(assets.move_target_mesh.clone()),
-            MeshMaterial3d(assets.move_target_material.clone()),
+            Mesh3d(world.assets.move_target_mesh.clone()),
+            MeshMaterial3d(world.assets.move_target_material.clone()),
             Transform::from_translation(Vec3::new(
                 goal.x,
-                goal_ground_y + MOVE_TARGET_MARKER_Y,
+                marker_ground_y + MOVE_TARGET_MARKER_Y,
                 goal.y,
             ))
             .with_scale(Vec3::new(

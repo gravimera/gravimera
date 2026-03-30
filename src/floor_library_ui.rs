@@ -3524,6 +3524,7 @@ mod tests {
         app.init_state::<GameMode>();
         app.init_state::<BuildScene>();
 
+        app.init_resource::<FloorLibraryUiState>();
         app.init_resource::<crate::genfloor::GenFloorWorkshop>();
         app.init_resource::<crate::genfloor::GenFloorAiJob>();
 

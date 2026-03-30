@@ -3,6 +3,7 @@ use bevy::window::PrimaryWindow;
 
 use crate::constants::*;
 use crate::geometry::{safe_abs_scale_y, snap_to_grid};
+use crate::genfloor::{apply_floor_sink, sample_floor_footprint, ActiveWorldFloor, FloorFootprint};
 use crate::object::registry::{MobilityMode, ObjectLibrary};
 use crate::scene_store::SceneSaveRequest;
 use crate::selection_circle;
@@ -59,6 +60,7 @@ pub(crate) fn world_drag_start(
     >,
     camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     library: Res<ObjectLibrary>,
+    active_floor: Res<ActiveWorldFloor>,
     commandables: Query<(Entity, &Transform, &Collider, &ObjectPrefabId), With<Commandable>>,
     players: Query<(), With<Player>>,
     build_objects: Query<
@@ -128,6 +130,7 @@ pub(crate) fn world_drag_start(
                 camera,
                 &camera_global,
                 &library,
+                &active_floor,
                 &build_objects,
                 transform,
             ) {
@@ -160,6 +163,7 @@ pub(crate) fn world_drag_start(
                 camera,
                 &camera_global,
                 &library,
+                &active_floor,
                 &build_objects,
                 transform,
             ) {
@@ -188,6 +192,7 @@ pub(crate) fn world_drag_update(
     >,
     camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     library: Res<ObjectLibrary>,
+    active_floor: Res<ActiveWorldFloor>,
     mut units: Query<
         (&mut Transform, &Collider, &ObjectPrefabId),
         (With<Commandable>, Without<Player>, Without<BuildObject>),
@@ -280,13 +285,24 @@ pub(crate) fn world_drag_update(
         return;
     }
 
+    #[derive(Clone, Copy)]
+    struct SurfaceHit {
+        hit: Vec3,
+        surface_y: f32,
+        is_floor: bool,
+    }
+
     let mut best_t = f32::INFINITY;
-    let mut best_hit = None;
+    let mut best_hit: Option<SurfaceHit> = None;
 
     let t_ground = (0.0 - origin.y) / denom;
     if t_ground >= 0.0 {
         best_t = t_ground;
-        best_hit = Some((origin + direction * t_ground, 0.0));
+        best_hit = Some(SurfaceHit {
+            hit: origin + direction * t_ground,
+            surface_y: 0.0,
+            is_floor: true,
+        });
     }
 
     for (entity, transform, collider, dimensions, prefab_id) in build_objects.iter_mut() {
@@ -317,14 +333,18 @@ pub(crate) fn world_drag_update(
         }
 
         best_t = t;
-        best_hit = Some((hit, top_y));
+        best_hit = Some(SurfaceHit {
+            hit,
+            surface_y: top_y,
+            is_floor: false,
+        });
     }
 
-    let Some((hit, surface_y)) = best_hit else {
+    let Some(hit) = best_hit else {
         return;
     };
 
-    let mut desired = Vec2::new(hit.x, hit.z) + active.offset_xz;
+    let mut desired = Vec2::new(hit.hit.x, hit.hit.z) + active.offset_xz;
     desired.x = snap_to_grid(desired.x, BUILD_GRID_SIZE);
     desired.y = snap_to_grid(desired.y, BUILD_GRID_SIZE);
 
@@ -347,9 +367,22 @@ pub(crate) fn world_drag_update(
         transform.translation.z = desired.y;
 
         if active.mobility_mode != Some(MobilityMode::Air) {
+            if hit.is_floor {
+                let footprint = FloorFootprint::Circle { radius };
+                let sample =
+                    sample_floor_footprint(&active_floor, Vec2::new(desired.x, desired.y), footprint);
+                if sample.is_water {
+                    return;
+                }
+                let ground_y = apply_floor_sink(sample.max_height);
+                let scale_y = safe_abs_scale_y(transform.scale);
+                let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
+                transform.translation.y = ground_y + origin_y;
+            } else {
             let scale_y = safe_abs_scale_y(transform.scale);
             let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
-            transform.translation.y = surface_y + origin_y;
+            transform.translation.y = hit.surface_y + origin_y;
+            }
         }
     } else {
         let Ok((_e, mut transform, collider, dimensions, prefab_id)) =
@@ -376,10 +409,25 @@ pub(crate) fn world_drag_update(
         transform.translation.x = desired.x;
         transform.translation.z = desired.y;
 
+        if hit.is_floor {
+            let footprint = FloorFootprint::Aabb {
+                half: collider.half_extents,
+            };
+            let sample =
+                sample_floor_footprint(&active_floor, Vec2::new(desired.x, desired.y), footprint);
+            if sample.is_water {
+                return;
+            }
+            let ground_y = apply_floor_sink(sample.max_height);
+            let scale_y = safe_abs_scale_y(transform.scale);
+            let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
+            transform.translation.y = ground_y + origin_y;
+        } else {
         let scale_y = safe_abs_scale_y(transform.scale);
         let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
-        let bottom_y = surface_y.max(0.0);
+        let bottom_y = hit.surface_y.max(0.0);
         transform.translation.y = bottom_y + origin_y;
+        }
 
         let _ = dimensions;
     }
@@ -439,6 +487,7 @@ fn cursor_offset_xz(
     camera: &Camera,
     camera_transform: &GlobalTransform,
     library: &ObjectLibrary,
+    active_floor: &ActiveWorldFloor,
     build_objects: &Query<
         (&Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId),
         With<BuildObject>,
@@ -450,6 +499,7 @@ fn cursor_offset_xz(
         camera,
         camera_transform,
         library,
+        active_floor,
         build_objects,
     )?;
     let offset = Vec2::new(
@@ -473,6 +523,7 @@ mod tests {
         app.init_resource::<crate::model_library_ui::ModelLibraryUiState>();
         app.init_resource::<SelectionState>();
         app.init_resource::<ObjectLibrary>();
+        app.init_resource::<crate::genfloor::ActiveWorldFloor>();
         app.insert_resource(ButtonInput::<MouseButton>::default());
 
         app.add_systems(Update, world_drag_update);

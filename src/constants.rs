@@ -214,6 +214,7 @@ pub(crate) const SELECTION_CIRCLE_FLASH_ALPHA_MAX: f32 = 0.85;
 
 // Click-to-move (A* grid) and marker.
 pub(crate) const NAV_GRID_SIZE: f32 = 0.50; // 50 cm navigation cells (decoupled from Build snap)
+pub(crate) const FLOOR_GROUND_SINK_M: f32 = 0.02; // subtle grounding sink for terrain contact
 pub(crate) const NAV_HEIGHT_QUANT_SIZE: f32 = 0.25; // 25 cm ground-height quantization for nav
 pub(crate) const CLICK_MOVE_WAYPOINT_EPS: f32 = 0.18; // ~18 cm "close enough" for waypoints
 pub(crate) const CLICK_MOVE_MAX_TURN_RATE_RADS_PER_SEC: f32 = 10.0;

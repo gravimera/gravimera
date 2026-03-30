@@ -5,7 +5,8 @@ use std::net::SocketAddr;
 use crate::action_log::{ActionLogSource, ActionLogState};
 use crate::config::AppConfig;
 use crate::constants::*;
-use crate::geometry::safe_abs_scale_y;
+use crate::genfloor::{apply_floor_sink, sample_floor_footprint, ActiveWorldFloor, FloorFootprint};
+use crate::geometry::{circle_intersects_aabb_xz, safe_abs_scale_y};
 use crate::intelligence::protocol::*;
 use crate::intelligence::sidecar_client::SidecarClient;
 use crate::navigation;
@@ -337,6 +338,7 @@ fn intelligence_tick(
     time: Res<Time>,
     config: Res<AppConfig>,
     library: Res<ObjectLibrary>,
+    active_floor: Res<ActiveWorldFloor>,
     active: Option<Res<crate::realm::ActiveRealmScene>>,
     mut runtime: ResMut<IntelligenceHostRuntime>,
     mut action_log: ResMut<ActionLogState>,
@@ -798,7 +800,6 @@ fn intelligence_tick(
                         library.ground_origin_y_or_default(prefab_id.0) * scale_y
                     };
                     let current_ground_y = (transform.translation.y - origin_y).max(0.0);
-                    let goal_ground_y = (pos[1] - origin_y).max(0.0);
 
                     let radius = collider.radius.max(0.01);
                     let min = Vec2::splat(-WORLD_HALF_SIZE + radius);
@@ -817,6 +818,43 @@ fn intelligence_tick(
                             order.target = Some(clamped_goal);
                         }
                         Some(crate::object::registry::MobilityMode::Ground) => {
+                            let goal_ground_y = if pos[1].is_finite() && pos[1] > origin_y + 1e-4 {
+                                (pos[1] - origin_y).max(0.0)
+                            } else {
+                                let footprint = FloorFootprint::Circle {
+                                    radius: radius.max(0.01),
+                                };
+                                let sample = sample_floor_footprint(
+                                    &active_floor,
+                                    clamped_goal,
+                                    footprint,
+                                );
+                                if sample.is_water {
+                                    commands.entity(entity).remove::<MoveOrder>();
+                                    continue;
+                                }
+                                apply_floor_sink(sample.max_height)
+                            };
+
+                            let is_walkable = |pos: Vec2| {
+                                let footprint = FloorFootprint::Circle {
+                                    radius: radius.max(0.01),
+                                };
+                                let sample =
+                                    sample_floor_footprint(&active_floor, pos, footprint);
+                                if !sample.is_water {
+                                    return true;
+                                }
+                                obstacles.iter().any(|ob| {
+                                    ob.supports_standing
+                                        && circle_intersects_aabb_xz(
+                                            pos,
+                                            radius,
+                                            ob.center,
+                                            ob.half,
+                                        )
+                                })
+                            };
                             let Some(path) = navigation::find_path_height_aware(
                                 start,
                                 current_ground_y,
@@ -827,6 +865,7 @@ fn intelligence_tick(
                                 WORLD_HALF_SIZE,
                                 NAV_GRID_SIZE,
                                 &obstacles,
+                                &is_walkable,
                             ) else {
                                 commands.entity(entity).remove::<MoveOrder>();
                                 continue;
@@ -839,6 +878,7 @@ fn intelligence_tick(
                                 height,
                                 NAV_GRID_SIZE,
                                 &obstacles,
+                                &is_walkable,
                             );
                             order.path = path.into();
                             order.target = Some(clamped_goal);

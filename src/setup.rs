@@ -4,7 +4,7 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::assets::SceneAssets;
 use crate::constants::*;
-use crate::genfloor::WorldFloor;
+use crate::genfloor::{apply_floor_sink, sample_floor_point, ActiveWorldFloor, WorldFloor};
 use crate::types::*;
 
 pub(crate) fn setup_rendered(
@@ -13,6 +13,7 @@ pub(crate) fn setup_rendered(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     asset_server: Res<AssetServer>,
+    active_floor: Res<ActiveWorldFloor>,
 ) {
     info!(
          "Controls: LMB selects (click/drag), RMB issues move orders.\n\
@@ -347,7 +348,9 @@ pub(crate) fn setup_rendered(
 
     commands.spawn((WorldFloor, Transform::IDENTITY, Visibility::Inherited));
 
-    let player_start = Vec3::new(0.0, PLAYER_Y, 0.0);
+    let ground_sample = sample_floor_point(&active_floor, 0.0, 0.0);
+    let ground_y = apply_floor_sink(ground_sample.height).max(0.0);
+    let player_start = Vec3::new(0.0, ground_y + PLAYER_Y, 0.0);
 
     commands.spawn((
         DirectionalLight {

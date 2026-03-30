@@ -167,9 +167,12 @@ Fields:
 Placement notes (non-normative):
 
 - `transform.translation` is applied to the instance root as-is.
-- To rest an object on the ground plane (y=0), set:
-  - `translation.y = ground_origin_y * abs(scale.y)` when the prefab defines `ground_origin_y` (realm prefab packs).
-  - otherwise `translation.y = (prefab_size.y * abs(scale.y)) / 2`.
+- To rest an object on terrain, derive a base ground height from relief (ignore animated waves):
+  - Sample terrain heights under the instance footprint and take the maximum height as `base_ground_y`.
+  - Apply a 0.02m sink for visual grounding, but skip the sink when `base_ground_y == 0`.
+  - `translation.y = base_ground_y + ground_origin_y * abs(scale.y)` when the prefab defines `ground_origin_y` (realm prefab packs).
+  - otherwise `translation.y = base_ground_y + (prefab_size.y * abs(scale.y)) / 2`.
+- If any sampled terrain height under the footprint is below 0, treat the area as water: ground/static instances should not be placed there unless a `supports_standing` object provides support (air units are exempt).
 
 Additional fields are allowed and must be preserved by round-trip tools when possible.
 
@@ -232,9 +235,12 @@ Pinned instances are authored as JSON objects:
 Placement notes (non-normative):
 
 - `transform.translation` is applied to the instance root as-is.
-- To rest an object on the ground plane (y=0), set:
-  - `translation.y = ground_origin_y * abs(scale.y)` when the prefab defines `ground_origin_y` (realm prefab packs).
-  - otherwise `translation.y = (prefab_size.y * abs(scale.y)) / 2`.
+- To rest an object on terrain, derive a base ground height from relief (ignore animated waves):
+  - Sample terrain heights under the instance footprint and take the maximum height as `base_ground_y`.
+  - Apply a 0.02m sink for visual grounding, but skip the sink when `base_ground_y == 0`.
+  - `translation.y = base_ground_y + ground_origin_y * abs(scale.y)` when the prefab defines `ground_origin_y` (realm prefab packs).
+  - otherwise `translation.y = base_ground_y + (prefab_size.y * abs(scale.y)) / 2`.
+- If any sampled terrain height under the footprint is below 0, treat the area as water: ground/static instances should not be placed there unless a `supports_standing` object provides support (air units are exempt).
 
 Additional fields are allowed and must be preserved by round-trip tools when possible.
 

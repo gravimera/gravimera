@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::geometry::{point_inside_aabb_xz, safe_abs_scale_y};
+use crate::genfloor::{sample_floor_point, ActiveWorldFloor};
 use crate::object::registry::ObjectLibrary;
 use crate::types::{AabbCollider, BuildDimensions, BuildObject, ObjectPrefabId};
 
@@ -9,6 +10,8 @@ pub(crate) struct SurfacePick {
     pub(crate) hit: Vec3,
     pub(crate) surface_y: f32,
     pub(crate) block_top: Option<(Vec2, Vec2)>,
+    #[allow(dead_code)]
+    pub(crate) floor_is_water: bool,
 }
 
 pub(crate) fn cursor_surface_pick(
@@ -16,6 +19,7 @@ pub(crate) fn cursor_surface_pick(
     camera: &Camera,
     camera_transform: &GlobalTransform,
     library: &ObjectLibrary,
+    active_floor: &ActiveWorldFloor,
     objects: &Query<
         (&Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId),
         With<BuildObject>,
@@ -39,10 +43,14 @@ pub(crate) fn cursor_surface_pick(
     let t_ground = (0.0 - origin.y) / denom;
     if t_ground >= 0.0 {
         best_t = t_ground;
+        let mut hit = origin + direction * t_ground;
+        let sample = sample_floor_point(active_floor, hit.x, hit.z);
+        hit.y = sample.height;
         pick = Some(SurfacePick {
-            hit: origin + direction * t_ground,
-            surface_y: 0.0,
+            hit,
+            surface_y: sample.height,
             block_top: None,
+            floor_is_water: sample.is_water,
         });
     }
 
@@ -71,6 +79,7 @@ pub(crate) fn cursor_surface_pick(
             hit,
             surface_y: top_y,
             block_top: Some((center, collider.half_extents)),
+            floor_is_water: false,
         });
     }
 

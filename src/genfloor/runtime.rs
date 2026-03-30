@@ -2,6 +2,7 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
 
+use crate::constants::FLOOR_GROUND_SINK_M;
 use crate::genfloor::defs::{
     FloorAnimationMode, FloorColoringMode, FloorDefV1, FloorMeshKind, FloorReliefMode, FloorWaveV1,
 };
@@ -44,6 +45,117 @@ pub(crate) struct FloorCpuWave {
     pub(crate) grid: FloorGrid,
     pub(crate) waves: Vec<FloorWaveV1>,
     pub(crate) normal_strength: f32,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum FloorFootprint {
+    Circle { radius: f32 },
+    Aabb { half: Vec2 },
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct FloorSample {
+    pub(crate) height: f32,
+    pub(crate) is_water: bool,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct FloorFootprintSample {
+    pub(crate) max_height: f32,
+    #[allow(dead_code)]
+    pub(crate) min_height: f32,
+    pub(crate) is_water: bool,
+}
+
+pub(crate) fn sample_floor_point(active: &ActiveWorldFloor, x: f32, z: f32) -> FloorSample {
+    let height = relief_height(&active.def, x, z);
+    FloorSample {
+        height,
+        is_water: height < 0.0,
+    }
+}
+
+pub(crate) fn sample_floor_footprint(
+    active: &ActiveWorldFloor,
+    center: Vec2,
+    footprint: FloorFootprint,
+) -> FloorFootprintSample {
+    let def = &active.def;
+    let size_x = def.mesh.size_m[0].max(0.01);
+    let size_z = def.mesh.size_m[1].max(0.01);
+    let subdiv_x = def.mesh.subdiv[0].max(1);
+    let subdiv_z = def.mesh.subdiv[1].max(1);
+    let mut step_x = size_x / subdiv_x as f32;
+    let mut step_z = size_z / subdiv_z as f32;
+    if !step_x.is_finite() || step_x <= 0.0 {
+        step_x = 0.1;
+    }
+    if !step_z.is_finite() || step_z <= 0.0 {
+        step_z = 0.1;
+    }
+
+    let (min_x, max_x, min_z, max_z) = match footprint {
+        FloorFootprint::Circle { radius } => {
+            let r = radius.max(0.0);
+            (
+                center.x - r,
+                center.x + r,
+                center.y - r,
+                center.y + r,
+            )
+        }
+        FloorFootprint::Aabb { half } => (
+            center.x - half.x.abs(),
+            center.x + half.x.abs(),
+            center.y - half.y.abs(),
+            center.y + half.y.abs(),
+        ),
+    };
+
+    let mut max_height = f32::NEG_INFINITY;
+    let mut min_height = f32::INFINITY;
+    let mut x = min_x;
+    while x <= max_x + 1e-4 {
+        let mut z = min_z;
+        while z <= max_z + 1e-4 {
+            if let FloorFootprint::Circle { radius } = footprint {
+                let r2 = radius.max(0.0) * radius.max(0.0);
+                if (Vec2::new(x, z) - center).length_squared() > r2 {
+                    z += step_z;
+                    continue;
+                }
+            }
+
+            let height = relief_height(def, x, z);
+            max_height = max_height.max(height);
+            min_height = min_height.min(height);
+            z += step_z;
+        }
+        x += step_x;
+    }
+
+    if !max_height.is_finite() || !min_height.is_finite() {
+        let height = relief_height(def, center.x, center.y);
+        max_height = height;
+        min_height = height;
+    }
+
+    FloorFootprintSample {
+        max_height,
+        min_height,
+        is_water: min_height < 0.0,
+    }
+}
+
+pub(crate) fn apply_floor_sink(height: f32) -> f32 {
+    if !height.is_finite() {
+        return 0.0;
+    }
+    if height <= 0.0 {
+        // Keep default flat terrain at y=0 without any sink.
+        return height.max(0.0);
+    }
+    (height - FLOOR_GROUND_SINK_M).max(0.0)
 }
 
 pub(crate) fn set_active_world_floor(

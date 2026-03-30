@@ -6,6 +6,7 @@ use std::time::Duration;
 use crate::assets::SceneAssets;
 use crate::constants::*;
 use crate::effects::{spawn_blood_particles, spawn_energy_impact_particles};
+use crate::genfloor::{apply_floor_sink, sample_floor_footprint, ActiveWorldFloor, FloorFootprint};
 use crate::geometry::{
     circle_intersects_aabb_xz, circles_intersect_xz, clamp_world_xz, normalize_flat_direction,
     resolve_circle_against_aabbs, safe_abs_scale_y,
@@ -86,12 +87,13 @@ fn spawn_enemy_common(
     library: &ObjectLibrary,
     enemy_prefab_id: u128,
     center: Vec2,
+    base_ground_y: f32,
     speed: f32,
     rng: &mut impl Rng,
 ) -> Option<Entity> {
     let profile = library.enemy(enemy_prefab_id)?;
     let radius = circle_collider_radius(library, enemy_prefab_id);
-    let spawn_pos = Vec3::new(center.x, profile.origin_y, center.y);
+    let spawn_pos = Vec3::new(center.x, base_ground_y + profile.origin_y, center.y);
 
     let mut enemy_commands = commands.spawn((
         ObjectId::new_v4(),
@@ -158,14 +160,22 @@ fn spawn_enemy_rendered(
     library: &ObjectLibrary,
     enemy_prefab_id: u128,
     center: Vec2,
+    base_ground_y: f32,
 ) {
     let mut rng = thread_rng();
     let Some(profile) = library.enemy(enemy_prefab_id) else {
         return;
     };
     let speed = profile.base_speed * rng.gen_range(0.85..1.15);
-    let Some(entity) =
-        spawn_enemy_common(commands, library, enemy_prefab_id, center, speed, &mut rng)
+    let Some(entity) = spawn_enemy_common(
+        commands,
+        library,
+        enemy_prefab_id,
+        center,
+        base_ground_y,
+        speed,
+        &mut rng,
+    )
     else {
         return;
     };
@@ -190,13 +200,22 @@ fn spawn_enemy_headless(
     library: &ObjectLibrary,
     enemy_prefab_id: u128,
     center: Vec2,
+    base_ground_y: f32,
 ) {
     let Some(profile) = library.enemy(enemy_prefab_id) else {
         return;
     };
     let mut rng = thread_rng();
     let speed = profile.base_speed * rng.gen_range(0.85..1.15);
-    let _ = spawn_enemy_common(commands, library, enemy_prefab_id, center, speed, &mut rng);
+    let _ = spawn_enemy_common(
+        commands,
+        library,
+        enemy_prefab_id,
+        center,
+        base_ground_y,
+        speed,
+        &mut rng,
+    );
 }
 
 pub(crate) fn apply_kill_rewards(game: &mut Game, player_health: &mut Health, kills: u32) -> u32 {
@@ -228,6 +247,7 @@ pub(crate) fn spawn_enemies(
     ratios: Res<SpawnRatios>,
     player_q: Query<&Transform, With<Player>>,
     library: Res<ObjectLibrary>,
+    active_floor: Res<ActiveWorldFloor>,
     objects: Query<
         (&Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId),
         With<BuildObject>,
@@ -287,6 +307,10 @@ pub(crate) fn spawn_enemies(
         player_transform.translation.z,
     );
     let mut spawn_center = None;
+    let mut spawn_ground_y = 0.0f32;
+    let footprint = FloorFootprint::Circle {
+        radius: radius.max(0.01),
+    };
 
     for _ in 0..16 {
         let angle = rng.gen_range(0.0..std::f32::consts::TAU);
@@ -295,6 +319,10 @@ pub(crate) fn spawn_enemies(
         candidate.x = clamp_world_xz(candidate.x, radius);
         candidate.y = clamp_world_xz(candidate.y, radius);
 
+        let sample = sample_floor_footprint(&active_floor, candidate, footprint);
+        if sample.is_water {
+            continue;
+        }
         if obstacles
             .iter()
             .any(|(center, half)| circle_intersects_aabb_xz(candidate, radius, *center, *half))
@@ -303,19 +331,13 @@ pub(crate) fn spawn_enemies(
         }
 
         spawn_center = Some(candidate);
+        spawn_ground_y = apply_floor_sink(sample.max_height);
         break;
     }
 
-    let spawn_center = spawn_center.unwrap_or_else(|| {
-        let angle = rng.gen_range(0.0..std::f32::consts::TAU);
-        let dir = Vec2::new(angle.cos(), angle.sin());
-        player_center + dir * ENEMY_SPAWN_RADIUS
-    });
-
-    let spawn_center = Vec2::new(
-        clamp_world_xz(spawn_center.x, radius),
-        clamp_world_xz(spawn_center.y, radius),
-    );
+    let Some(spawn_center) = spawn_center else {
+        return;
+    };
 
     spawn_enemy_rendered(
         &mut commands,
@@ -323,6 +345,7 @@ pub(crate) fn spawn_enemies(
         &library,
         enemy_prefab_id,
         spawn_center,
+        spawn_ground_y,
     );
 }
 
@@ -333,6 +356,7 @@ pub(crate) fn spawn_enemies_headless(
     ratios: Res<SpawnRatios>,
     player_q: Query<&Transform, With<Player>>,
     library: Res<ObjectLibrary>,
+    active_floor: Res<ActiveWorldFloor>,
 ) {
     if game.game_over {
         return;
@@ -358,8 +382,25 @@ pub(crate) fn spawn_enemies_headless(
         clamp_world_xz(spawn_pos.x, radius),
         clamp_world_xz(spawn_pos.z, radius),
     );
+    let sample = sample_floor_footprint(
+        &active_floor,
+        center,
+        FloorFootprint::Circle {
+            radius: radius.max(0.01),
+        },
+    );
+    if sample.is_water {
+        return;
+    }
+    let spawn_ground_y = apply_floor_sink(sample.max_height);
 
-    spawn_enemy_headless(&mut commands, &library, enemy_prefab_id, center);
+    spawn_enemy_headless(
+        &mut commands,
+        &library,
+        enemy_prefab_id,
+        center,
+        spawn_ground_y,
+    );
 }
 
 pub(crate) fn move_enemies(

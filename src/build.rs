@@ -1,9 +1,11 @@
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use std::collections::HashSet;
 
 use crate::assets::SceneAssets;
 use crate::constants::*;
+use crate::genfloor::{apply_floor_sink, sample_floor_footprint, ActiveWorldFloor, FloorFootprint};
 use crate::geometry::{
     aabbs_intersect_xz, circle_intersects_aabb_xz, clamp_world_xz, point_inside_aabb_xz,
     snap_to_grid,
@@ -76,6 +78,29 @@ struct ExistingBuildObject {
     fence_axis: Option<FenceAxis>,
 }
 
+#[derive(SystemParam)]
+pub(crate) struct BuildPlacementWorld<'w, 's> {
+    active_floor: Res<'w, ActiveWorldFloor>,
+    objects: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static Transform,
+            &'static AabbCollider,
+            &'static BuildDimensions,
+            &'static ObjectPrefabId,
+        ),
+        (
+            With<BuildObject>,
+            Without<BuildPreviewMarker>,
+            Without<Player>,
+        ),
+    >,
+    player: Query<'w, 's, (&'static mut Transform, &'static Collider), With<Player>>,
+    enemies: Query<'w, 's, (&'static Transform, &'static Collider), (With<Enemy>, Without<Player>)>,
+}
+
 fn is_space_free(center: Vec3, half: Vec3, existing: &[ExistingBuildObject]) -> bool {
     for object in existing {
         let other_half = Vec3::new(object.half_xz.x, object.half_y, object.half_xz.y);
@@ -90,9 +115,10 @@ fn find_block_center_y(
     center_xz: Vec2,
     half_xz: Vec2,
     size_y: f32,
+    base_ground_y: f32,
     existing: &[ExistingBuildObject],
 ) -> Option<f32> {
-    let mut support_levels: Vec<f32> = vec![0.0];
+    let mut support_levels: Vec<f32> = vec![base_ground_y];
     for object in existing {
         if object.kind != BuildObjectKind::Block {
             continue;
@@ -180,6 +206,7 @@ fn find_fence_center_y(
     axis: FenceAxis,
     size_xz: Vec2,
     size_y: f32,
+    base_ground_y: f32,
     existing: &[ExistingBuildObject],
 ) -> Option<f32> {
     let half_y = size_y * 0.5;
@@ -215,8 +242,9 @@ fn find_fence_center_y(
 
     let mut stake_left_levels: HashSet<i32> = HashSet::new();
     let mut stake_right_levels: HashSet<i32> = HashSet::new();
-    stake_left_levels.insert(0);
-    stake_right_levels.insert(0);
+    let base_units = (base_ground_y / BUILD_GRID_SIZE).round() as i32;
+    stake_left_levels.insert(base_units);
+    stake_right_levels.insert(base_units);
 
     for object in existing {
         if object.kind != BuildObjectKind::Block {
@@ -233,7 +261,7 @@ fn find_fence_center_y(
         }
     }
 
-    let mut candidates: Vec<f32> = vec![0.0];
+    let mut candidates: Vec<f32> = vec![base_ground_y];
     for level in aligned_fence_levels {
         candidates.push(level);
     }
@@ -260,13 +288,14 @@ fn find_tree_center_y(
     center_xz: Vec2,
     stump_half_xz: Vec2,
     size_y: f32,
+    base_ground_y: f32,
     existing: &[ExistingBuildObject],
 ) -> Option<f32> {
     let radius = stump_half_xz.x.max(stump_half_xz.y);
     let half_y = size_y * 0.5;
     let half = Vec3::new(stump_half_xz.x, half_y, stump_half_xz.y);
 
-    let mut support_levels: Vec<f32> = vec![0.0];
+    let mut support_levels: Vec<f32> = vec![base_ground_y];
     for object in existing {
         if object.kind != BuildObjectKind::Block {
             continue;
@@ -629,22 +658,7 @@ pub(crate) fn build_place_object(
     mut material_cache: ResMut<visuals::MaterialCache>,
     mut mesh_cache: ResMut<visuals::PrimitiveMeshCache>,
     library: Res<ObjectLibrary>,
-    objects: Query<
-        (
-            Entity,
-            &Transform,
-            &AabbCollider,
-            &BuildDimensions,
-            &ObjectPrefabId,
-        ),
-        (
-            With<BuildObject>,
-            Without<BuildPreviewMarker>,
-            Without<Player>,
-        ),
-    >,
-    mut player: Query<(&mut Transform, &Collider), With<Player>>,
-    enemies: Query<(&Transform, &Collider), (With<Enemy>, Without<Player>)>,
+    mut world: BuildPlacementWorld,
 ) {
     if !build.placing_active {
         return;
@@ -679,8 +693,8 @@ pub(crate) fn build_place_object(
     let center_xz = snapped_center_xz(aim.cursor_hit, clamp_half_xz);
 
     let mut existing: Vec<ExistingBuildObject> = Vec::new();
-    existing.reserve(objects.iter().len());
-    for (_entity, transform, collider, dimensions, prefab_id) in &objects {
+    existing.reserve(world.objects.iter().len());
+    for (_entity, transform, collider, dimensions, prefab_id) in &world.objects {
         let kind = buildings::build_spec_from_prefab_id(prefab_id.0)
             .map(|spec| spec.kind)
             .unwrap_or(BuildObjectKind::Block);
@@ -694,18 +708,42 @@ pub(crate) fn build_place_object(
         });
     }
 
+    let footprint = match spec.kind {
+        BuildObjectKind::Tree => FloorFootprint::Circle {
+            radius: collider_half_xz.x.max(collider_half_xz.y),
+        },
+        _ => FloorFootprint::Aabb {
+            half: collider_half_xz,
+        },
+    };
+    let sample = sample_floor_footprint(&world.active_floor, center_xz, footprint);
+    let has_support = existing.iter().any(|object| {
+        if object.kind != BuildObjectKind::Block {
+            return false;
+        }
+        let other_center = Vec2::new(object.center.x, object.center.z);
+        aabbs_intersect_xz(center_xz, collider_half_xz, other_center, object.half_xz)
+    });
+    if sample.is_water && !has_support {
+        return;
+    }
+    let base_ground_y = apply_floor_sink(sample.max_height);
+
     let center_y = match spec.kind {
         BuildObjectKind::Block => {
-            find_block_center_y(center_xz, collider_half_xz, size.y, &existing)
+            find_block_center_y(center_xz, collider_half_xz, size.y, base_ground_y, &existing)
         }
         BuildObjectKind::Fence => find_fence_center_y(
             center_xz,
             spec.fence_axis,
             Vec2::new(size.x, size.z),
             size.y,
+            base_ground_y,
             &existing,
         ),
-        BuildObjectKind::Tree => find_tree_center_y(center_xz, collider_half_xz, size.y, &existing),
+        BuildObjectKind::Tree => {
+            find_tree_center_y(center_xz, collider_half_xz, size.y, base_ground_y, &existing)
+        }
     };
     let Some(center_y) = center_y else {
         return;
@@ -717,7 +755,7 @@ pub(crate) fn build_place_object(
         return;
     }
 
-    if let Ok((player_transform, player_collider)) = player.single_mut() {
+    if let Ok((player_transform, player_collider)) = world.player.single_mut() {
         let player_center = Vec2::new(
             player_transform.translation.x,
             player_transform.translation.z,
@@ -731,7 +769,7 @@ pub(crate) fn build_place_object(
             return;
         }
     }
-    for (enemy_transform, enemy_collider) in &enemies {
+    for (enemy_transform, enemy_collider) in &world.enemies {
         let enemy_center = Vec2::new(enemy_transform.translation.x, enemy_transform.translation.z);
         if circle_intersects_aabb_xz(
             enemy_center,
@@ -760,7 +798,7 @@ pub(crate) fn build_place_object(
 
     // Tree type is selected via F key; placing does not auto-cycle.
 
-    if let Ok((mut player_transform, _collider)) = player.single_mut() {
+    if let Ok((mut player_transform, _collider)) = world.player.single_mut() {
         let to = Vec3::new(
             center.x - player_transform.translation.x,
             0.0,
@@ -854,6 +892,7 @@ pub(crate) fn build_update_preview(
     build: Res<BuildState>,
     aim: Res<Aim>,
     library: Res<ObjectLibrary>,
+    active_floor: Res<ActiveWorldFloor>,
     objects: Query<
         (
             Entity,
@@ -907,18 +946,43 @@ pub(crate) fn build_update_preview(
         });
     }
 
+    let footprint = match spec.kind {
+        BuildObjectKind::Tree => FloorFootprint::Circle {
+            radius: collider_half_xz.x.max(collider_half_xz.y),
+        },
+        _ => FloorFootprint::Aabb {
+            half: collider_half_xz,
+        },
+    };
+    let sample = sample_floor_footprint(&active_floor, center_xz, footprint);
+    let has_support = existing.iter().any(|object| {
+        if object.kind != BuildObjectKind::Block {
+            return false;
+        }
+        let other_center = Vec2::new(object.center.x, object.center.z);
+        aabbs_intersect_xz(center_xz, collider_half_xz, other_center, object.half_xz)
+    });
+    if sample.is_water && !has_support {
+        preview.visible = false;
+        return;
+    }
+    let base_ground_y = apply_floor_sink(sample.max_height);
+
     let center_y = match spec.kind {
         BuildObjectKind::Block => {
-            find_block_center_y(center_xz, collider_half_xz, size.y, &existing)
+            find_block_center_y(center_xz, collider_half_xz, size.y, base_ground_y, &existing)
         }
         BuildObjectKind::Fence => find_fence_center_y(
             center_xz,
             spec.fence_axis,
             Vec2::new(size.x, size.z),
             size.y,
+            base_ground_y,
             &existing,
         ),
-        BuildObjectKind::Tree => find_tree_center_y(center_xz, collider_half_xz, size.y, &existing),
+        BuildObjectKind::Tree => {
+            find_tree_center_y(center_xz, collider_half_xz, size.y, base_ground_y, &existing)
+        }
     };
     let Some(center_y) = center_y else {
         preview.visible = false;

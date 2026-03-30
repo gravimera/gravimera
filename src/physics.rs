@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::constants::*;
+use crate::genfloor::{apply_floor_sink, sample_floor_footprint, ActiveWorldFloor, FloorFootprint};
 use crate::geometry::{
     circle_intersects_aabb_xz, clamp_world_xz, resolve_circle_against_aabbs, safe_abs_scale_y,
 };
@@ -17,8 +18,67 @@ struct BuildAabb {
     supports_standing: bool,
 }
 
+fn terrain_base_ground(
+    active_floor: &ActiveWorldFloor,
+    pos: Vec2,
+    footprint: FloorFootprint,
+) -> (f32, bool) {
+    let sample = sample_floor_footprint(active_floor, pos, footprint);
+    (apply_floor_sink(sample.max_height), sample.is_water)
+}
+
+fn support_ground_y(
+    pos: Vec2,
+    radius: f32,
+    current_ground_y: f32,
+    height: f32,
+    obstacles: &[BuildAabb],
+) -> (f32, bool) {
+    let mut ground_y = 0.0f32;
+    let mut has_support = false;
+    for ob in obstacles {
+        if !ob.supports_standing {
+            continue;
+        }
+        let plane_y = match ob.movement_block {
+            Some(MovementBlockRule::UpperBodyFraction(fraction)) => {
+                current_ground_y + height * fraction
+            }
+            _ => f32::INFINITY,
+        };
+        if ob.top_y > plane_y {
+            continue;
+        }
+        if circle_intersects_aabb_xz(pos, radius, ob.center, ob.half) {
+            ground_y = ground_y.max(ob.top_y);
+            has_support = true;
+        }
+    }
+    (ground_y, has_support)
+}
+
+fn ground_y_for_pos(
+    active_floor: &ActiveWorldFloor,
+    pos: Vec2,
+    footprint: FloorFootprint,
+    radius: f32,
+    current_ground_y: f32,
+    height: f32,
+    obstacles: &[BuildAabb],
+) -> (f32, bool, bool) {
+    let (base_ground_y, is_water) = terrain_base_ground(active_floor, pos, footprint);
+    let (support_y, has_support) = support_ground_y(pos, radius, current_ground_y, height, obstacles);
+    let ground_y = if has_support {
+        base_ground_y.max(support_y)
+    } else {
+        base_ground_y
+    };
+    (ground_y, is_water, has_support)
+}
+
 pub(crate) fn separate_enemies(
     library: Res<ObjectLibrary>,
+    active_floor: Res<ActiveWorldFloor>,
     objects: Query<
         (&Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId),
         (With<BuildObject>, Without<Enemy>),
@@ -101,6 +161,7 @@ pub(crate) fn separate_enemies(
         let origin_y = enemy.origin_y * scale_y;
         let radius = collider.radius;
         let mut pos = Vec2::new(transform.translation.x, transform.translation.z);
+        let start_pos = pos;
         let current_ground_y = if let Some(pounce) = pounce {
             (pounce.start.y - origin_y).max(0.0)
         } else {
@@ -132,25 +193,33 @@ pub(crate) fn separate_enemies(
         let y = if pounce.is_some() {
             transform.translation.y
         } else {
-            let mut ground_y = 0.0f32;
-            for ob in &aabbs {
-                if !ob.supports_standing {
-                    continue;
-                }
-                let plane_y = match ob.movement_block {
-                    Some(MovementBlockRule::UpperBodyFraction(fraction)) => {
-                        current_ground_y + height * fraction
-                    }
-                    _ => f32::INFINITY,
-                };
-                if ob.top_y > plane_y {
-                    continue;
-                }
-                if circle_intersects_aabb_xz(pos, radius, ob.center, ob.half) {
-                    ground_y = ground_y.max(ob.top_y);
-                }
+            let footprint = FloorFootprint::Circle {
+                radius: radius.max(0.01),
+            };
+            let (ground_y, is_water, has_support) = ground_y_for_pos(
+                &active_floor,
+                pos,
+                footprint,
+                radius,
+                current_ground_y,
+                height,
+                &aabbs,
+            );
+            if is_water && !has_support {
+                pos = start_pos;
+                let (ground_y, _is_water, _has_support) = ground_y_for_pos(
+                    &active_floor,
+                    pos,
+                    footprint,
+                    radius,
+                    current_ground_y,
+                    height,
+                    &aabbs,
+                );
+                ground_y + origin_y
+            } else {
+                ground_y + origin_y
             }
-            ground_y + origin_y
         };
         transform.translation = Vec3::new(pos.x, y, pos.y);
     }
@@ -160,6 +229,7 @@ pub(crate) fn separate_commandables(
     mode: Res<State<GameMode>>,
     game: Res<Game>,
     library: Res<ObjectLibrary>,
+    active_floor: Res<ActiveWorldFloor>,
     objects: Query<
         (&Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId),
         (With<BuildObject>, Without<Commandable>, Without<Enemy>),
@@ -278,6 +348,7 @@ pub(crate) fn separate_commandables(
             .unwrap_or(crate::object::registry::MobilityMode::Ground);
 
         let mut pos = Vec2::new(transform.translation.x, transform.translation.z);
+        let start_pos = pos;
         let current_ground_y = (transform.translation.y - origin_y).max(0.0);
 
         let mut obstacles: Vec<(Vec2, Vec2)> = Vec::with_capacity(aabbs.len());
@@ -301,25 +372,33 @@ pub(crate) fn separate_commandables(
         let y = match mobility_mode {
             crate::object::registry::MobilityMode::Air => transform.translation.y,
             crate::object::registry::MobilityMode::Ground => {
-                let mut ground_y = 0.0f32;
-                for ob in &aabbs {
-                    if !ob.supports_standing {
-                        continue;
-                    }
-                    let plane_y = match ob.movement_block {
-                        Some(MovementBlockRule::UpperBodyFraction(fraction)) => {
-                            current_ground_y + height * fraction
-                        }
-                        _ => f32::INFINITY,
-                    };
-                    if ob.top_y > plane_y {
-                        continue;
-                    }
-                    if circle_intersects_aabb_xz(pos, radius, ob.center, ob.half) {
-                        ground_y = ground_y.max(ob.top_y);
-                    }
+                let footprint = FloorFootprint::Circle {
+                    radius: radius.max(0.01),
+                };
+                let (ground_y, is_water, has_support) = ground_y_for_pos(
+                    &active_floor,
+                    pos,
+                    footprint,
+                    radius,
+                    current_ground_y,
+                    height,
+                    &aabbs,
+                );
+                if is_water && !has_support {
+                    pos = start_pos;
+                    let (ground_y, _is_water, _has_support) = ground_y_for_pos(
+                        &active_floor,
+                        pos,
+                        footprint,
+                        radius,
+                        current_ground_y,
+                        height,
+                        &aabbs,
+                    );
+                    ground_y + origin_y
+                } else {
+                    ground_y + origin_y
                 }
-                ground_y + origin_y
             }
         };
 
@@ -329,6 +408,7 @@ pub(crate) fn separate_commandables(
 
 pub(crate) fn separate_player_from_enemies(
     library: Res<ObjectLibrary>,
+    active_floor: Res<ActiveWorldFloor>,
     mut player_q: Query<(&mut Transform, &Collider), With<Player>>,
     enemies: Query<
         (&Transform, &Collider, Option<&Health>, Option<&Died>),
@@ -387,6 +467,7 @@ pub(crate) fn separate_player_from_enemies(
         player_transform.translation.x,
         player_transform.translation.z,
     );
+    let start_pos = player_pos;
 
     for _ in 0..6 {
         let mut moved = false;
@@ -431,24 +512,30 @@ pub(crate) fn separate_player_from_enemies(
         }
     }
 
-    let mut ground_y = 0.0f32;
-    for ob in &aabbs {
-        if !ob.supports_standing {
-            continue;
-        }
-        let plane_y = match ob.movement_block {
-            Some(MovementBlockRule::UpperBodyFraction(fraction)) => {
-                current_ground_y + HERO_HEIGHT_WORLD * fraction
-            }
-            _ => f32::INFINITY,
-        };
-        if ob.top_y > plane_y {
-            continue;
-        }
-        if circle_intersects_aabb_xz(player_pos, player_radius, ob.center, ob.half) {
-            ground_y = ground_y.max(ob.top_y);
-        }
+    let footprint = FloorFootprint::Circle {
+        radius: player_radius.max(0.01),
+    };
+    let (_ground_y, is_water, has_support) = ground_y_for_pos(
+        &active_floor,
+        player_pos,
+        footprint,
+        player_radius,
+        current_ground_y,
+        HERO_HEIGHT_WORLD,
+        &aabbs,
+    );
+    if is_water && !has_support {
+        player_pos = start_pos;
     }
+    let (ground_y, _is_water, _has_support) = ground_y_for_pos(
+        &active_floor,
+        player_pos,
+        footprint,
+        player_radius,
+        current_ground_y,
+        HERO_HEIGHT_WORLD,
+        &aabbs,
+    );
     player_transform.translation = Vec3::new(player_pos.x, ground_y + PLAYER_Y, player_pos.y);
 }
 
@@ -516,11 +603,13 @@ mod tests {
             projectile: None,
             attack: None,
         });
-
         let mut world = World::new();
         world.insert_resource(State::<GameMode>::new(GameMode::Build));
         world.insert_resource(Game::default());
         world.insert_resource(library);
+        world.insert_resource(ActiveWorldFloor::default());
+        world.insert_resource(ActiveWorldFloor::default());
+        world.insert_resource(ActiveWorldFloor::default());
 
         world.spawn((
             BuildObject,
@@ -543,7 +632,9 @@ mod tests {
             ))
             .id();
 
-        let _ = world.run_system_once(separate_commandables);
+        world
+            .run_system_once(separate_commandables)
+            .expect("separate_commandables should run");
 
         let transform = world.get::<Transform>(unit_entity).expect("unit transform");
         let pos = Vec2::new(transform.translation.x, transform.translation.z);
@@ -579,11 +670,11 @@ mod tests {
             projectile: None,
             attack: None,
         });
-
         let mut world = World::new();
         world.insert_resource(State::<GameMode>::new(GameMode::Build));
         world.insert_resource(Game::default());
         world.insert_resource(library);
+        world.insert_resource(ActiveWorldFloor::default());
 
         let unit_entity = world
             .spawn((
@@ -594,7 +685,9 @@ mod tests {
             ))
             .id();
 
-        let _ = world.run_system_once(separate_commandables);
+        world
+            .run_system_once(separate_commandables)
+            .expect("separate_commandables should run");
 
         let transform = world.get::<Transform>(unit_entity).expect("unit transform");
         assert!(
@@ -630,11 +723,13 @@ mod tests {
             projectile: None,
             attack: None,
         });
+        let origin_y = library.ground_origin_y_or_default(unit_id) * 2.0;
 
         let mut world = World::new();
         world.insert_resource(State::<GameMode>::new(GameMode::Build));
         world.insert_resource(Game::default());
         world.insert_resource(library);
+        world.insert_resource(ActiveWorldFloor::default());
 
         let unit_entity = world
             .spawn((
@@ -645,12 +740,21 @@ mod tests {
             ))
             .id();
 
-        let _ = world.run_system_once(separate_commandables);
+        world
+            .run_system_once(separate_commandables)
+            .expect("separate_commandables should run");
 
         let transform = world.get::<Transform>(unit_entity).expect("unit transform");
+        let active_floor = world.resource::<ActiveWorldFloor>();
+        let sample = sample_floor_footprint(
+            active_floor,
+            Vec2::ZERO,
+            FloorFootprint::Circle { radius: 0.5 },
+        );
+        let expected_y = apply_floor_sink(sample.max_height) + origin_y;
         assert!(
-            (transform.translation.y - 0.5).abs() < 1e-4,
-            "expected y≈0.5 for ground_origin_y=0.25 and scale=2.0, got {}",
+            (transform.translation.y - expected_y).abs() < 1e-4,
+            "expected y≈{expected_y} for ground_origin_y=0.25 and scale=2.0, got {}",
             transform.translation.y
         );
     }

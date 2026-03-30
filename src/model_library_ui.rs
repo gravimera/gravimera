@@ -13,6 +13,7 @@ use std::sync::{mpsc, Mutex};
 use crate::assets::SceneAssets;
 use crate::config::AppConfig;
 use crate::constants::*;
+use crate::genfloor::{apply_floor_sink, sample_floor_footprint, ActiveWorldFloor, FloorFootprint};
 use crate::geometry::{clamp_world_xz, snap_to_grid};
 use crate::object::registry::ObjectLibrary;
 use crate::object::registry::{ColliderProfile, MobilityMode};
@@ -42,6 +43,22 @@ pub(crate) struct ModelLibraryEnv<'w> {
     config: Res<'w, AppConfig>,
     build_scene: Res<'w, State<crate::types::BuildScene>>,
     active: Res<'w, crate::realm::ActiveRealmScene>,
+}
+
+#[derive(SystemParam)]
+pub(crate) struct ModelLibraryDragSurface<'w, 's> {
+    active_floor: Res<'w, ActiveWorldFloor>,
+    objects: Query<
+        'w,
+        's,
+        (
+            &'static Transform,
+            &'static AabbCollider,
+            &'static BuildDimensions,
+            &'static ObjectPrefabId,
+        ),
+        With<BuildObject>,
+    >,
 }
 
 #[derive(SystemParam)]
@@ -5473,6 +5490,7 @@ pub(crate) fn model_library_drag_update(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     env: ModelLibraryEnv,
     mut gen3d: ModelLibraryGen3dSessionOpener,
+    drag_surface: ModelLibraryDragSurface,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &Transform), With<crate::types::MainCamera>>,
     asset_server: Res<AssetServer>,
@@ -5482,10 +5500,6 @@ pub(crate) fn model_library_drag_update(
     mut material_cache: ResMut<visuals::MaterialCache>,
     mut mesh_cache: ResMut<visuals::PrimitiveMeshCache>,
     mut library: ResMut<ObjectLibrary>,
-    objects: Query<
-        (&Transform, &AabbCollider, &BuildDimensions, &ObjectPrefabId),
-        With<BuildObject>,
-    >,
     mut scene_saves: bevy::ecs::message::MessageWriter<SceneSaveRequest>,
     mut state: ResMut<ModelLibraryUiState>,
 ) {
@@ -5600,14 +5614,18 @@ pub(crate) fn model_library_drag_update(
                     camera,
                     &camera_global,
                     &library,
-                    &objects,
+                    &drag_surface.active_floor,
+                    &drag_surface.objects,
                 ) {
-                    drag.preview_translation = Some(spawn_at_pick(
+                    let is_floor = pick.block_top.is_none();
+                    drag.preview_translation = spawn_at_pick(
                         drag.model_id,
                         pick.hit,
                         pick.surface_y,
+                        is_floor,
+                        &drag_surface.active_floor,
                         &library,
-                    ));
+                    );
                 } else {
                     drag.preview_translation = None;
                 }
@@ -5992,22 +6010,53 @@ fn prefab_bounds(library: &ObjectLibrary, prefab_id: u128, scale: Vec3) -> (Vec3
     (size, half_xz, origin_y)
 }
 
-fn spawn_at_pick(prefab_id: u128, hit: Vec3, surface_y: f32, library: &ObjectLibrary) -> Vec3 {
+fn spawn_at_pick(
+    prefab_id: u128,
+    hit: Vec3,
+    surface_y: f32,
+    is_floor: bool,
+    active_floor: &ActiveWorldFloor,
+    library: &ObjectLibrary,
+) -> Option<Vec3> {
     let (_size, half_xz, origin_y) = prefab_bounds(library, prefab_id, Vec3::ONE);
     let mobility_mode = library.mobility(prefab_id).map(|m| m.mode);
 
     let mut pos = Vec3::new(hit.x, surface_y + origin_y, hit.z);
     pos.x = snap_to_grid(pos.x, BUILD_GRID_SIZE);
     pos.z = snap_to_grid(pos.z, BUILD_GRID_SIZE);
-    pos.y = match mobility_mode {
-        Some(MobilityMode::Air) => surface_y + origin_y + BUILD_UNIT_SIZE * 8.0,
-        _ => surface_y + origin_y,
-    };
 
     pos.x = clamp_world_xz(pos.x, half_xz.x);
     pos.z = clamp_world_xz(pos.z, half_xz.y);
 
-    pos
+    let base_surface_y = if is_floor {
+        let footprint = match library.collider(prefab_id) {
+            Some(ColliderProfile::CircleXZ { radius }) => FloorFootprint::Circle {
+                radius: radius.max(0.01),
+            },
+            Some(ColliderProfile::AabbXZ { half_extents }) => FloorFootprint::Aabb {
+                half: Vec2::new(half_extents.x.abs(), half_extents.y.abs()),
+            },
+            _ => FloorFootprint::Aabb { half: half_xz },
+        };
+        let sample = sample_floor_footprint(
+            active_floor,
+            Vec2::new(pos.x, pos.z),
+            footprint,
+        );
+        if sample.is_water && mobility_mode != Some(MobilityMode::Air) {
+            return None;
+        }
+        apply_floor_sink(sample.max_height)
+    } else {
+        surface_y
+    };
+
+    pos.y = match mobility_mode {
+        Some(MobilityMode::Air) => base_surface_y + origin_y + BUILD_UNIT_SIZE * 8.0,
+        _ => base_surface_y + origin_y,
+    };
+
+    Some(pos)
 }
 
 fn spawn_prefab_instance(
