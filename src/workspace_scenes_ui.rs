@@ -57,7 +57,8 @@ impl Default for ScenesPanelExportJob {
 
 #[derive(Resource)]
 pub(crate) struct ScenesPanelImportJob {
-    receiver: Mutex<Option<mpsc::Receiver<Result<crate::scene_zip::SceneZipImportReport, String>>>>,
+    receiver:
+        Mutex<Option<mpsc::Receiver<Result<Option<crate::scene_zip::SceneZipImportReport>, String>>>>,
 }
 
 impl Default for ScenesPanelImportJob {
@@ -1046,7 +1047,65 @@ pub(crate) fn scenes_panel_import_dialog_poll(
         ttl_secs: 3.0,
     });
     std::thread::spawn(move || {
-        let result = crate::scene_zip::import_scene_packages_from_zip(&realm_id, &path);
+        let result = (|| {
+            let summary = crate::scene_zip::summarize_scene_zip_conflicts(&realm_id, &path)?;
+            let policy = if summary.has_conflicts() {
+                let mut description = format!(
+                    "The selected scene zip conflicts with {} scene id(s) and {} prefab package id(s).",
+                    summary.conflicting_scene_ids.len(),
+                    summary.conflicting_prefab_ids.len()
+                );
+                if !summary.conflicting_scene_ids.is_empty() {
+                    let preview = summary
+                        .conflicting_scene_ids
+                        .iter()
+                        .take(3)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    description.push_str(&format!(
+                        "\nScene conflicts: {preview}{}",
+                        if summary.conflicting_scene_ids.len() > 3 {
+                            ", ..."
+                        } else {
+                            ""
+                        }
+                    ));
+                }
+                if !summary.conflicting_prefab_ids.is_empty() {
+                    let preview = summary
+                        .conflicting_prefab_ids
+                        .iter()
+                        .take(3)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    description.push_str(&format!(
+                        "\nPrefab conflicts: {preview}{}",
+                        if summary.conflicting_prefab_ids.len() > 3 {
+                            ", ..."
+                        } else {
+                            ""
+                        }
+                    ));
+                }
+                description.push_str(
+                    "\n\nReplace overwrites the existing scenes and prefab packages. Keep Both imports copies under new ids. Quit cancels the import.",
+                );
+                crate::import_conflicts::prompt_import_conflict_policy(
+                    "Scene import conflicts",
+                    &description,
+                )?
+            } else {
+                Some(crate::import_conflicts::ImportConflictPolicy::Replace)
+            };
+            let Some(policy) = policy else {
+                return Ok(None);
+            };
+            let report =
+                crate::scene_zip::import_scene_packages_from_zip_with_policy(&realm_id, &path, policy)?;
+            Ok(Some(report))
+        })();
         let _ = tx.send(result);
     });
 }
@@ -1067,16 +1126,18 @@ pub(crate) fn scenes_panel_import_job_poll(
         Ok(result) => {
             *guard = None;
             match result {
-                Ok(report) => {
+                Ok(Some(report)) => {
                     state.scenes_dirty = true;
                     toasts.write(UiToastCommand::Show {
                         text: format!(
-                            "Scenes imported {}, skipped {}, invalid {}; prefabs imported {}, skipped {}, invalid {}.",
+                            "Scenes imported {}, replaced {}, kept-both {}, invalid {}; prefabs imported {}, replaced {}, kept-both {}, invalid {}.",
                             report.imported_scenes,
-                            report.skipped_scenes,
+                            report.replaced_scenes,
+                            report.renamed_scenes,
                             report.invalid_scenes,
                             report.imported_prefabs,
-                            report.skipped_prefabs,
+                            report.replaced_prefabs,
+                            report.renamed_prefabs,
                             report.invalid_prefabs
                         ),
                         kind: if report.invalid_scenes > 0 || report.invalid_prefabs > 0 {
@@ -1085,6 +1146,13 @@ pub(crate) fn scenes_panel_import_job_poll(
                             UiToastKind::Info
                         },
                         ttl_secs: 5.0,
+                    });
+                }
+                Ok(None) => {
+                    toasts.write(UiToastCommand::Show {
+                        text: "Scene import canceled.".to_string(),
+                        kind: UiToastKind::Info,
+                        ttl_secs: 4.0,
                     });
                 }
                 Err(err) => {

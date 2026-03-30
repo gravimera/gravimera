@@ -5,6 +5,7 @@ This document describes the prefab package import/export workflow from the 3D Mo
 ## UI Workflow
 
 - In normal mode, the 3D Models panel shows **Import** (and **Generate**) below the title. **Import** prompts for a zip file and imports any valid prefab packages into the active realm.
+- If the zip conflicts with existing prefab package ids, the app opens a native local conflict dialog with `Replace`, `Keep Both`, and `Quit`.
 - Click **Manage** to enter manage mode (multi-select). In manage mode the panel shows **Export** (and **Delete**) plus **All**/**None**.
 - In manage mode, select prefabs by clicking list items; `Shift`+click selects a contiguous range.
 - **Export** saves the selected prefab packages into a zip.
@@ -28,8 +29,20 @@ Each prefab package directory is copied as-is from the realm prefab store, inclu
 - Only entries under `prefabs/<uuid>/...` are accepted.
 - Paths are validated to prevent traversal or absolute paths.
 - A package must include at least one `prefabs/*.json` (excluding `*.desc.json`) to be considered valid.
-- If a prefab UUID already exists in the target realm, that package is skipped.
+- Conflicts are detected against `realm/<realm_id>/prefabs/<prefab_uuid>/`.
+- If the zip has no conflicts, import proceeds immediately.
 
 ## Conflict Policy
 
-Conflicts are **skipped** to avoid overwriting existing prefab packages. The UI reports imported, skipped, and invalid package counts in a toast summary.
+- `Replace` removes the conflicting destination package and imports the zip package in its place.
+- `Keep Both` imports a second copy under a fresh root prefab id.
+- `Quit` cancels the import without changing disk.
+
+For `Keep Both`, the importer stages the package and rewrites the package metadata so the new copy stays internally consistent:
+
+- the package folder name changes to the new root prefab UUID
+- published prefab JSON ids are remapped
+- the descriptor file name and contents are updated
+- `gen3d_edit_bundle_v1.json` is updated when present
+
+The toast summary now reports imported, replaced, kept-both, and invalid package counts separately.

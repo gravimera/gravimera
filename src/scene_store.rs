@@ -2505,11 +2505,30 @@ pub(crate) fn referenced_prefab_ids_in_scene_dat_path(path: &Path) -> Result<Vec
     Ok(referenced_prefab_ids_in_scene(&scene))
 }
 
+pub(crate) fn remap_prefab_ids_in_scene_dat_bytes(
+    bytes: &[u8],
+    prefab_id_map: &std::collections::BTreeMap<u128, u128>,
+) -> Result<Vec<u8>, String> {
+    if prefab_id_map.is_empty() {
+        return Ok(bytes.to_vec());
+    }
+
+    let mut scene = SceneDat::decode(bytes)
+        .map_err(|err| format!("Failed to decode scene data for prefab remap: {err}"))?;
+    remap_prefab_ids_in_scene(&mut scene, prefab_id_map);
+    Ok(scene.encode_to_vec())
+}
+
 fn referenced_prefab_ids_in_scene(scene: &SceneDat) -> Vec<u128> {
     let mut ids = HashSet::new();
     for def in &scene.defs {
         if let Some(object_id) = def.object_id.as_ref().map(uuid_to_u128) {
             ids.insert(object_id);
+        }
+        if let Some(aim) = def.aim.as_ref() {
+            for component_id in &aim.components {
+                ids.insert(uuid_to_u128(component_id));
+            }
         }
         if let Some(attack) = def
             .attack
@@ -2547,6 +2566,59 @@ fn referenced_prefab_ids_in_scene(scene: &SceneDat) -> Vec<u128> {
     let mut out: Vec<u128> = ids.into_iter().collect();
     out.sort();
     out
+}
+
+fn remap_prefab_ids_in_scene(
+    scene: &mut SceneDat,
+    prefab_id_map: &std::collections::BTreeMap<u128, u128>,
+) {
+    for def in &mut scene.defs {
+        remap_optional_uuid128(&mut def.object_id, prefab_id_map);
+        if let Some(aim) = def.aim.as_mut() {
+            for component in &mut aim.components {
+                remap_uuid128(component, prefab_id_map);
+            }
+        }
+        if let Some(attack) = def.attack.as_mut() {
+            if let Some(ranged) = attack.ranged.as_mut() {
+                remap_optional_uuid128(&mut ranged.projectile_prefab, prefab_id_map);
+                if let Some(muzzle) = ranged.muzzle.as_mut() {
+                    remap_optional_uuid128(&mut muzzle.object_id, prefab_id_map);
+                }
+            }
+        }
+        for part in &mut def.parts {
+            if let Some(scene_dat_part_def::Kind::ObjectRef(object_id)) = part.kind.as_mut() {
+                remap_uuid128(object_id, prefab_id_map);
+            }
+        }
+    }
+
+    for instance in &mut scene.instances {
+        remap_optional_uuid128(&mut instance.base_object_id, prefab_id_map);
+        for form in &mut instance.forms {
+            remap_uuid128(form, prefab_id_map);
+        }
+    }
+}
+
+fn remap_optional_uuid128(
+    value: &mut Option<Uuid128Dat>,
+    prefab_id_map: &std::collections::BTreeMap<u128, u128>,
+) {
+    if let Some(uuid) = value.as_mut() {
+        remap_uuid128(uuid, prefab_id_map);
+    }
+}
+
+fn remap_uuid128(
+    value: &mut Uuid128Dat,
+    prefab_id_map: &std::collections::BTreeMap<u128, u128>,
+) {
+    let old_id = uuid_to_u128(value);
+    if let Some(new_id) = prefab_id_map.get(&old_id) {
+        *value = u128_to_uuid(*new_id);
+    }
 }
 
 fn decode_scene_dat_from_path(path: &Path) -> Result<Option<(SceneDat, PathBuf)>, String> {

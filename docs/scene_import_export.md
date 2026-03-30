@@ -6,6 +6,7 @@ This document describes the scene package import/export workflow from the Scenes
 
 - In normal mode, the Scenes panel shows **Add Scene**, **Manage**, and **Import**.
 - **Import** prompts for a zip file and imports any valid scene packages into the active realm.
+- If the zip conflicts with existing scene ids or bundled prefab package ids, the app opens a native local conflict dialog with `Replace`, `Keep Both`, and `Quit`.
 - Click **Manage** to enter manage mode (multi-select). In manage mode the panel keeps **Import** visible and adds **Export**, **Delete**, **All**, and **None**.
 - In manage mode, click scene rows to toggle selection.
 - **Export** saves the selected scene folders plus any referenced prefab packages into one zip.
@@ -31,10 +32,20 @@ Prefab packages are exported by scanning the selected scenes for referenced pref
   - `build/scene.build.grav`
   - `src/index.json`
 - A prefab package is considered valid when it contains a JSON prefab definition under `prefabs/`.
-- Import never replaces existing scene folders or prefab package folders.
-- If a scene id already exists in the target realm, that scene is skipped.
-- If a prefab UUID already exists in the target realm, that prefab package is skipped.
+- Scene ids conflict on `realm/<realm_id>/scenes/<scene_id>/`.
+- Bundled prefab package ids conflict on `realm/<realm_id>/prefabs/<prefab_uuid>/`.
+- If the zip has no conflicts, import proceeds immediately.
 
 ## Conflict Policy
 
-Conflicts are **skipped** to avoid overwriting the destination realm. The UI reports imported, skipped, and invalid scene/prefab counts in a toast summary.
+- `Replace` removes the conflicting destination scene folder and/or prefab package folder, then imports the zip contents.
+- `Keep Both` imports a second copy under new ids.
+- `Quit` cancels the import without changing disk.
+
+For `Keep Both`:
+
+- Conflicting scene folders are imported under fresh scene ids.
+- Conflicting bundled prefab packages are imported under fresh prefab ids.
+- Imported scene files are rewritten so `build/scene.grav`, `build/scene.build.grav`, `src/meta.json`, portal targets, pinned prefab references, and form prefab references all point at the new ids.
+
+The toast summary now reports imported, replaced, kept-both, and invalid counts separately for scenes and prefabs.

@@ -21,6 +21,7 @@ mod gen3d;
 mod genfloor;
 mod geometry;
 mod headless;
+mod import_conflicts;
 pub mod intelligence;
 mod locomotion;
 pub mod meta_speak;

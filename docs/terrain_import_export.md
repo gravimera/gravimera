@@ -5,6 +5,7 @@ This document describes the terrain package import/export workflow from the Terr
 ## UI Workflow
 
 - In normal mode, the Terrain panel shows **Import** (and **Generate**) below the title. **Import** prompts for a zip file and imports any valid terrain packages into the active realm.
+- If the zip conflicts with existing terrain package ids, the app opens a native local conflict dialog with `Replace`, `Keep Both`, and `Quit`.
 - Click **Manage** to enter manage mode (multi-select). In manage mode the panel shows **Export** (and **Delete**) plus **All**/**None**.
 - In manage mode, select terrain packages by clicking list items; `Shift`+click selects a contiguous range.
 - The **Default Terrain** row is not selectable in manage mode and is never exported/deleted.
@@ -30,8 +31,15 @@ Each terrain package directory is copied as-is from the realm terrain store, inc
 - Import also accepts legacy `floors/<uuid>/...` archives for migration convenience.
 - Paths are validated to prevent traversal or absolute paths.
 - A package must include `terrain_def_v1.json` or legacy `floor_def_v1.json` to be considered valid.
-- If a terrain UUID already exists in the target realm, that package is skipped.
+- Conflicts are detected against `realm/<realm_id>/terrain/<terrain_uuid>/`.
+- If the zip has no conflicts, import proceeds immediately.
 
 ## Conflict Policy
 
-Conflicts are **skipped** to avoid overwriting existing terrain packages. The UI reports imported, skipped, and invalid package counts in a toast summary.
+- `Replace` removes the conflicting destination package and imports the zip package in its place.
+- `Keep Both` imports a second copy under a fresh terrain UUID.
+- `Quit` cancels the import without changing disk.
+
+For `Keep Both`, only the package id changes. The imported terrain package is written under a new folder id, and legacy `floor_def_v1.json` files are normalized to `terrain_def_v1.json` during import.
+
+The toast summary now reports imported, replaced, kept-both, and invalid package counts separately.

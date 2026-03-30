@@ -206,7 +206,7 @@ impl Default for ModelLibraryExportGlbJob {
 #[derive(Resource)]
 pub(crate) struct ModelLibraryImportJob {
     receiver:
-        Mutex<Option<mpsc::Receiver<Result<crate::prefab_zip::PrefabZipImportReport, String>>>>,
+        Mutex<Option<mpsc::Receiver<Result<Option<crate::prefab_zip::PrefabZipImportReport>, String>>>>,
 }
 
 impl Default for ModelLibraryImportJob {
@@ -5135,7 +5135,48 @@ pub(crate) fn model_library_import_dialog_poll(
         ttl_secs: 3.0,
     });
     std::thread::spawn(move || {
-        let result = crate::prefab_zip::import_prefab_packages_from_zip(&realm_id, &path);
+        let result = (|| {
+            let summary = crate::prefab_zip::summarize_prefab_zip_conflicts(&realm_id, &path)?;
+            let policy = if summary.has_conflicts() {
+                let mut description = format!(
+                    "The selected prefab zip conflicts with {} existing prefab package(s).",
+                    summary.conflicting_prefab_ids.len()
+                );
+                if !summary.conflicting_prefab_ids.is_empty() {
+                    let preview = summary
+                        .conflicting_prefab_ids
+                        .iter()
+                        .take(3)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    description.push_str(&format!(
+                        "\nConflicts: {preview}{}",
+                        if summary.conflicting_prefab_ids.len() > 3 {
+                            ", ..."
+                        } else {
+                            ""
+                        }
+                    ));
+                }
+                description.push_str(
+                    "\n\nReplace overwrites the existing packages. Keep Both imports copies under new ids. Quit cancels the import.",
+                );
+                crate::import_conflicts::prompt_import_conflict_policy(
+                    "Prefab import conflicts",
+                    &description,
+                )?
+            } else {
+                Some(crate::import_conflicts::ImportConflictPolicy::Replace)
+            };
+            let Some(policy) = policy else {
+                return Ok(None);
+            };
+            let report = crate::prefab_zip::import_prefab_packages_from_zip_with_policy(
+                &realm_id, &path, policy,
+            )?;
+            Ok(Some(report))
+        })();
         let _ = tx.send(result);
     });
 }
@@ -5156,11 +5197,11 @@ pub(crate) fn model_library_import_job_poll(
         Ok(result) => {
             *guard = None;
             match result {
-                Ok(report) => {
+                Ok(Some(report)) => {
                     state.mark_models_dirty();
                     let summary = format!(
-                        "Imported {}, skipped {}, invalid {}.",
-                        report.imported, report.skipped, report.invalid
+                        "Imported {} prefab package(s); replaced {}, kept-both {}, invalid {}.",
+                        report.imported, report.replaced, report.renamed, report.invalid
                     );
                     let kind = if report.invalid > 0 {
                         UiToastKind::Warn
@@ -5170,6 +5211,13 @@ pub(crate) fn model_library_import_job_poll(
                     toasts.write(UiToastCommand::Show {
                         text: summary,
                         kind,
+                        ttl_secs: 4.0,
+                    });
+                }
+                Ok(None) => {
+                    toasts.write(UiToastCommand::Show {
+                        text: "Prefab import canceled.".to_string(),
+                        kind: UiToastKind::Info,
                         ttl_secs: 4.0,
                     });
                 }

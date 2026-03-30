@@ -79,7 +79,8 @@ impl Default for FloorLibraryExportJob {
 
 #[derive(Resource)]
 pub(crate) struct FloorLibraryImportJob {
-    receiver: Mutex<Option<mpsc::Receiver<Result<crate::floor_zip::FloorZipImportReport, String>>>>,
+    receiver:
+        Mutex<Option<mpsc::Receiver<Result<Option<crate::floor_zip::FloorZipImportReport>, String>>>>,
 }
 
 impl Default for FloorLibraryImportJob {
@@ -1606,7 +1607,47 @@ pub(crate) fn floor_library_import_dialog_poll(
         ttl_secs: 3.0,
     });
     std::thread::spawn(move || {
-        let result = crate::floor_zip::import_floor_packages_from_zip(&realm_id, &path);
+        let result = (|| {
+            let summary = crate::floor_zip::summarize_floor_zip_conflicts(&realm_id, &path)?;
+            let policy = if summary.has_conflicts() {
+                let mut description = format!(
+                    "The selected terrain zip conflicts with {} existing terrain package(s).",
+                    summary.conflicting_floor_ids.len()
+                );
+                if !summary.conflicting_floor_ids.is_empty() {
+                    let preview = summary
+                        .conflicting_floor_ids
+                        .iter()
+                        .take(3)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    description.push_str(&format!(
+                        "\nConflicts: {preview}{}",
+                        if summary.conflicting_floor_ids.len() > 3 {
+                            ", ..."
+                        } else {
+                            ""
+                        }
+                    ));
+                }
+                description.push_str(
+                    "\n\nReplace overwrites the existing packages. Keep Both imports copies under new ids. Quit cancels the import.",
+                );
+                crate::import_conflicts::prompt_import_conflict_policy(
+                    "Terrain import conflicts",
+                    &description,
+                )?
+            } else {
+                Some(crate::import_conflicts::ImportConflictPolicy::Replace)
+            };
+            let Some(policy) = policy else {
+                return Ok(None);
+            };
+            let report =
+                crate::floor_zip::import_floor_packages_from_zip_with_policy(&realm_id, &path, policy)?;
+            Ok(Some(report))
+        })();
         let _ = tx.send(result);
     });
 }
@@ -1627,11 +1668,11 @@ pub(crate) fn floor_library_import_job_poll(
         Ok(result) => {
             *guard = None;
             match result {
-                Ok(report) => {
+                Ok(Some(report)) => {
                     state.mark_models_dirty();
                     let summary = format!(
-                        "Imported {}, skipped {}, invalid {}.",
-                        report.imported, report.skipped, report.invalid
+                        "Imported {} terrain package(s); replaced {}, kept-both {}, invalid {}.",
+                        report.imported, report.replaced, report.renamed, report.invalid
                     );
                     let kind = if report.invalid > 0 {
                         UiToastKind::Warn
@@ -1641,6 +1682,13 @@ pub(crate) fn floor_library_import_job_poll(
                     toasts.write(UiToastCommand::Show {
                         text: summary,
                         kind,
+                        ttl_secs: 4.0,
+                    });
+                }
+                Ok(None) => {
+                    toasts.write(UiToastCommand::Show {
+                        text: "Terrain import canceled.".to_string(),
+                        kind: UiToastKind::Info,
                         ttl_secs: 4.0,
                     });
                 }
