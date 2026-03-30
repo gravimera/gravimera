@@ -47,7 +47,7 @@ The result must be directly observable. In Build Preview mode, select different 
 ## Outcomes & Retrospective
 
 - The intermittent preview freeze was caused by `gen3d_preview_tick_selected_animation` bailing out whenever the Gen3D AI job was capturing motion sheets. That guard blocked the visible UI preview root from advancing even though motion-sheet capture uses separate off-screen rendering.
-- The preview export feature now writes ordered still/GIF bundles plus `manifest.json` from both the preview UI and Automation HTTP API, using a shared runtime that advances across frames and cleans up its temporary entities/render target after completion or failure.
+- The preview export feature now writes ordered still/GIF bundles plus `manifest.json` from both the preview UI and Automation HTTP API, using a shared runtime that advances across frames and cleans up its temporary entities/render target after completion or failure. The preview UI path now starts from a local folder picker before it launches the export.
 - Validation: `cargo test gen3d::preview -- --nocapture` passed with the new preview/export regression tests, and the required rendered smoke test (`GRAVIMERA_HOME="$tmpdir/.gravimera" cargo run -- --rendered-seconds 2`) exited cleanly.
 
 ## Context and Orientation

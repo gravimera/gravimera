@@ -2,6 +2,8 @@ use bevy::ecs::hierarchy::{ChildOf, ChildSpawnerCommands};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::window::{Ime, PrimaryWindow};
+use std::path::PathBuf;
+use std::sync::mpsc;
 
 use crate::assets::SceneAssets;
 use crate::object::registry::ObjectLibrary;
@@ -2418,11 +2420,9 @@ pub(crate) fn gen3d_preview_explode_toggle_button(
 
 pub(crate) fn gen3d_preview_export_button(
     build_scene: Res<State<BuildScene>>,
-    preview_state: Res<Gen3dPreview>,
-    draft: Res<Gen3dDraft>,
-    library: Res<ObjectLibrary>,
     mut workshop: ResMut<Gen3dWorkshop>,
-    mut runtime: ResMut<super::Gen3dPreviewExportRuntime>,
+    export_dialog: Res<Gen3dPreviewExportDialogJob>,
+    runtime: Res<super::Gen3dPreviewExportRuntime>,
     mut buttons: Query<
         (&Interaction, &mut BackgroundColor, &mut BorderColor),
         (Changed<Interaction>, With<Gen3dPreviewExportButton>),
@@ -2433,31 +2433,92 @@ pub(crate) fn gen3d_preview_export_button(
     }
 
     for (interaction, mut bg, mut border) in &mut buttons {
-        if matches!(*interaction, Interaction::Pressed) && !runtime.is_running() {
-            match super::request_gen3d_preview_export(
-                &build_scene,
-                &draft,
-                &preview_state,
-                &library,
-                &mut runtime,
-                super::Gen3dPreviewExportRequest::default(),
-            ) {
-                Ok(status) => {
-                    workshop.error = None;
-                    workshop.status = status.message.clone();
+        if matches!(*interaction, Interaction::Pressed) {
+            if runtime.is_running() {
+                workshop.status = "Preview export already running.".to_string();
+            } else if gen3d_preview_export_dialog_pending(&export_dialog) {
+                workshop.status = "Preview export folder dialog already open.".to_string();
+            } else {
+                let (tx, rx) = mpsc::channel();
+                if let Ok(mut guard) = export_dialog.receiver.lock() {
+                    *guard = Some(rx);
                 }
-                Err(err) => {
-                    workshop.error = Some(err.clone());
-                    workshop.status = format!("Preview export failed: {err}");
-                }
+
+                let initial_dir = gen3d_preview_export_dialog_initial_dir(&runtime);
+                workshop.error = None;
+                workshop.status = "Select preview export folder…".to_string();
+                std::thread::spawn(move || {
+                    let path = rfd::FileDialog::new()
+                        .set_directory(initial_dir)
+                        .pick_folder();
+                    let _ = tx.send(path);
+                });
             }
         }
         apply_gen3d_preview_export_button_style(
-            runtime.is_running(),
+            runtime.is_running() || gen3d_preview_export_dialog_pending(&export_dialog),
             *interaction,
             &mut bg,
             &mut border,
         );
+    }
+}
+
+pub(crate) fn gen3d_preview_export_dialog_poll(
+    build_scene: Res<State<BuildScene>>,
+    preview_state: Res<Gen3dPreview>,
+    draft: Res<Gen3dDraft>,
+    library: Res<ObjectLibrary>,
+    mut workshop: ResMut<Gen3dWorkshop>,
+    export_dialog: Res<Gen3dPreviewExportDialogJob>,
+    mut runtime: ResMut<super::Gen3dPreviewExportRuntime>,
+) {
+    let Ok(mut guard) = export_dialog.receiver.lock() else {
+        return;
+    };
+    let Some(receiver) = guard.as_ref() else {
+        return;
+    };
+
+    let path = match receiver.try_recv() {
+        Ok(path) => {
+            *guard = None;
+            path
+        }
+        Err(mpsc::TryRecvError::Empty) => return,
+        Err(mpsc::TryRecvError::Disconnected) => {
+            *guard = None;
+            workshop.error = Some("Preview export canceled: folder dialog failed.".to_string());
+            workshop.status = "Preview export canceled: folder dialog failed.".to_string();
+            return;
+        }
+    };
+
+    let Some(path) = path else {
+        workshop.error = None;
+        workshop.status = "Preview export canceled.".to_string();
+        return;
+    };
+
+    match super::request_gen3d_preview_export(
+        &build_scene,
+        &draft,
+        &preview_state,
+        &library,
+        &mut runtime,
+        super::Gen3dPreviewExportRequest {
+            out_dir: Some(path),
+            channels: Vec::new(),
+        },
+    ) {
+        Ok(status) => {
+            workshop.error = None;
+            workshop.status = status.message.clone();
+        }
+        Err(err) => {
+            workshop.error = Some(err.clone());
+            workshop.status = format!("Preview export failed: {err}");
+        }
     }
 }
 
@@ -2819,8 +2880,9 @@ pub(crate) fn gen3d_update_preview_explode_toggle_ui(
 
 pub(crate) fn gen3d_update_preview_export_button_ui(
     build_scene: Res<State<BuildScene>>,
+    export_dialog: Res<Gen3dPreviewExportDialogJob>,
     runtime: Res<super::Gen3dPreviewExportRuntime>,
-    mut last_phase: Local<Option<(super::Gen3dPreviewExportPhase, usize, usize)>>,
+    mut last_phase: Local<Option<(bool, super::Gen3dPreviewExportPhase, usize, usize)>>,
     mut buttons: Query<
         (&Interaction, &mut BackgroundColor, &mut BorderColor),
         With<Gen3dPreviewExportButton>,
@@ -2831,7 +2893,9 @@ pub(crate) fn gen3d_update_preview_export_button_ui(
         return;
     }
 
+    let dialog_pending = gen3d_preview_export_dialog_pending(&export_dialog);
     let phase_state = (
+        dialog_pending,
         runtime.status.phase,
         runtime.status.completed_channels,
         runtime.status.total_channels,
@@ -2841,27 +2905,60 @@ pub(crate) fn gen3d_update_preview_export_button_ui(
     }
     *last_phase = Some(phase_state);
 
-    let label = match runtime.status.phase {
-        super::Gen3dPreviewExportPhase::Running => {
-            if runtime.status.total_channels > 0 {
-                format!(
-                    "Exporting {}/{}",
-                    runtime.status.completed_channels.saturating_add(1),
-                    runtime.status.total_channels
-                )
-            } else {
-                "Exporting…".to_string()
+    let label = if dialog_pending {
+        "Choose Folder…".to_string()
+    } else {
+        match runtime.status.phase {
+            super::Gen3dPreviewExportPhase::Running => {
+                if runtime.status.total_channels > 0 {
+                    format!(
+                        "Exporting {}/{}",
+                        runtime.status.completed_channels.saturating_add(1),
+                        runtime.status.total_channels
+                    )
+                } else {
+                    "Exporting…".to_string()
+                }
             }
+            _ => "Export Preview".to_string(),
         }
-        _ => "Export Preview".to_string(),
     };
     for mut text in &mut texts {
         **text = label.clone().into();
     }
-    let running = runtime.is_running();
+    let running = runtime.is_running() || dialog_pending;
     for (interaction, mut bg, mut border) in &mut buttons {
         apply_gen3d_preview_export_button_style(running, *interaction, &mut bg, &mut border);
     }
+}
+
+fn gen3d_preview_export_dialog_pending(dialog: &Gen3dPreviewExportDialogJob) -> bool {
+    dialog
+        .receiver
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|_| true))
+        .unwrap_or(false)
+}
+
+fn gen3d_preview_export_dialog_initial_dir(runtime: &super::Gen3dPreviewExportRuntime) -> PathBuf {
+    let fallback = crate::paths::default_cache_dir().join("gen3d_preview_exports");
+    let _ = std::fs::create_dir_all(&fallback);
+
+    runtime
+        .status
+        .out_dir
+        .as_ref()
+        .filter(|path| path.is_dir())
+        .cloned()
+        .or_else(|| {
+            runtime
+                .status
+                .out_dir
+                .as_ref()
+                .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
+        })
+        .unwrap_or(fallback)
 }
 
 fn apply_gen3d_preview_animation_dropdown_button_style(

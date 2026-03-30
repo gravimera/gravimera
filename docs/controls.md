@@ -106,5 +106,5 @@ Enter/exit the Gen3D workshop from Build mode via the top-left workspace dropdow
 - Explode inspection: use the preview panel `Inspect` → `Explode` toggle to separate preview
   components, including nested ones, and show their names without modifying the draft; zoom stays
   centered on the exploded assembly while explode is active
-- Preview export: use the preview panel `Export` button to write still PNGs, animated GIFs, and a
-  manifest for the current draft preview motions
+- Preview export: use the preview panel `Export` button to choose a local folder, then write still
+  PNGs, animated GIFs, and a manifest for the current draft preview motions

@@ -812,6 +812,12 @@ impl Plugin for RenderedGen3dPlugin {
         );
         app.add_systems(
             Update,
+            crate::gen3d::gen3d_preview_export_dialog_poll
+                .after(crate::gen3d::gen3d_preview_export_button)
+                .run_if(in_state(BuildScene::Preview)),
+        );
+        app.add_systems(
+            Update,
             crate::gen3d::gen3d_apply_pending_seed_from_prefab
                 .run_if(in_state(BuildScene::Preview))
                 .before(crate::gen3d::gen3d_poll_ai_job),
@@ -894,6 +900,7 @@ impl Plugin for RenderedGen3dPlugin {
                     .after(crate::gen3d::gen3d_preview_animation_dropdown_button)
                     .after(crate::gen3d::gen3d_preview_explode_toggle_button)
                     .after(crate::gen3d::gen3d_preview_export_button)
+                    .after(crate::gen3d::gen3d_preview_export_dialog_poll)
                     .after(crate::gen3d::gen3d_preview_animation_option_buttons)
                     .after(crate::gen3d::gen3d_poll_ai_job),
                 crate::gen3d::gen3d_rebuild_preview_animation_dropdown_options_ui

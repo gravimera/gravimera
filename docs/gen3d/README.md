@@ -114,7 +114,8 @@ attachments.
 
 The preview stats box now includes an `Export` button.
 
-- Clicking it exports one still PNG and one animated GIF for each authored preview motion channel.
+- Clicking it opens a local folder picker, then exports one still PNG and one animated GIF for each
+  authored preview motion channel into the selected folder.
 - Default exports go to `GRAVIMERA_HOME/cache/gen3d_preview_exports/preview_export_<unix_secs>_<run_id>/`.
 - Files use informative names such as `01_idle_still.png`, `01_idle_anim.gif`,
   `02_attack_still.png`, and `02_attack_anim.gif`.

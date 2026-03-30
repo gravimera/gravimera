@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use std::path::PathBuf;
+use std::sync::{mpsc, Mutex};
 
 use crate::object::registry::{ObjectDef, ObjectPartKind};
 
@@ -406,6 +407,19 @@ pub(crate) struct Gen3dPreviewPanel;
 
 #[derive(Component)]
 pub(crate) struct Gen3dPreviewPanelImage;
+
+#[derive(Resource)]
+pub(crate) struct Gen3dPreviewExportDialogJob {
+    pub(crate) receiver: Mutex<Option<mpsc::Receiver<Option<PathBuf>>>>,
+}
+
+impl Default for Gen3dPreviewExportDialogJob {
+    fn default() -> Self {
+        Self {
+            receiver: Mutex::new(None),
+        }
+    }
+}
 
 #[derive(Component)]
 pub(crate) struct Gen3dPreviewOverlayRoot;
