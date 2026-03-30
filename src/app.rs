@@ -586,6 +586,7 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     app.init_resource::<crate::gen3d::Gen3dPrefabThumbnailCaptureRuntime>();
     app.init_resource::<crate::genfloor::GenFloorWorkshop>();
     app.init_resource::<crate::genfloor::GenFloorAiJob>();
+    app.init_resource::<crate::genfloor::GenfloorThumbnailCaptureRuntime>();
     app.init_resource::<crate::genfloor::ActiveWorldFloor>();
     app.init_resource::<crate::scene_authoring_ui::SceneAuthoringUiState>();
     app.init_resource::<crate::model_library_ui::ModelLibraryUiState>();

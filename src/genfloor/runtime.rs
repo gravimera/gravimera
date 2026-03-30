@@ -97,12 +97,7 @@ pub(crate) fn sample_floor_footprint(
     let (min_x, max_x, min_z, max_z) = match footprint {
         FloorFootprint::Circle { radius } => {
             let r = radius.max(0.0);
-            (
-                center.x - r,
-                center.x + r,
-                center.y - r,
-                center.y + r,
-            )
+            (center.x - r, center.x + r, center.y - r, center.y + r)
         }
         FloorFootprint::Aabb { half } => (
             center.x - half.x.abs(),
@@ -393,6 +388,18 @@ fn build_floor_mesh(def: &FloorDefV1) -> (Mesh, FloorGrid) {
     match def.mesh.kind {
         FloorMeshKind::Grid => build_grid_mesh(def),
     }
+}
+
+pub(crate) fn build_floor_mesh_only(def: &FloorDefV1) -> Mesh {
+    let (mesh, _grid) = build_floor_mesh(def);
+    mesh
+}
+
+pub(crate) fn build_floor_material(
+    def: &FloorDefV1,
+    materials: &mut Assets<StandardMaterial>,
+) -> Handle<StandardMaterial> {
+    material_from_def(def, materials)
 }
 
 fn build_grid_mesh(def: &FloorDefV1) -> (Mesh, FloorGrid) {

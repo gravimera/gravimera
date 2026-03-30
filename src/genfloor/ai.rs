@@ -116,6 +116,7 @@ pub(crate) fn genfloor_poll_ai_job(
     active: Res<crate::realm::ActiveRealmScene>,
     mut active_floor: ResMut<ActiveWorldFloor>,
     mut floor_library: ResMut<crate::floor_library_ui::FloorLibraryUiState>,
+    mut thumbnail_capture: ResMut<crate::genfloor::GenfloorThumbnailCaptureRuntime>,
 ) {
     let Some(shared) = job.shared.as_ref() else {
         return;
@@ -170,6 +171,11 @@ pub(crate) fn genfloor_poll_ai_job(
                         );
                     let _ = std::fs::write(source_dir.join("prompt.txt"), workshop.prompt.as_str());
                     set_active_world_floor(&mut active_floor, Some(floor_id), res.def.clone());
+                    crate::genfloor::genfloor_queue_thumbnail_capture(
+                        &mut thumbnail_capture,
+                        active.realm_id.clone(),
+                        floor_id,
+                    );
                     floor_library.mark_models_dirty();
                     floor_library.set_selected_floor_id(Some(floor_id));
                     if let Err(err) = crate::scene_floor_selection::save_scene_floor_selection(

@@ -21,7 +21,8 @@ realm/<realm_id>/terrain/<terrain_id>/
 ```
 
 - `terrain_def_v1.json` is the canonical definition written by GenFloor.
-- `thumbnail.png` is optional; if missing, the list shows an empty placeholder.
+- `thumbnail.png` is optional; if missing, the list shows an empty placeholder until a capture runs.
+- Thumbnails are auto-generated after saves and backfilled when the Terrain list opens.
 
 Per-scene terrain selection is stored here:
 

@@ -779,6 +779,7 @@ impl Plugin for RenderedGen3dPlugin {
                 .run_if(in_gen3d_ui_scene),
         );
         app.add_systems(Update, crate::gen3d::gen3d_prefab_thumbnail_capture_poll);
+        app.add_systems(Update, crate::genfloor::genfloor_thumbnail_capture_poll);
         app.add_systems(
             Update,
             (

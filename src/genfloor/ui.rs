@@ -154,6 +154,7 @@ pub(crate) fn genfloor_save_button(
     mut floor_workshop: ResMut<GenFloorWorkshop>,
     mut workshop: ResMut<Gen3dWorkshop>,
     mut floor_library: ResMut<crate::floor_library_ui::FloorLibraryUiState>,
+    mut thumbnail_capture: ResMut<crate::genfloor::GenfloorThumbnailCaptureRuntime>,
     mut top_panel: ResMut<TopPanelUiState>,
     mut next_build_scene: ResMut<NextState<BuildScene>>,
     mut buttons: Query<
@@ -220,6 +221,11 @@ pub(crate) fn genfloor_save_button(
                     );
                     let _ = std::fs::write(source_dir.join("prompt.txt"), workshop.prompt.as_str());
                     set_active_world_floor(&mut active_floor, Some(floor_id), def);
+                    crate::genfloor::genfloor_queue_thumbnail_capture(
+                        &mut thumbnail_capture,
+                        active.realm_id.clone(),
+                        floor_id,
+                    );
                     floor_library.mark_models_dirty();
                     workshop.status = "Terrain saved.".to_string();
                     match crate::scene_floor_selection::save_scene_floor_selection(

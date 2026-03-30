@@ -1909,6 +1909,7 @@ pub(crate) fn floor_library_rebuild_list_ui(
     active: Res<ActiveRealmScene>,
     genfloor_job: Res<crate::genfloor::GenFloorAiJob>,
     genfloor_workshop: Res<crate::genfloor::GenFloorWorkshop>,
+    mut thumbnail_capture: ResMut<crate::genfloor::GenfloorThumbnailCaptureRuntime>,
     mut state: ResMut<FloorLibraryUiState>,
     lists: Query<Entity, With<FloorLibraryList>>,
     existing_items: Query<Entity, With<FloorLibraryListItem>>,
@@ -2002,6 +2003,18 @@ pub(crate) fn floor_library_rebuild_list_ui(
     }
 
     for floor_id in floor_ids {
+        let thumb_path = crate::realm_floor_packages::realm_floor_package_thumbnail_path(
+            &active.realm_id,
+            floor_id,
+        );
+        if std::fs::metadata(&thumb_path).is_err() {
+            crate::genfloor::genfloor_queue_thumbnail_capture(
+                &mut thumbnail_capture,
+                active.realm_id.clone(),
+                floor_id,
+            );
+        }
+
         let uuid = uuid::Uuid::from_u128(floor_id).to_string();
         let def =
             crate::realm_floor_packages::load_realm_floor_def(&active.realm_id, floor_id).ok();
