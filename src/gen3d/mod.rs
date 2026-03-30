@@ -2,6 +2,7 @@ mod agent;
 mod ai;
 mod images;
 mod preview;
+mod preview_export;
 mod save;
 mod state;
 mod status;
@@ -166,6 +167,10 @@ pub(crate) use preview::{
     preview_pan_delta_world, preview_panel_logical_to_target, Gen3dPreviewAppliedExplodeOffset,
     PreviewProjectedComponent,
 };
+pub(crate) use preview_export::{
+    gen3d_preview_export_poll, gen3d_preview_export_status_payload, request_gen3d_preview_export,
+    Gen3dPreviewExportPhase, Gen3dPreviewExportRequest, Gen3dPreviewExportRuntime,
+};
 pub(crate) use save::gen3d_auto_save_when_done;
 pub(crate) use save::gen3d_prefab_thumbnail_capture_poll;
 pub(crate) use save::gen3d_request_prefab_thumbnail_capture;
@@ -186,10 +191,11 @@ pub(crate) use ui::{
     gen3d_cleanup_preview_scene_when_idle, gen3d_exit_button, gen3d_exit_on_escape,
     gen3d_preview_animation_dropdown_button, gen3d_preview_animation_dropdown_scroll_wheel,
     gen3d_preview_animation_option_buttons, gen3d_preview_explode_toggle_button,
-    gen3d_prompt_box_focus, gen3d_prompt_ime_position, gen3d_prompt_scroll_wheel,
-    gen3d_prompt_scrollbar_drag, gen3d_prompt_text_input,
+    gen3d_preview_export_button, gen3d_prompt_box_focus, gen3d_prompt_ime_position,
+    gen3d_prompt_scroll_wheel, gen3d_prompt_scrollbar_drag, gen3d_prompt_text_input,
     gen3d_rebuild_preview_animation_dropdown_options_ui, gen3d_side_panel_toggle_button,
     gen3d_update_preview_animation_dropdown_ui, gen3d_update_preview_explode_toggle_ui,
-    gen3d_update_preview_panel_image_fit, gen3d_update_prompt_scrollbar_ui,
-    gen3d_update_side_panel_ui, gen3d_update_ui_text, spawn_gen3d_preview_panel,
+    gen3d_update_preview_export_button_ui, gen3d_update_preview_panel_image_fit,
+    gen3d_update_prompt_scrollbar_ui, gen3d_update_side_panel_ui, gen3d_update_ui_text,
+    spawn_gen3d_preview_panel,
 };

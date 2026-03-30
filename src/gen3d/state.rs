@@ -435,6 +435,12 @@ pub(crate) struct Gen3dPreviewExplodeToggleButton;
 pub(crate) struct Gen3dPreviewExplodeToggleButtonText;
 
 #[derive(Component)]
+pub(crate) struct Gen3dPreviewExportButton;
+
+#[derive(Component)]
+pub(crate) struct Gen3dPreviewExportButtonText;
+
+#[derive(Component)]
 pub(crate) struct Gen3dPreviewAnimationDropdownList;
 
 #[derive(Component)]

@@ -1278,6 +1278,89 @@ Notes:
 - `explode_offset_local` is the preview-only offset currently applied in the component’s parent
   local space.
 
+### `GET /v1/gen3d/preview/export`
+
+Inspect the current Gen3D preview export runtime status.
+
+```bash
+curl -s http://127.0.0.1:8791/v1/gen3d/preview/export
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "export": {
+    "phase": "completed",
+    "run_id": 1,
+    "out_dir": "/Users/me/.gravimera/cache/gen3d_preview_exports/preview_export_1743379200_1",
+    "manifest_path": "/Users/me/.gravimera/cache/gen3d_preview_exports/preview_export_1743379200_1/manifest.json",
+    "total_channels": 4,
+    "completed_channels": 4,
+    "current_channel": null,
+    "message": "Preview export completed: /Users/me/.gravimera/cache/gen3d_preview_exports/preview_export_1743379200_1/manifest.json",
+    "error": null
+  }
+}
+```
+
+Notes:
+
+- `phase` is one of `idle`, `running`, `completed`, or `failed`.
+- `completed_channels` counts finished channel bundles. Each bundle writes one `*_still.png` and one
+  `*_anim.gif`.
+- `manifest_path` is present after a successful export.
+
+### `POST /v1/gen3d/preview/export`
+
+Start a preview export for the current Gen3D draft. The request is asynchronous; poll
+`GET /v1/gen3d/preview/export` until `phase` becomes `completed` or `failed`.
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/gen3d/preview/export \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "out_dir": "./test/run_1/preview_export",
+    "channels": ["idle", "attack"]
+  }'
+```
+
+Request fields:
+
+- `out_dir` optional string path. `~` is expanded. When omitted, Gravimera writes to
+  `GRAVIMERA_HOME/cache/gen3d_preview_exports/...`.
+- `channels` optional array of exact preview channel names. When omitted, the export uses the
+  authored preview channel order for the current draft (falling back to `idle` if the draft has no
+  explicit channels yet).
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "export": {
+    "phase": "running",
+    "run_id": 2,
+    "out_dir": "./test/run_1/preview_export",
+    "manifest_path": null,
+    "total_channels": 2,
+    "completed_channels": 0,
+    "current_channel": "idle",
+    "message": "Queued preview export for 2 channel(s).",
+    "error": null
+  }
+}
+```
+
+Notes:
+
+- The route requires `BuildScene::Preview` and an assembled Gen3D draft preview.
+- Invalid channel names return `409` and list the available preview channels.
+- Output filenames are informative and ordered, for example:
+  `01_idle_still.png`, `01_idle_anim.gif`, `02_attack_still.png`, `02_attack_anim.gif`.
+- `manifest.json` records the export camera state plus every generated file.
+
 ### `POST /v1/gen3d/preview/explode`
 
 Enable or disable preview-only component explosion.

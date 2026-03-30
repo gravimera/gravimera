@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use bevy::window::{Ime, PrimaryWindow};
 
 use crate::assets::SceneAssets;
+use crate::object::registry::ObjectLibrary;
 use crate::rich_text::set_rich_text_line;
 use crate::types::{BuildScene, EmojiAtlas, UiFonts};
 use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
@@ -810,6 +811,60 @@ pub(crate) fn enter_gen3d_mode(
                                                     },
                                                     TextColor(Color::srgb(0.92, 0.92, 0.96)),
                                                     Gen3dPreviewExplodeToggleButtonText,
+                                                ));
+                                            });
+                                        });
+
+                                    stats
+                                        .spawn((
+                                            Node {
+                                                flex_direction: FlexDirection::Row,
+                                                column_gap: Val::Px(6.0),
+                                                align_items: AlignItems::Center,
+                                                ..default()
+                                            },
+                                            BackgroundColor(Color::NONE),
+                                        ))
+                                        .with_children(|row| {
+                                            row.spawn((
+                                                Text::new("Export:"),
+                                                TextFont {
+                                                    font_size: 13.0,
+                                                    ..default()
+                                                },
+                                                TextColor(Color::srgb(0.85, 0.85, 0.90)),
+                                            ));
+                                            row.spawn((
+                                                Button,
+                                                Node {
+                                                    min_width: Val::Px(112.0),
+                                                    height: Val::Px(22.0),
+                                                    justify_content: JustifyContent::Center,
+                                                    align_items: AlignItems::Center,
+                                                    padding: UiRect::axes(
+                                                        Val::Px(10.0),
+                                                        Val::Px(0.0),
+                                                    ),
+                                                    border: UiRect::all(Val::Px(1.0)),
+                                                    ..default()
+                                                },
+                                                BackgroundColor(Color::srgba(
+                                                    0.02, 0.02, 0.03, 0.70,
+                                                )),
+                                                BorderColor::all(Color::srgba(
+                                                    0.25, 0.25, 0.30, 0.65,
+                                                )),
+                                                Gen3dPreviewExportButton,
+                                            ))
+                                            .with_children(|button| {
+                                                button.spawn((
+                                                    Text::new("Export Preview"),
+                                                    TextFont {
+                                                        font_size: 13.0,
+                                                        ..default()
+                                                    },
+                                                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                                    Gen3dPreviewExportButtonText,
                                                 ));
                                             });
                                         });
@@ -2361,6 +2416,51 @@ pub(crate) fn gen3d_preview_explode_toggle_button(
     }
 }
 
+pub(crate) fn gen3d_preview_export_button(
+    build_scene: Res<State<BuildScene>>,
+    preview_state: Res<Gen3dPreview>,
+    draft: Res<Gen3dDraft>,
+    library: Res<ObjectLibrary>,
+    mut workshop: ResMut<Gen3dWorkshop>,
+    mut runtime: ResMut<super::Gen3dPreviewExportRuntime>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (Changed<Interaction>, With<Gen3dPreviewExportButton>),
+    >,
+) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        return;
+    }
+
+    for (interaction, mut bg, mut border) in &mut buttons {
+        if matches!(*interaction, Interaction::Pressed) && !runtime.is_running() {
+            match super::request_gen3d_preview_export(
+                &build_scene,
+                &draft,
+                &preview_state,
+                &library,
+                &mut runtime,
+                super::Gen3dPreviewExportRequest::default(),
+            ) {
+                Ok(status) => {
+                    workshop.error = None;
+                    workshop.status = status.message.clone();
+                }
+                Err(err) => {
+                    workshop.error = Some(err.clone());
+                    workshop.status = format!("Preview export failed: {err}");
+                }
+            }
+        }
+        apply_gen3d_preview_export_button_style(
+            runtime.is_running(),
+            *interaction,
+            &mut bg,
+            &mut border,
+        );
+    }
+}
+
 pub(crate) fn gen3d_preview_animation_option_buttons(
     build_scene: Res<State<BuildScene>>,
     mut preview_state: ResMut<Gen3dPreview>,
@@ -2717,6 +2817,53 @@ pub(crate) fn gen3d_update_preview_explode_toggle_ui(
     }
 }
 
+pub(crate) fn gen3d_update_preview_export_button_ui(
+    build_scene: Res<State<BuildScene>>,
+    runtime: Res<super::Gen3dPreviewExportRuntime>,
+    mut last_phase: Local<Option<(super::Gen3dPreviewExportPhase, usize, usize)>>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        With<Gen3dPreviewExportButton>,
+    >,
+    mut texts: Query<&mut Text, With<Gen3dPreviewExportButtonText>>,
+) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        return;
+    }
+
+    let phase_state = (
+        runtime.status.phase,
+        runtime.status.completed_channels,
+        runtime.status.total_channels,
+    );
+    if last_phase.as_ref() == Some(&phase_state) && !runtime.is_changed() {
+        return;
+    }
+    *last_phase = Some(phase_state);
+
+    let label = match runtime.status.phase {
+        super::Gen3dPreviewExportPhase::Running => {
+            if runtime.status.total_channels > 0 {
+                format!(
+                    "Exporting {}/{}",
+                    runtime.status.completed_channels.saturating_add(1),
+                    runtime.status.total_channels
+                )
+            } else {
+                "Exporting…".to_string()
+            }
+        }
+        _ => "Export Preview".to_string(),
+    };
+    for mut text in &mut texts {
+        **text = label.clone().into();
+    }
+    let running = runtime.is_running();
+    for (interaction, mut bg, mut border) in &mut buttons {
+        apply_gen3d_preview_export_button_style(running, *interaction, &mut bg, &mut border);
+    }
+}
+
 fn apply_gen3d_preview_animation_dropdown_button_style(
     open: bool,
     interaction: Interaction,
@@ -2821,11 +2968,45 @@ fn apply_gen3d_preview_explode_toggle_style(
     *border = BorderColor::all(border_color);
 }
 
+fn apply_gen3d_preview_export_button_style(
+    running: bool,
+    interaction: Interaction,
+    bg: &mut BackgroundColor,
+    border: &mut BorderColor,
+) {
+    let (mut bg_color, mut border_color) = if running {
+        (
+            Color::srgba(0.10, 0.12, 0.15, 0.88),
+            Color::srgb(0.48, 0.72, 0.90),
+        )
+    } else {
+        (
+            Color::srgba(0.02, 0.02, 0.03, 0.70),
+            Color::srgba(0.25, 0.25, 0.30, 0.65),
+        )
+    };
+
+    match interaction {
+        Interaction::Pressed if !running => {
+            bg_color = Color::srgba(0.10, 0.10, 0.12, 0.92);
+        }
+        Interaction::Hovered if !running => {
+            bg_color = Color::srgba(0.06, 0.06, 0.08, 0.86);
+            border_color = Color::srgba(0.35, 0.35, 0.40, 0.70);
+        }
+        _ => {}
+    }
+
+    *bg = BackgroundColor(bg_color);
+    *border = BorderColor::all(border_color);
+}
+
 #[derive(SystemParam)]
 pub(crate) struct Gen3dUpdateUiTextDeps<'w, 's> {
     commands: Commands<'w, 's>,
     workshop: Res<'w, Gen3dWorkshop>,
     preview_state: Res<'w, Gen3dPreview>,
+    preview_export: Res<'w, super::Gen3dPreviewExportRuntime>,
     draft: Res<'w, Gen3dDraft>,
     job: Res<'w, Gen3dAiJob>,
     task_queue: Res<'w, Gen3dTaskQueue>,
@@ -2884,6 +3065,7 @@ pub(crate) fn gen3d_update_ui_text(
         mut commands,
         workshop,
         preview_state,
+        preview_export,
         draft,
         job,
         task_queue,
@@ -3276,8 +3458,38 @@ pub(crate) fn gen3d_update_ui_text(
     } else {
         "Idle".to_string()
     };
+    let export_line = match preview_export.status.phase {
+        super::Gen3dPreviewExportPhase::Idle => "Export: idle".to_string(),
+        super::Gen3dPreviewExportPhase::Running => format!(
+            "Export: {}/{} {}",
+            preview_export.status.completed_channels.saturating_add(1),
+            preview_export.status.total_channels.max(1),
+            preview_export
+                .status
+                .current_channel
+                .as_deref()
+                .unwrap_or("preview")
+        ),
+        super::Gen3dPreviewExportPhase::Completed => preview_export
+            .status
+            .out_dir
+            .as_ref()
+            .map(|path| {
+                format!(
+                    "Export: done → {}",
+                    truncate_ellipsis(&path.display().to_string(), 28)
+                )
+            })
+            .unwrap_or_else(|| "Export: done".to_string()),
+        super::Gen3dPreviewExportPhase::Failed => preview_export
+            .status
+            .error
+            .as_deref()
+            .map(|err| format!("Export: error → {}", truncate_ellipsis(err, 28)))
+            .unwrap_or_else(|| "Export: error".to_string()),
+    };
     let stats_text = format!(
-        "State: {state}\nRun time: {run_time}\nTokens (run): {run_tokens_line}\nTokens (total): {total_tokens_line}",
+        "State: {state}\nRun time: {run_time}\nTokens (run): {run_tokens_line}\nTokens (total): {total_tokens_line}\n{export_line}",
     );
     {
         let mut stats = texts.p3();

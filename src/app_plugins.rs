@@ -711,6 +711,9 @@ impl Plugin for RenderedGen3dPlugin {
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_preview_explode_toggle_button
                     .run_if(crate::automation::local_input_enabled),
+                crate::gen3d::gen3d_preview_export_button
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::gen3d::gen3d_preview_animation_option_buttons
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_generate_button
@@ -803,6 +806,12 @@ impl Plugin for RenderedGen3dPlugin {
         );
         app.add_systems(
             Update,
+            crate::gen3d::gen3d_preview_export_poll
+                .after(crate::gen3d::gen3d_apply_draft_to_preview)
+                .before(crate::object::visuals::update_part_animations),
+        );
+        app.add_systems(
+            Update,
             crate::gen3d::gen3d_apply_pending_seed_from_prefab
                 .run_if(in_state(BuildScene::Preview))
                 .before(crate::gen3d::gen3d_poll_ai_job),
@@ -884,6 +893,7 @@ impl Plugin for RenderedGen3dPlugin {
                     .after(crate::gen3d::gen3d_clear_images_button)
                     .after(crate::gen3d::gen3d_preview_animation_dropdown_button)
                     .after(crate::gen3d::gen3d_preview_explode_toggle_button)
+                    .after(crate::gen3d::gen3d_preview_export_button)
                     .after(crate::gen3d::gen3d_preview_animation_option_buttons)
                     .after(crate::gen3d::gen3d_poll_ai_job),
                 crate::gen3d::gen3d_rebuild_preview_animation_dropdown_options_ui
@@ -891,6 +901,8 @@ impl Plugin for RenderedGen3dPlugin {
                 crate::gen3d::gen3d_update_preview_animation_dropdown_ui
                     .after(crate::gen3d::gen3d_update_ui_text),
                 crate::gen3d::gen3d_update_preview_explode_toggle_ui
+                    .after(crate::gen3d::gen3d_update_ui_text),
+                crate::gen3d::gen3d_update_preview_export_button_ui
                     .after(crate::gen3d::gen3d_update_ui_text),
                 crate::gen3d::gen3d_update_side_panel_ui
                     .after(crate::gen3d::gen3d_update_ui_text)

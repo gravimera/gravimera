@@ -474,6 +474,7 @@ struct AutomationGen3d<'w> {
     log_sinks: Option<Res<'w, crate::app::Gen3dLogSinks>>,
     workshop: Option<ResMut<'w, crate::gen3d::Gen3dWorkshop>>,
     preview: Option<ResMut<'w, crate::gen3d::Gen3dPreview>>,
+    preview_export: Option<ResMut<'w, crate::gen3d::Gen3dPreviewExportRuntime>>,
     job: Option<ResMut<'w, crate::gen3d::Gen3dAiJob>>,
     draft: Option<ResMut<'w, crate::gen3d::Gen3dDraft>>,
     task_queue: Option<ResMut<'w, crate::gen3d::Gen3dTaskQueue>>,
@@ -723,6 +724,14 @@ struct PrefabsExportGltfGlbRequest {
 #[derive(Deserialize)]
 struct ModeRequest {
     mode: String,
+}
+
+#[derive(Deserialize)]
+struct Gen3dPreviewExportStartRequest {
+    #[serde(default)]
+    out_dir: Option<String>,
+    #[serde(default)]
+    channels: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -1379,6 +1388,7 @@ fn handle_gen3d_routes<
     let prefab_descriptors = &mut *ctx.prefab_descriptors;
     let mut gen3d_workshop = ctx.gen3d.workshop.as_deref_mut();
     let mut gen3d_preview = ctx.gen3d.preview.as_deref_mut();
+    let mut gen3d_preview_export = ctx.gen3d.preview_export.as_deref_mut();
     let mut gen3d_job = ctx.gen3d.job.as_deref_mut();
     let mut gen3d_draft = ctx.gen3d.draft.as_deref_mut();
     let mut gen3d_task_queue = ctx.gen3d.task_queue.as_deref_mut();
@@ -1527,6 +1537,71 @@ fn handle_gen3d_routes<
                 body: body.into_bytes(),
                 content_type: "application/json",
             })
+        }
+        ("GET", "/v1/gen3d/preview/export") => {
+            let Some(runtime) = gen3d_preview_export.as_deref() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+
+            let body = serde_json::json!({
+                "ok": true,
+                "export": crate::gen3d::gen3d_preview_export_status_payload(&runtime.status),
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/gen3d/preview/export") => {
+            let Some(runtime) = gen3d_preview_export.as_deref_mut() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+            let Some(preview) = gen3d_preview.as_deref() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+            let Some(draft) = gen3d_draft.as_deref() else {
+                return Some(json_error(501, "Gen3D is not available in this app mode."));
+            };
+            let Some(build_scene) = build_scene else {
+                return Some(json_error(409, "BuildScene state is unavailable."));
+            };
+            let req: Gen3dPreviewExportStartRequest = match serde_json::from_slice(&msg.body) {
+                Ok(req) => req,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+
+            match crate::gen3d::request_gen3d_preview_export(
+                build_scene,
+                draft,
+                preview,
+                library,
+                runtime,
+                crate::gen3d::Gen3dPreviewExportRequest {
+                    out_dir: req.out_dir.as_deref().map(crate::paths::expand_tilde_path),
+                    channels: req.channels,
+                },
+            ) {
+                Ok(status) => {
+                    if let Some(workshop) = gen3d_workshop.as_deref_mut() {
+                        workshop.error = None;
+                        workshop.status = status.message.clone();
+                    }
+
+                    let body = serde_json::json!({
+                        "ok": true,
+                        "export": crate::gen3d::gen3d_preview_export_status_payload(&status),
+                    })
+                    .to_string();
+                    Some(AutomationReply {
+                        status: 200,
+                        body: body.into_bytes(),
+                        content_type: "application/json",
+                    })
+                }
+                Err(err) => Some(json_error(409, err)),
+            }
         }
         ("POST", "/v1/gen3d/preview/explode") => {
             let Some(preview) = gen3d_preview.as_deref_mut() else {
@@ -3830,6 +3905,8 @@ fn handle_request_main_thread<
                 serde_json::json!({"method":"GET","path":"/v1/gen3d/status"}),
                 serde_json::json!({"method":"GET","path":"/v1/gen3d/preview"}),
                 serde_json::json!({"method":"GET","path":"/v1/gen3d/preview/components"}),
+                serde_json::json!({"method":"GET","path":"/v1/gen3d/preview/export"}),
+                serde_json::json!({"method":"POST","path":"/v1/gen3d/preview/export"}),
                 serde_json::json!({"method":"POST","path":"/v1/gen3d/preview/explode"}),
                 serde_json::json!({"method":"POST","path":"/v1/gen3d/preview/pan"}),
                 serde_json::json!({"method":"POST","path":"/v1/gen3d/preview/probe"}),
@@ -4670,15 +4747,12 @@ fn handle_request_main_thread<
                             half: Vec2::new(half_extents.x.abs(), half_extents.y.abs()),
                         }
                     }
-                    crate::object::registry::ColliderProfile::None => {
-                        FloorFootprint::Aabb { half: collider_half_xz }
-                    }
+                    crate::object::registry::ColliderProfile::None => FloorFootprint::Aabb {
+                        half: collider_half_xz,
+                    },
                 };
-                let sample = sample_floor_footprint(
-                    active_floor,
-                    Vec2::new(pos.x, pos.z),
-                    footprint,
-                );
+                let sample =
+                    sample_floor_footprint(active_floor, Vec2::new(pos.x, pos.z), footprint);
                 let ground_y = apply_floor_sink(sample.max_height);
                 pos.y = ground_y + library.ground_origin_y_or_default(prefab_id);
             }
@@ -4879,11 +4953,8 @@ fn handle_request_main_thread<
                             let footprint = FloorFootprint::Circle {
                                 radius: radius.max(0.01),
                             };
-                            let sample = sample_floor_footprint(
-                                active_floor,
-                                clamped_goal,
-                                footprint,
-                            );
+                            let sample =
+                                sample_floor_footprint(active_floor, clamped_goal, footprint);
                             apply_floor_sink(sample.max_height)
                         };
 

@@ -960,8 +960,9 @@ impl Gen3dAiJob {
             && self.step_dir.is_some()
     }
 
-    pub(crate) fn is_capturing_motion_sheets(&self) -> bool {
-        self.motion_capture.is_some()
+    #[cfg(test)]
+    pub(crate) fn set_motion_capture_active_for_tests(&mut self, active: bool) {
+        self.motion_capture = active.then(Gen3dMotionCaptureState::new);
     }
 
     pub(crate) fn edit_base_prefab_id(&self) -> Option<u128> {

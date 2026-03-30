@@ -18,9 +18,9 @@ use super::state::{
     Gen3dDraft, Gen3dPreview, Gen3dPreviewAnimationDropdownButton,
     Gen3dPreviewAnimationDropdownList, Gen3dPreviewCamera, Gen3dPreviewCollisionRoot,
     Gen3dPreviewComponentLabel, Gen3dPreviewComponentLabelText, Gen3dPreviewExplodeToggleButton,
-    Gen3dPreviewHoverFrame, Gen3dPreviewHoverInfoCard, Gen3dPreviewHoverInfoText,
-    Gen3dPreviewLight, Gen3dPreviewModelRoot, Gen3dPreviewPanel, Gen3dPreviewSceneRoot,
-    Gen3dPreviewUiModelRoot, Gen3dReviewOverlayRoot, Gen3dSidePanelRoot,
+    Gen3dPreviewExportButton, Gen3dPreviewHoverFrame, Gen3dPreviewHoverInfoCard,
+    Gen3dPreviewHoverInfoText, Gen3dPreviewLight, Gen3dPreviewModelRoot, Gen3dPreviewPanel,
+    Gen3dPreviewSceneRoot, Gen3dPreviewUiModelRoot, Gen3dReviewOverlayRoot, Gen3dSidePanelRoot,
     Gen3dSidePanelToggleButton, Gen3dWorkshop,
 };
 use super::task_queue::Gen3dTaskQueue;
@@ -64,6 +64,16 @@ pub(crate) struct Gen3dPreviewOrbitUi<'w, 's> {
             Option<&'static Visibility>,
         ),
         With<Gen3dPreviewExplodeToggleButton>,
+    >,
+    export_button: Query<
+        'w,
+        's,
+        (
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+            Option<&'static Visibility>,
+        ),
+        With<Gen3dPreviewExportButton>,
     >,
     anim_dropdown_list: Query<
         'w,
@@ -1016,7 +1026,6 @@ pub(crate) fn gen3d_preview_tick_selected_animation(
     build_scene: Res<State<BuildScene>>,
     time: Res<Time>,
     mut preview: ResMut<Gen3dPreview>,
-    job: Res<Gen3dAiJob>,
     library: Res<ObjectLibrary>,
     mut last_channel: Local<String>,
     mut roots: Query<
@@ -1032,11 +1041,6 @@ pub(crate) fn gen3d_preview_tick_selected_animation(
     >,
 ) {
     if !super::gen3d_ui_scene(build_scene.get()) {
-        return;
-    }
-    // Agent-driven render/motion capture sets locomotion/attack clocks deterministically.
-    // Don't overwrite them with the interactive preview ticker while capture is active.
-    if job.is_capturing_motion_sheets() {
         return;
     }
 
@@ -1059,8 +1063,11 @@ pub(crate) fn gen3d_preview_tick_selected_animation(
 
         let wants_move =
             selected == "move" || library.channel_uses_move_driver(object_id, &selected);
+        let wants_attack = library
+            .channel_attack_duration_secs(object_id, &selected)
+            .is_some();
         channels.moving = wants_move;
-        channels.attacking_primary = selected == "attack";
+        channels.attacking_primary = wants_attack;
         let wants_action = selected == "action"
             || library
                 .channel_action_duration_secs(object_id, &selected)
@@ -1178,6 +1185,15 @@ pub(crate) fn gen3d_preview_orbit_controls(
             }
 
             if let Ok((node, transform, vis)) = orbit_ui.explode_toggle_button.single() {
+                let visible = vis
+                    .map(|v| !matches!(*v, Visibility::Hidden))
+                    .unwrap_or(true);
+                if visible && node.contains_point(*transform, cursor) {
+                    blocked = true;
+                }
+            }
+
+            if let Ok((node, transform, vis)) = orbit_ui.export_button.single() {
                 let visible = vis
                     .map(|v| !matches!(*v, Visibility::Hidden))
                     .unwrap_or(true);
@@ -2049,6 +2065,13 @@ pub(super) fn compute_draft_focus(draft: &Gen3dDraft) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::object::registry::{
+        ColliderProfile, MeshKey, ObjectDef, ObjectInteraction, ObjectPartDef, PartAnimationDef,
+        PartAnimationDriver, PartAnimationFamily, PartAnimationKeyframeDef, PartAnimationSlot,
+        PartAnimationSpec, PrimitiveVisualDef,
+    };
+    use crate::types::{BuildScene, ForcedAnimationChannel};
+    use std::time::Duration;
 
     #[test]
     fn preview_local_center_respects_ground_origin() {
@@ -2183,5 +2206,158 @@ mod tests {
             hovered, 1,
             "nested component should win over enclosing parent"
         );
+    }
+
+    #[test]
+    fn preview_tick_keeps_ui_preview_animating_during_motion_capture() {
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(State::new(BuildScene::Preview));
+        app.insert_resource(Gen3dPreview {
+            animation_channel: "move".to_string(),
+            ..Default::default()
+        });
+        let mut job = Gen3dAiJob::default();
+        job.set_motion_capture_active_for_tests(true);
+        app.insert_resource(job);
+        app.insert_resource(ObjectLibrary::default());
+        app.add_systems(Update, gen3d_preview_tick_selected_animation);
+
+        let root = app
+            .world_mut()
+            .spawn((
+                Gen3dPreviewUiModelRoot,
+                AnimationChannelsActive::default(),
+                LocomotionClock {
+                    t: 0.0,
+                    distance_m: 0.0,
+                    signed_distance_m: 0.0,
+                    speed_mps: 0.0,
+                    last_translation: Vec3::ZERO,
+                    last_move_dir_xz: Vec2::ZERO,
+                },
+                AttackClock::default(),
+                ActionClock::default(),
+                ForcedAnimationChannel::default(),
+            ))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs_f32(0.5));
+        app.update();
+
+        let locomotion = app
+            .world()
+            .get::<LocomotionClock>(root)
+            .expect("preview root locomotion clock");
+        let forced = app
+            .world()
+            .get::<ForcedAnimationChannel>(root)
+            .expect("preview root forced channel");
+        assert!(
+            locomotion.distance_m > 0.0,
+            "expected preview locomotion clock to advance"
+        );
+        assert_eq!(forced.channel, "move");
+    }
+
+    #[test]
+    fn preview_tick_marks_custom_attack_driven_channel_as_attacking() {
+        let mut library = ObjectLibrary::default();
+        let root_id = super::super::gen3d_draft_object_id();
+        let attack_slot = PartAnimationSlot {
+            channel: "lunge".into(),
+            family: PartAnimationFamily::Base,
+            spec: PartAnimationSpec {
+                driver: PartAnimationDriver::AttackTime,
+                speed_scale: 1.0,
+                time_offset_units: 0.0,
+                basis: Transform::IDENTITY,
+                clip: PartAnimationDef::Loop {
+                    duration_secs: 1.0,
+                    keyframes: vec![PartAnimationKeyframeDef {
+                        time_secs: 0.0,
+                        delta: Transform::from_translation(Vec3::new(0.0, 0.5, 0.0)),
+                    }],
+                },
+            },
+        };
+        library.upsert(ObjectDef {
+            object_id: root_id,
+            label: "draft".into(),
+            size: Vec3::ONE,
+            ground_origin_y: None,
+            collider: ColliderProfile::None,
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: None,
+            anchors: Vec::new(),
+            parts: vec![ObjectPartDef::primitive(
+                PrimitiveVisualDef::Primitive {
+                    mesh: MeshKey::UnitCube,
+                    params: None,
+                    color: Color::WHITE,
+                    unlit: false,
+                },
+                Transform::IDENTITY,
+            )
+            .with_animation_slot(
+                attack_slot.channel,
+                attack_slot.family,
+                attack_slot.spec,
+            )],
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        });
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(State::new(BuildScene::Preview));
+        app.insert_resource(Gen3dPreview {
+            animation_channel: "lunge".to_string(),
+            ..Default::default()
+        });
+        app.insert_resource(Gen3dAiJob::default());
+        app.insert_resource(library);
+        app.add_systems(Update, gen3d_preview_tick_selected_animation);
+
+        let root = app
+            .world_mut()
+            .spawn((
+                Gen3dPreviewUiModelRoot,
+                AnimationChannelsActive::default(),
+                LocomotionClock {
+                    t: 0.0,
+                    distance_m: 0.0,
+                    signed_distance_m: 0.0,
+                    speed_mps: 0.0,
+                    last_translation: Vec3::ZERO,
+                    last_move_dir_xz: Vec2::ZERO,
+                },
+                AttackClock::default(),
+                ActionClock::default(),
+                ForcedAnimationChannel::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let channels = app
+            .world()
+            .get::<AnimationChannelsActive>(root)
+            .copied()
+            .expect("preview root channels");
+        let attack = app
+            .world()
+            .get::<AttackClock>(root)
+            .copied()
+            .expect("preview root attack clock");
+        assert!(channels.attacking_primary, "channels={channels:?}");
+        assert!(attack.duration_secs > 0.0, "attack={attack:?}");
     }
 }

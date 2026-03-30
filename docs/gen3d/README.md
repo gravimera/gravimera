@@ -96,6 +96,8 @@ component tree, not just the first root layer.
   of collapsing everything to the enclosing torso/body shell.
 - Use the `Inspect` → `Explode` toggle in the preview stats box to separate visible components in
   the preview only, including nested object-ref roots.
+- The preview animation ticker stays live even while Gen3D is capturing internal motion sheets, so
+  the visible panel no longer freezes intermittently during review/export phases.
 - In explode mode, zoom stays centered on the exploded assembly instead of pulling back toward the
   original assembled draft center.
 - Hovering uses a flatter segmented frame rather than a filled selection box so bright components
@@ -107,6 +109,19 @@ component tree, not just the first root layer.
 
 This is preview-only inspection UI. It does not modify the draft, saved prefab, or component
 attachments.
+
+## Preview export
+
+The preview stats box now includes an `Export` button.
+
+- Clicking it exports one still PNG and one animated GIF for each authored preview motion channel.
+- Default exports go to `GRAVIMERA_HOME/cache/gen3d_preview_exports/preview_export_<unix_secs>_<run_id>/`.
+- Files use informative names such as `01_idle_still.png`, `01_idle_anim.gif`,
+  `02_attack_still.png`, and `02_attack_anim.gif`.
+- `manifest.json` in the same folder records the exported channels, preview camera settings, frame
+  count, and output filenames.
+- Export uses a dedicated off-screen preview model/camera, so it does not mutate the saved draft or
+  component layout.
 
 ## Component identity
 
