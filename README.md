@@ -1,9 +1,9 @@
 # Gravimera
 
-Gravimera is an **AI-driven Metaverse Editor**. You can use natural language to:
+Gravimera is an **AI(LLM)-driven 3D word Editor and Explorer**. You can use natural languages to:
 
 - Generate any 3D model with motion animations and make it directly playable in the world.
-- Generate game scenes with highly interactive units and buildings.
+- Generate game scenes with highly interactive units and buildings. **[TODO]**
 - Generate a whole story. **[TODO]**
 
 <img src="assets/icon.png" width="128" height="128" alt="Gravimera app icon" />
@@ -36,6 +36,8 @@ Tip: start from `config.example.toml` so sensible defaults (including `openai.mo
 ```bash
 cargo run
 ```
+
+Or go to [releases](https://github.com/gravimera/gravimera/releases), download the latest release, and double clicks.
 
 ## Screenshots
 <img src="screenshots/ss1.png" width="640" height="374" alt="ss1.png" />
