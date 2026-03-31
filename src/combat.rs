@@ -966,7 +966,6 @@ pub(crate) fn unit_attack_execute(
             &Transform,
             &Collider,
             &ObjectPrefabId,
-            Option<&LocomotionClock>,
             Option<&AimYawDelta>,
             &mut AttackCooldown,
         ),
@@ -1000,7 +999,7 @@ pub(crate) fn unit_attack_execute(
     let mut melee_kills: u32 = 0;
 
     for entity in selection.selected.iter().copied() {
-        let Ok((entity, transform, _collider, prefab_id, locomotion, aim_delta, mut cooldown)) =
+        let Ok((entity, transform, _collider, prefab_id, aim_delta, mut cooldown)) =
             commandables.get_mut(entity)
         else {
             continue;
@@ -1031,6 +1030,10 @@ pub(crate) fn unit_attack_execute(
         }
         cooldown.remaining_secs = attack.cooldown_secs.max(0.0);
 
+        let aim_rot = Quat::from_rotation_y(aim_delta.copied().unwrap_or_default().0);
+        let direction =
+            normalize_flat_direction((transform.rotation * aim_rot) * Vec3::Z).unwrap_or(Vec3::Z);
+
         match attack.kind {
             UnitAttackKind::Melee => {
                 let Some(melee) = attack.melee.as_ref() else {
@@ -1041,9 +1044,6 @@ pub(crate) fn unit_attack_execute(
                     continue;
                 }
 
-                let aim_rot = Quat::from_rotation_y(aim_delta.copied().unwrap_or_default().0);
-                let direction = normalize_flat_direction((transform.rotation * aim_rot) * Vec3::Z)
-                    .unwrap_or(Vec3::Z);
                 let origin = transform.translation;
                 let forward2 = Vec2::new(direction.x, direction.z).normalize_or_zero();
                 let cos_min = if melee.arc_degrees >= 360.0 {
@@ -1227,23 +1227,6 @@ pub(crate) fn unit_attack_execute(
                     continue;
                 };
 
-                let fire_direction = locomotion
-                    .map(|clock| clock.last_move_dir_xz)
-                    .filter(|dir| dir.length_squared() > 1e-6)
-                    .map(|dir| Vec3::new(dir.x, 0.0, dir.y))
-                    .and_then(normalize_flat_direction)
-                    .unwrap_or_else(|| {
-                        normalize_flat_direction(transform.rotation * Vec3::Z).unwrap_or(Vec3::Z)
-                    });
-
-                let dir2 = Vec2::new(fire_direction.x, fire_direction.z).normalize_or_zero();
-                let desired_yaw = dir2.x.atan2(dir2.y);
-                let forward = transform.rotation * Vec3::Z;
-                let body_yaw = forward.x.atan2(forward.z);
-                let delta = wrap_angle_pi(desired_yaw - body_yaw);
-                let aim_rot = Quat::from_rotation_y(delta);
-                commands.entity(entity).insert(AimYawDelta(delta));
-
                 let muzzle_pos = anchor_world_position(
                     &library,
                     prefab_id.0,
@@ -1254,9 +1237,9 @@ pub(crate) fn unit_attack_execute(
                 .unwrap_or_else(|| transform.translation + Vec3::Y * 1.0);
 
                 let radius = projectile_collider_radius(projectile_def);
-                let spawn_pos = muzzle_pos + fire_direction * (radius * 1.05 + 0.01);
-                let velocity = fire_direction * projectile_profile.speed;
-                let yaw = fire_direction.x.atan2(fire_direction.z);
+                let spawn_pos = muzzle_pos + direction * (radius * 1.05 + 0.01);
+                let velocity = direction * projectile_profile.speed;
+                let yaw = direction.x.atan2(direction.z);
                 let rotation = Quat::from_rotation_y(yaw);
 
                 let mut bullet_entity = commands.spawn((
@@ -1330,7 +1313,6 @@ pub(crate) fn brain_attack_execute(
             &Transform,
             &Collider,
             &ObjectPrefabId,
-            Option<&LocomotionClock>,
             &mut AttackCooldown,
             &BrainAttackOrder,
         ),
@@ -1358,9 +1340,7 @@ pub(crate) fn brain_attack_execute(
     let wall_time = time.elapsed_secs();
     let mut melee_kills: u32 = 0;
 
-    for (entity, transform, _collider, prefab_id, locomotion, mut cooldown, order) in
-        attackers.iter_mut()
-    {
+    for (entity, transform, _collider, prefab_id, mut cooldown, order) in attackers.iter_mut() {
         if let Some(valid_until_tick) = order.valid_until_tick {
             if tick_index > valid_until_tick {
                 commands.entity(entity).remove::<BrainAttackOrder>();
@@ -1484,24 +1464,25 @@ pub(crate) fn brain_attack_execute(
                     continue;
                 };
 
-                let fire_direction = locomotion
-                    .map(|clock| clock.last_move_dir_xz)
-                    .filter(|dir| dir.length_squared() > 1e-6)
-                    .map(|dir| Vec3::new(dir.x, 0.0, dir.y))
-                    .and_then(normalize_flat_direction)
-                    .unwrap_or(direction);
-
-                let dir2 = Vec2::new(fire_direction.x, fire_direction.z).normalize_or_zero();
+                let dir2 = Vec2::new(direction.x, direction.z);
                 let desired_yaw = dir2.x.atan2(dir2.y);
                 let forward = transform.rotation * Vec3::Z;
                 let body_yaw = forward.x.atan2(forward.z);
-                let delta = wrap_angle_pi(desired_yaw - body_yaw);
+                let mut delta = wrap_angle_pi(desired_yaw - body_yaw);
+
+                let max_delta_rads = match def.aim.as_ref() {
+                    Some(aim) => aim
+                        .max_yaw_delta_degrees
+                        .map(|deg| deg.abs().to_radians())
+                        .filter(|rads| rads.is_finite()),
+                    None => None,
+                };
+                if let Some(max) = max_delta_rads {
+                    let max = max.clamp(0.0, std::f32::consts::PI);
+                    delta = delta.clamp(-max, max);
+                }
 
                 let aim_rot = Quat::from_rotation_y(delta);
-                commands.entity(entity).insert(AimYawDelta(delta));
-                let aim_direction =
-                    normalize_flat_direction((transform.rotation * aim_rot) * Vec3::Z)
-                        .unwrap_or(fire_direction);
                 let muzzle_pos = anchor_world_position(
                     &library,
                     prefab_id.0,
@@ -1512,9 +1493,9 @@ pub(crate) fn brain_attack_execute(
                 .unwrap_or_else(|| transform.translation + Vec3::Y * 1.0);
 
                 let radius = projectile_collider_radius(projectile_def);
-                let spawn_pos = muzzle_pos + aim_direction * (radius * 1.05 + 0.01);
-                let velocity = aim_direction * projectile_profile.speed;
-                let yaw = aim_direction.x.atan2(aim_direction.z);
+                let spawn_pos = muzzle_pos + direction * (radius * 1.05 + 0.01);
+                let velocity = direction * projectile_profile.speed;
+                let yaw = direction.x.atan2(direction.z);
                 let rotation = Quat::from_rotation_y(yaw);
 
                 let mut bullet_entity = commands.spawn((
