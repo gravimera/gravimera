@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.93.0"
 default-run = "gravimera"
+license = "Apache-2.0"
 
 [dependencies]
 bevy = { version = "0.18.0", default-features = false, features = [
