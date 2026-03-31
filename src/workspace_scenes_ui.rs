@@ -57,8 +57,9 @@ impl Default for ScenesPanelExportJob {
 
 #[derive(Resource)]
 pub(crate) struct ScenesPanelImportJob {
-    receiver:
-        Mutex<Option<mpsc::Receiver<Result<Option<crate::scene_zip::SceneZipImportReport>, String>>>>,
+    receiver: Mutex<
+        Option<mpsc::Receiver<Result<Option<crate::scene_zip::SceneZipImportReport>, String>>>,
+    >,
 }
 
 impl Default for ScenesPanelImportJob {
@@ -961,8 +962,8 @@ pub(crate) fn scenes_panel_export_job_poll(
                 Ok(report) => {
                     toasts.write(UiToastCommand::Show {
                         text: format!(
-                            "Exported {} scene(s) with {} prefab package(s).",
-                            report.exported_scenes, report.exported_prefabs
+                            "Exported {} scene(s) with {} prefab package(s) and {} terrain package(s).",
+                            report.exported_scenes, report.exported_prefabs, report.exported_terrains
                         ),
                         kind: UiToastKind::Info,
                         ttl_secs: 4.0,
@@ -1051,9 +1052,10 @@ pub(crate) fn scenes_panel_import_dialog_poll(
             let summary = crate::scene_zip::summarize_scene_zip_conflicts(&realm_id, &path)?;
             let policy = if summary.has_conflicts() {
                 let mut description = format!(
-                    "The selected scene zip conflicts with {} scene id(s) and {} prefab package id(s).",
+                    "The selected scene zip conflicts with {} scene id(s), {} prefab package id(s), and {} terrain package id(s).",
                     summary.conflicting_scene_ids.len(),
-                    summary.conflicting_prefab_ids.len()
+                    summary.conflicting_prefab_ids.len(),
+                    summary.conflicting_terrain_ids.len()
                 );
                 if !summary.conflicting_scene_ids.is_empty() {
                     let preview = summary
@@ -1089,8 +1091,25 @@ pub(crate) fn scenes_panel_import_dialog_poll(
                         }
                     ));
                 }
+                if !summary.conflicting_terrain_ids.is_empty() {
+                    let preview = summary
+                        .conflicting_terrain_ids
+                        .iter()
+                        .take(3)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    description.push_str(&format!(
+                        "\nTerrain conflicts: {preview}{}",
+                        if summary.conflicting_terrain_ids.len() > 3 {
+                            ", ..."
+                        } else {
+                            ""
+                        }
+                    ));
+                }
                 description.push_str(
-                    "\n\nReplace overwrites the existing scenes and prefab packages. Keep Both imports copies under new ids. Cancel aborts the import.",
+                    "\n\nReplace overwrites the existing scenes, prefab packages, and terrain packages. Keep Both imports copies under new ids. Cancel aborts the import.",
                 );
                 crate::import_conflicts::prompt_import_conflict_policy(
                     "Scene import conflicts",
@@ -1102,8 +1121,9 @@ pub(crate) fn scenes_panel_import_dialog_poll(
             let Some(policy) = policy else {
                 return Ok(None);
             };
-            let report =
-                crate::scene_zip::import_scene_packages_from_zip_with_policy(&realm_id, &path, policy)?;
+            let report = crate::scene_zip::import_scene_packages_from_zip_with_policy(
+                &realm_id, &path, policy,
+            )?;
             Ok(Some(report))
         })();
         let _ = tx.send(result);
@@ -1113,6 +1133,11 @@ pub(crate) fn scenes_panel_import_dialog_poll(
 pub(crate) fn scenes_panel_import_job_poll(
     mut state: ResMut<ScenesPanelUiState>,
     import_job: Res<ScenesPanelImportJob>,
+    active: Res<crate::realm::ActiveRealmScene>,
+    mut active_floor: ResMut<crate::genfloor::ActiveWorldFloor>,
+    mut floor_library: ResMut<crate::floor_library_ui::FloorLibraryUiState>,
+    mut model_library: ResMut<crate::model_library_ui::ModelLibraryUiState>,
+    mut prefab_descriptors: ResMut<crate::prefab_descriptors::PrefabDescriptorLibrary>,
     mut toasts: MessageWriter<UiToastCommand>,
 ) {
     let Ok(mut guard) = import_job.receiver.lock() else {
@@ -1128,9 +1153,26 @@ pub(crate) fn scenes_panel_import_job_poll(
             match result {
                 Ok(Some(report)) => {
                     state.scenes_dirty = true;
+                    model_library.mark_models_dirty();
+                    floor_library.mark_models_dirty();
+                    prefab_descriptors.clear();
+                    let realm_prefabs_dir =
+                        crate::realm_prefab_packages::realm_prefabs_root_dir(&active.realm_id);
+                    if let Err(err) = crate::prefab_descriptors::load_prefab_descriptors_from_dir(
+                        &realm_prefabs_dir,
+                        &mut *prefab_descriptors,
+                    ) {
+                        warn!("{err}");
+                    }
+                    crate::scene_store::apply_scene_floor_selection(
+                        &active.realm_id,
+                        &active.scene_id,
+                        &mut active_floor,
+                        &mut floor_library,
+                    );
                     toasts.write(UiToastCommand::Show {
                         text: format!(
-                            "Scenes imported {}, replaced {}, kept-both {}, invalid {}; prefabs imported {}, replaced {}, kept-both {}, invalid {}.",
+                            "Scenes imported {}, replaced {}, kept-both {}, invalid {}; prefabs imported {}, replaced {}, kept-both {}, invalid {}; terrain imported {}, replaced {}, kept-both {}, invalid {}.",
                             report.imported_scenes,
                             report.replaced_scenes,
                             report.renamed_scenes,
@@ -1138,9 +1180,16 @@ pub(crate) fn scenes_panel_import_job_poll(
                             report.imported_prefabs,
                             report.replaced_prefabs,
                             report.renamed_prefabs,
-                            report.invalid_prefabs
+                            report.invalid_prefabs,
+                            report.imported_terrains,
+                            report.replaced_terrains,
+                            report.renamed_terrains,
+                            report.invalid_terrains
                         ),
-                        kind: if report.invalid_scenes > 0 || report.invalid_prefabs > 0 {
+                        kind: if report.invalid_scenes > 0
+                            || report.invalid_prefabs > 0
+                            || report.invalid_terrains > 0
+                        {
                             UiToastKind::Warn
                         } else {
                             UiToastKind::Info

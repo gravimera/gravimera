@@ -10,6 +10,7 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 pub(crate) struct SceneZipExportReport {
     pub(crate) exported_scenes: usize,
     pub(crate) exported_prefabs: usize,
+    pub(crate) exported_terrains: usize,
 }
 
 pub(crate) struct SceneZipImportReport {
@@ -21,21 +22,32 @@ pub(crate) struct SceneZipImportReport {
     pub(crate) replaced_prefabs: usize,
     pub(crate) renamed_prefabs: usize,
     pub(crate) invalid_prefabs: usize,
+    pub(crate) imported_terrains: usize,
+    pub(crate) replaced_terrains: usize,
+    pub(crate) renamed_terrains: usize,
+    pub(crate) invalid_terrains: usize,
 }
 
 pub(crate) struct SceneZipConflictSummary {
     pub(crate) conflicting_scene_ids: Vec<String>,
     pub(crate) conflicting_prefab_ids: Vec<String>,
+    pub(crate) conflicting_terrain_ids: Vec<String>,
 }
 
 impl SceneZipConflictSummary {
     pub(crate) fn has_conflicts(&self) -> bool {
-        !self.conflicting_scene_ids.is_empty() || !self.conflicting_prefab_ids.is_empty()
+        !self.conflicting_scene_ids.is_empty()
+            || !self.conflicting_prefab_ids.is_empty()
+            || !self.conflicting_terrain_ids.is_empty()
     }
 }
 
 const SCENES_ZIP_ROOT_DIR: &str = "scenes";
 const PREFABS_ZIP_ROOT_DIR: &str = "prefabs";
+const TERRAIN_ZIP_ROOT_DIR: &str = "terrain";
+const LEGACY_TERRAIN_ZIP_ROOT_DIR: &str = "floors";
+const TERRAIN_DEF_FILE_NAME: &str = "terrain_def_v1.json";
+const LEGACY_TERRAIN_DEF_FILE_NAME: &str = "floor_def_v1.json";
 
 fn zip_path_string(path: &Path) -> Result<String, String> {
     let Some(path_str) = path.to_str() else {
@@ -103,12 +115,21 @@ pub(crate) fn export_scene_packages_to_zip(
 ) -> Result<SceneZipExportReport, String> {
     let scenes_root = crate::paths::realm_dir(realm_id).join("scenes");
     let prefabs_root = crate::paths::realm_prefabs_dir(realm_id);
-    export_scene_packages_to_zip_from_roots(&scenes_root, &prefabs_root, scene_ids, zip_path)
+    crate::realm_floor_packages::migrate_legacy_floor_storage_for_realm(realm_id)?;
+    let floors_root = crate::paths::realm_floors_dir(realm_id);
+    export_scene_packages_to_zip_from_roots(
+        &scenes_root,
+        &prefabs_root,
+        &floors_root,
+        scene_ids,
+        zip_path,
+    )
 }
 
 fn export_scene_packages_to_zip_from_roots(
     scenes_root: &Path,
     prefabs_root: &Path,
+    floors_root: &Path,
     scene_ids: &[String],
     zip_path: &Path,
 ) -> Result<SceneZipExportReport, String> {
@@ -132,6 +153,7 @@ fn export_scene_packages_to_zip_from_roots(
         .map_err(|err| format!("Failed to create {}: {err}", zip_path.display()))?;
     let mut writer = ZipWriter::new(file);
     let mut prefab_ids = BTreeSet::new();
+    let mut terrain_ids = BTreeSet::new();
 
     for scene_id in &ids {
         let scene_dir = scenes_root.join(scene_id);
@@ -142,6 +164,7 @@ fn export_scene_packages_to_zip_from_roots(
         let zip_root = Path::new(SCENES_ZIP_ROOT_DIR).join(scene_id);
         add_dir_to_zip(&mut writer, &scene_dir, &zip_root)?;
         prefab_ids.extend(collect_referenced_prefab_ids_for_scene_dir(&scene_dir)?);
+        terrain_ids.extend(collect_referenced_terrain_ids_for_scene_dir(&scene_dir)?);
     }
 
     let mut exported_prefabs = 0usize;
@@ -156,6 +179,21 @@ fn export_scene_packages_to_zip_from_roots(
         exported_prefabs += 1;
     }
 
+    let mut exported_terrains = 0usize;
+    for terrain_id in terrain_ids {
+        if terrain_id == crate::floor_library_ui::DEFAULT_FLOOR_ID {
+            continue;
+        }
+        let uuid = uuid::Uuid::from_u128(terrain_id).to_string();
+        let package_dir = floors_root.join(&uuid);
+        if !package_dir.is_dir() {
+            continue;
+        }
+        let zip_root = Path::new(TERRAIN_ZIP_ROOT_DIR).join(&uuid);
+        add_dir_to_zip(&mut writer, &package_dir, &zip_root)?;
+        exported_terrains += 1;
+    }
+
     writer
         .finish()
         .map_err(|err| format!("Failed to finalize zip: {err}"))?;
@@ -163,6 +201,7 @@ fn export_scene_packages_to_zip_from_roots(
     Ok(SceneZipExportReport {
         exported_scenes: ids.len(),
         exported_prefabs,
+        exported_terrains,
     })
 }
 
@@ -178,13 +217,28 @@ fn collect_referenced_prefab_ids_for_scene_dir(scene_dir: &Path) -> Result<BTree
     Ok(ids)
 }
 
+fn collect_referenced_terrain_ids_for_scene_dir(
+    scene_dir: &Path,
+) -> Result<BTreeSet<u128>, String> {
+    let mut ids = BTreeSet::new();
+    let build_dir = scene_dir.join("build");
+    if let Some(terrain_id) =
+        crate::scene_floor_selection::read_scene_floor_selection_from_build_dir(&build_dir)?
+    {
+        ids.insert(terrain_id);
+    }
+    Ok(ids)
+}
+
 pub(crate) fn summarize_scene_zip_conflicts(
     realm_id: &str,
     zip_path: &Path,
 ) -> Result<SceneZipConflictSummary, String> {
     let scenes_root = crate::paths::realm_dir(realm_id).join("scenes");
     let prefabs_root = crate::paths::realm_prefabs_dir(realm_id);
-    summarize_scene_zip_conflicts_in_roots(&scenes_root, &prefabs_root, zip_path)
+    crate::realm_floor_packages::migrate_legacy_floor_storage_for_realm(realm_id)?;
+    let floors_root = crate::paths::realm_floors_dir(realm_id);
+    summarize_scene_zip_conflicts_in_roots(&scenes_root, &prefabs_root, &floors_root, zip_path)
 }
 
 pub(crate) fn import_scene_packages_from_zip_with_policy(
@@ -194,18 +248,27 @@ pub(crate) fn import_scene_packages_from_zip_with_policy(
 ) -> Result<SceneZipImportReport, String> {
     let scenes_root = crate::paths::realm_dir(realm_id).join("scenes");
     let prefabs_root = crate::paths::realm_prefabs_dir(realm_id);
-    import_scene_packages_from_zip_to_roots_with_policy(&scenes_root, &prefabs_root, zip_path, policy)
+    crate::realm_floor_packages::migrate_legacy_floor_storage_for_realm(realm_id)?;
+    let floors_root = crate::paths::realm_floors_dir(realm_id);
+    import_scene_packages_from_zip_to_roots_with_policy(
+        &scenes_root,
+        &prefabs_root,
+        &floors_root,
+        zip_path,
+        policy,
+    )
 }
 
 fn summarize_scene_zip_conflicts_in_roots(
     scenes_root: &Path,
     prefabs_root: &Path,
+    floors_root: &Path,
     zip_path: &Path,
 ) -> Result<SceneZipConflictSummary, String> {
     let file = File::open(zip_path)
         .map_err(|err| format!("Failed to open {}: {err}", zip_path.display()))?;
     let mut archive = ZipArchive::new(file).map_err(|err| format!("Failed to read zip: {err}"))?;
-    let (scenes, prefabs) = scan_scene_zip_packages(&mut archive)?;
+    let (scenes, prefabs, terrains) = scan_scene_zip_packages(&mut archive)?;
 
     let mut conflicting_scene_ids = Vec::new();
     for scene in scenes.values() {
@@ -229,32 +292,53 @@ fn summarize_scene_zip_conflicts_in_roots(
         }
     }
 
+    let mut conflicting_terrain_ids = Vec::new();
+    for (_terrain_id, terrain) in terrains {
+        if !terrain.has_terrain_def {
+            continue;
+        }
+        let dest_root = floors_root.join(&terrain.uuid_str);
+        if dest_root.exists() {
+            conflicting_terrain_ids.push(terrain.uuid_str);
+        }
+    }
+
     Ok(SceneZipConflictSummary {
         conflicting_scene_ids,
         conflicting_prefab_ids,
+        conflicting_terrain_ids,
     })
 }
 
 fn import_scene_packages_from_zip_to_roots_with_policy(
     scenes_root: &Path,
     prefabs_root: &Path,
+    floors_root: &Path,
     zip_path: &Path,
     policy: ImportConflictPolicy,
 ) -> Result<SceneZipImportReport, String> {
     let file = File::open(zip_path)
         .map_err(|err| format!("Failed to open {}: {err}", zip_path.display()))?;
     let mut archive = ZipArchive::new(file).map_err(|err| format!("Failed to read zip: {err}"))?;
-    let (scenes, prefabs) = scan_scene_zip_packages(&mut archive)?;
+    let (scenes, prefabs, terrains) = scan_scene_zip_packages(&mut archive)?;
 
     std::fs::create_dir_all(scenes_root)
         .map_err(|err| format!("Failed to create {}: {err}", scenes_root.display()))?;
     std::fs::create_dir_all(prefabs_root)
         .map_err(|err| format!("Failed to create {}: {err}", prefabs_root.display()))?;
+    std::fs::create_dir_all(floors_root)
+        .map_err(|err| format!("Failed to create {}: {err}", floors_root.display()))?;
 
     let scene_id_map = resolve_scene_import_ids(scenes_root, &scenes, policy)?;
     let prefab_id_map = resolve_prefab_import_ids(prefabs_root, &prefabs, policy)?;
+    let terrain_id_map = resolve_terrain_import_ids(floors_root, &terrains, policy)?;
     let any_scene_renamed = scene_id_map.iter().any(|(old_id, new_id)| old_id != new_id);
-    let any_prefab_renamed = prefab_id_map.iter().any(|(old_id, new_id)| old_id != new_id);
+    let any_prefab_renamed = prefab_id_map
+        .iter()
+        .any(|(old_id, new_id)| old_id != new_id);
+    let any_terrain_renamed = terrain_id_map
+        .iter()
+        .any(|(old_id, new_id)| old_id != new_id);
 
     let mut report = SceneZipImportReport {
         imported_scenes: 0,
@@ -265,7 +349,71 @@ fn import_scene_packages_from_zip_to_roots_with_policy(
         replaced_prefabs: 0,
         renamed_prefabs: 0,
         invalid_prefabs: 0,
+        imported_terrains: 0,
+        replaced_terrains: 0,
+        renamed_terrains: 0,
+        invalid_terrains: 0,
     };
+
+    for (terrain_id, terrain) in terrains {
+        if !terrain.has_terrain_def {
+            report.invalid_terrains += 1;
+            continue;
+        }
+
+        let resolved_terrain_id = terrain_id_map
+            .get(&terrain_id)
+            .copied()
+            .unwrap_or(terrain_id);
+        let existing_root = floors_root.join(uuid::Uuid::from_u128(terrain_id).to_string());
+        let conflict = existing_root.exists();
+
+        match (resolved_terrain_id == terrain_id, conflict, policy) {
+            (true, false, _) => {
+                extract_terrain_entries_into_root(
+                    &mut archive,
+                    &terrain.indices,
+                    &terrain.uuid_str,
+                    &existing_root,
+                )?;
+                report.imported_terrains += 1;
+            }
+            (true, true, ImportConflictPolicy::Replace) => {
+                std::fs::remove_dir_all(&existing_root).map_err(|err| {
+                    format!(
+                        "Failed to replace existing terrain package {}: {err}",
+                        existing_root.display()
+                    )
+                })?;
+                extract_terrain_entries_into_root(
+                    &mut archive,
+                    &terrain.indices,
+                    &terrain.uuid_str,
+                    &existing_root,
+                )?;
+                report.imported_terrains += 1;
+                report.replaced_terrains += 1;
+            }
+            (false, true, ImportConflictPolicy::KeepBoth) => {
+                let dest_root =
+                    floors_root.join(uuid::Uuid::from_u128(resolved_terrain_id).to_string());
+                extract_terrain_entries_into_root(
+                    &mut archive,
+                    &terrain.indices,
+                    &terrain.uuid_str,
+                    &dest_root,
+                )?;
+                report.imported_terrains += 1;
+                report.renamed_terrains += 1;
+            }
+            _ => {
+                return Err(format!(
+                    "Unsupported scene terrain import state for {}.",
+                    terrain.uuid_str
+                ));
+            }
+        }
+    }
 
     for (prefab_id, prefab) in prefabs {
         if !prefab.has_prefab_json {
@@ -355,8 +503,13 @@ fn import_scene_packages_from_zip_to_roots_with_policy(
         let dest_root = scenes_root.join(&resolved_scene_id);
         let conflict = existing_root.exists();
 
-        let needs_rewrite = any_scene_renamed || any_prefab_renamed;
-        match (needs_rewrite, resolved_scene_id == scene.scene_id, conflict, policy) {
+        let needs_rewrite = any_scene_renamed || any_prefab_renamed || any_terrain_renamed;
+        match (
+            needs_rewrite,
+            resolved_scene_id == scene.scene_id,
+            conflict,
+            policy,
+        ) {
             (false, true, false, _) => {
                 extract_entries_into_root(
                     &mut archive,
@@ -409,6 +562,7 @@ fn import_scene_packages_from_zip_to_roots_with_policy(
                         &resolved_scene_id,
                         &scene_id_map,
                         &prefab_id_map,
+                        &terrain_id_map,
                     )?;
                     if dest_root.exists() {
                         return Err(format!(
@@ -447,11 +601,25 @@ struct PrefabEntries {
     uuid_str: String,
 }
 
+struct TerrainEntries {
+    indices: Vec<usize>,
+    has_terrain_def: bool,
+    uuid_str: String,
+}
+
 fn scan_scene_zip_packages(
     archive: &mut ZipArchive<File>,
-) -> Result<(BTreeMap<String, SceneEntries>, BTreeMap<u128, PrefabEntries>), String> {
+) -> Result<
+    (
+        BTreeMap<String, SceneEntries>,
+        BTreeMap<u128, PrefabEntries>,
+        BTreeMap<u128, TerrainEntries>,
+    ),
+    String,
+> {
     let mut scenes: BTreeMap<String, SceneEntries> = BTreeMap::new();
     let mut prefabs: BTreeMap<u128, PrefabEntries> = BTreeMap::new();
+    let mut terrains: BTreeMap<u128, TerrainEntries> = BTreeMap::new();
 
     for idx in 0..archive.len() {
         let file = archive
@@ -530,17 +698,52 @@ fn scan_scene_zip_packages(
             continue;
         }
 
+        if root == TERRAIN_ZIP_ROOT_DIR || root == LEGACY_TERRAIN_ZIP_ROOT_DIR {
+            let Some(Component::Normal(uuid_component)) = components.next() else {
+                return Err(format!("Zip entry missing terrain UUID: {}", file.name()));
+            };
+            let uuid_str = uuid_component
+                .to_str()
+                .ok_or_else(|| format!("Invalid terrain UUID path: {}", file.name()))?;
+            let uuid = uuid::Uuid::parse_str(uuid_str)
+                .map_err(|_| format!("Invalid terrain UUID in zip: {uuid_str}"))?;
+            if uuid.as_u128() == crate::floor_library_ui::DEFAULT_FLOOR_ID {
+                return Err(
+                    "Zip contains Default Terrain UUID, which is not supported.".to_string()
+                );
+            }
+
+            let rel: PathBuf = components.collect();
+            let entry = terrains
+                .entry(uuid.as_u128())
+                .or_insert_with(|| TerrainEntries {
+                    indices: Vec::new(),
+                    has_terrain_def: false,
+                    uuid_str: uuid_str.to_string(),
+                });
+            entry.indices.push(idx);
+
+            if !file.is_dir() {
+                if let Some(name) = rel.file_name().and_then(|value| value.to_str()) {
+                    if name == TERRAIN_DEF_FILE_NAME || name == LEGACY_TERRAIN_DEF_FILE_NAME {
+                        entry.has_terrain_def = true;
+                    }
+                }
+            }
+            continue;
+        }
+
         return Err(format!(
-            "Zip entry outside {SCENES_ZIP_ROOT_DIR}/ or {PREFABS_ZIP_ROOT_DIR}/: {}",
+            "Zip entry outside {SCENES_ZIP_ROOT_DIR}/, {PREFABS_ZIP_ROOT_DIR}/, or {TERRAIN_ZIP_ROOT_DIR}/: {}",
             file.name()
         ));
     }
 
-    if scenes.is_empty() && prefabs.is_empty() {
-        return Err("Zip contains no scene packages.".to_string());
+    if scenes.is_empty() && prefabs.is_empty() && terrains.is_empty() {
+        return Err("Zip contains no scene, prefab, or terrain packages.".to_string());
     }
 
-    Ok((scenes, prefabs))
+    Ok((scenes, prefabs, terrains))
 }
 
 fn extract_entries_into_root(
@@ -582,6 +785,53 @@ fn extract_entries_into_root(
     Ok(())
 }
 
+fn extract_terrain_entries_into_root(
+    archive: &mut ZipArchive<File>,
+    indices: &[usize],
+    package_name: &str,
+    dest_root: &Path,
+) -> Result<(), String> {
+    for idx in indices {
+        let mut file = archive
+            .by_index(*idx)
+            .map_err(|err| format!("Failed to read zip entry: {err}"))?;
+        let Some(path) = file.enclosed_name().map(|p| p.to_path_buf()) else {
+            return Err("Zip contains invalid path (path traversal).".to_string());
+        };
+        let rel_from_root = path
+            .strip_prefix(TERRAIN_ZIP_ROOT_DIR)
+            .or_else(|_| path.strip_prefix(LEGACY_TERRAIN_ZIP_ROOT_DIR))
+            .map_err(|_| format!("Zip entry has invalid layout: {}", file.name()))?;
+        let rel = rel_from_root
+            .strip_prefix(package_name)
+            .map_err(|_| format!("Zip entry has invalid layout: {}", file.name()))?;
+
+        let mut out_path = dest_root.join(rel);
+        if out_path.file_name().and_then(|value| value.to_str())
+            == Some(LEGACY_TERRAIN_DEF_FILE_NAME)
+        {
+            out_path = out_path.with_file_name(TERRAIN_DEF_FILE_NAME);
+        }
+
+        if file.is_dir() {
+            std::fs::create_dir_all(&out_path)
+                .map_err(|err| format!("Failed to create {}: {err}", out_path.display()))?;
+            continue;
+        }
+
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("Failed to create {}: {err}", parent.display()))?;
+        }
+        let mut out = File::create(&out_path)
+            .map_err(|err| format!("Failed to write {}: {err}", out_path.display()))?;
+        io::copy(&mut file, &mut out)
+            .map_err(|err| format!("Failed to extract {}: {err}", out_path.display()))?;
+    }
+
+    Ok(())
+}
+
 fn resolve_scene_import_ids(
     scenes_root: &Path,
     scenes: &BTreeMap<String, SceneEntries>,
@@ -594,11 +844,12 @@ fn resolve_scene_import_ids(
             continue;
         }
         let existing_root = scenes_root.join(&scene.scene_id);
-        let dest_scene_id = if existing_root.exists() && matches!(policy, ImportConflictPolicy::KeepBoth) {
-            generate_unique_scene_id(scenes_root, &scene.scene_id, &mut reserved)?
-        } else {
-            scene.scene_id.clone()
-        };
+        let dest_scene_id =
+            if existing_root.exists() && matches!(policy, ImportConflictPolicy::KeepBoth) {
+                generate_unique_scene_id(scenes_root, &scene.scene_id, &mut reserved)?
+            } else {
+                scene.scene_id.clone()
+            };
         reserved.insert(dest_scene_id.clone());
         out.insert(scene.scene_id.clone(), dest_scene_id);
     }
@@ -625,6 +876,30 @@ fn resolve_prefab_import_ids(
             };
         reserved.insert(dest_prefab_id);
         out.insert(*prefab_id, dest_prefab_id);
+    }
+    Ok(out)
+}
+
+fn resolve_terrain_import_ids(
+    terrains_root: &Path,
+    terrains: &BTreeMap<u128, TerrainEntries>,
+    policy: ImportConflictPolicy,
+) -> Result<BTreeMap<u128, u128>, String> {
+    let mut out = BTreeMap::new();
+    let mut reserved = std::collections::HashSet::new();
+    for (terrain_id, terrain) in terrains {
+        if !terrain.has_terrain_def {
+            continue;
+        }
+        let existing_root = terrains_root.join(uuid::Uuid::from_u128(*terrain_id).to_string());
+        let dest_terrain_id =
+            if existing_root.exists() && matches!(policy, ImportConflictPolicy::KeepBoth) {
+                generate_unique_terrain_id_from_root(terrains_root, &mut reserved)?
+            } else {
+                *terrain_id
+            };
+        reserved.insert(dest_terrain_id);
+        out.insert(*terrain_id, dest_terrain_id);
     }
     Ok(out)
 }
@@ -662,12 +937,38 @@ fn generate_unique_prefab_id_from_root(
         if !reserved.insert(prefab_id) {
             continue;
         }
-        if !prefabs_root.join(uuid::Uuid::from_u128(prefab_id).to_string()).exists() {
+        if !prefabs_root
+            .join(uuid::Uuid::from_u128(prefab_id).to_string())
+            .exists()
+        {
             return Ok(prefab_id);
         }
     }
 
     Err("Failed to generate a unique prefab id for scene keep-both import.".to_string())
+}
+
+fn generate_unique_terrain_id_from_root(
+    terrains_root: &Path,
+    reserved: &mut std::collections::HashSet<u128>,
+) -> Result<u128, String> {
+    for _ in 0..1024 {
+        let terrain_id = uuid::Uuid::new_v4().as_u128();
+        if terrain_id == crate::floor_library_ui::DEFAULT_FLOOR_ID {
+            continue;
+        }
+        if !reserved.insert(terrain_id) {
+            continue;
+        }
+        if !terrains_root
+            .join(uuid::Uuid::from_u128(terrain_id).to_string())
+            .exists()
+        {
+            return Ok(terrain_id);
+        }
+    }
+
+    Err("Failed to generate a unique terrain id for scene keep-both import.".to_string())
 }
 
 fn rewrite_staged_scene_package_in_place(
@@ -676,19 +977,26 @@ fn rewrite_staged_scene_package_in_place(
     resolved_scene_id: &str,
     scene_id_map: &BTreeMap<String, String>,
     prefab_id_map: &BTreeMap<u128, u128>,
+    terrain_id_map: &BTreeMap<u128, u128>,
 ) -> Result<(), String> {
     for rel_path in ["build/scene.grav", "build/scene.build.grav"] {
         let path = staged_scene_dir.join(rel_path);
         if !path.exists() {
             continue;
         }
-        let bytes =
-            std::fs::read(&path).map_err(|err| format!("Failed to read {}: {err}", path.display()))?;
-        let remapped = crate::scene_store::remap_prefab_ids_in_scene_dat_bytes(&bytes, prefab_id_map)
-            .map_err(|err| format!("{}: {err}", path.display()))?;
+        let bytes = std::fs::read(&path)
+            .map_err(|err| format!("Failed to read {}: {err}", path.display()))?;
+        let remapped =
+            crate::scene_store::remap_prefab_ids_in_scene_dat_bytes(&bytes, prefab_id_map)
+                .map_err(|err| format!("{}: {err}", path.display()))?;
         std::fs::write(&path, remapped)
             .map_err(|err| format!("Failed to write {}: {err}", path.display()))?;
     }
+
+    crate::scene_floor_selection::remap_scene_floor_selection_in_build_dir(
+        &staged_scene_dir.join("build"),
+        terrain_id_map,
+    )?;
 
     let src_dir = staged_scene_dir.join("src");
     let index_path = src_dir.join(crate::scene_sources::SCENE_SOURCES_INDEX_FILE_NAME);
@@ -696,8 +1004,8 @@ fn rewrite_staged_scene_package_in_place(
         return Ok(());
     }
 
-    let mut sources =
-        crate::scene_sources::SceneSourcesV1::load_from_dir(&src_dir).map_err(|err| err.to_string())?;
+    let mut sources = crate::scene_sources::SceneSourcesV1::load_from_dir(&src_dir)
+        .map_err(|err| err.to_string())?;
     remap_scene_sources_json_value(&mut sources.index_json, scene_id_map, prefab_id_map);
     remap_scene_sources_json_value(&mut sources.meta_json, scene_id_map, prefab_id_map);
     remap_scene_sources_json_value(&mut sources.markers_json, scene_id_map, prefab_id_map);
@@ -715,7 +1023,9 @@ fn rewrite_staged_scene_package_in_place(
             serde_json::Value::String(resolved_scene_id.to_string()),
         );
     }
-    sources.write_to_dir(&src_dir).map_err(|err| err.to_string())
+    sources
+        .write_to_dir(&src_dir)
+        .map_err(|err| err.to_string())
 }
 
 fn remap_scene_sources_json_value(
@@ -783,9 +1093,10 @@ fn copy_dir_recursive(from: &Path, to: &Path) -> Result<(), String> {
     if !from.exists() {
         return Ok(());
     }
-    std::fs::create_dir_all(to).map_err(|err| format!("Failed to create {}: {err}", to.display()))?;
-    let entries =
-        std::fs::read_dir(from).map_err(|err| format!("Failed to list {}: {err}", from.display()))?;
+    std::fs::create_dir_all(to)
+        .map_err(|err| format!("Failed to create {}: {err}", to.display()))?;
+    let entries = std::fs::read_dir(from)
+        .map_err(|err| format!("Failed to list {}: {err}", from.display()))?;
     for entry in entries {
         let entry = entry.map_err(|err| format!("Failed to read dir entry: {err}"))?;
         let src_path = entry.path();
@@ -902,6 +1213,33 @@ mod tests {
         .expect("write prefab json");
     }
 
+    fn write_terrain_package(root: &Path, terrain_id: u128, label: &str) {
+        let uuid = uuid::Uuid::from_u128(terrain_id).to_string();
+        let package_dir = root.join(uuid);
+        std::fs::create_dir_all(&package_dir).expect("create terrain package dir");
+        std::fs::write(
+            package_dir.join(TERRAIN_DEF_FILE_NAME),
+            format!(
+                "{{\"format_version\":1,\"label\":\"{}\",\"mesh\":{{\"kind\":\"grid\",\"size_m\":[10.0,10.0],\"subdiv\":[1,1],\"thickness_m\":0.1,\"uv_tiling\":[1.0,1.0]}},\"material\":{{\"base_color_rgba\":[0.1,0.1,0.1,1.0],\"metallic\":0.0,\"roughness\":1.0,\"unlit\":false}},\"coloring\":{{\"mode\":\"solid\",\"palette\":[],\"scale\":[1.0,1.0],\"angle_deg\":0.0,\"noise\":{{\"seed\":1,\"frequency\":0.1,\"octaves\":1,\"lacunarity\":2.0,\"gain\":0.5}}}},\"relief\":{{\"mode\":\"none\",\"amplitude\":0.0,\"noise\":{{\"seed\":1,\"frequency\":0.1,\"octaves\":1,\"lacunarity\":2.0,\"gain\":0.5}}}},\"animation\":{{\"mode\":\"none\",\"waves\":[],\"normal_strength\":1.0}}}}",
+                label
+            ),
+        )
+        .expect("write terrain def");
+    }
+
+    fn write_legacy_scene_floor_selection(build_dir: &Path, terrain_id: u128) {
+        let uuid = uuid::Uuid::from_u128(terrain_id).to_string();
+        std::fs::write(
+            build_dir.join("floor_selection.json"),
+            serde_json::to_vec_pretty(&json!({
+                "format_version": 1,
+                "floor_id": uuid,
+            }))
+            .expect("encode legacy terrain selection"),
+        )
+        .expect("write legacy terrain selection");
+    }
+
     #[test]
     fn export_and_import_scene_zip_roundtrips_scene_and_prefab_package() {
         let temp_root = std::env::temp_dir().join(format!(
@@ -913,13 +1251,17 @@ mod tests {
         ));
         let src_scenes_root = temp_root.join("src_scenes");
         let src_prefabs_root = temp_root.join("src_prefabs");
+        let src_floors_root = temp_root.join("src_terrain");
         let dst_scenes_root = temp_root.join("dst_scenes");
         let dst_prefabs_root = temp_root.join("dst_prefabs");
+        let dst_floors_root = temp_root.join("dst_terrain");
         let zip_path = temp_root.join("scenes.zip");
 
         let scene_id = "alpha".to_string();
         let prefab_id = uuid::Uuid::new_v4().as_u128();
         let prefab_uuid = uuid::Uuid::from_u128(prefab_id).to_string();
+        let terrain_id = uuid::Uuid::new_v4().as_u128();
+        let terrain_uuid = uuid::Uuid::from_u128(terrain_id).to_string();
 
         let scene_dir = src_scenes_root.join(&scene_id);
         std::fs::create_dir_all(scene_dir.join("build")).expect("create build dir");
@@ -928,28 +1270,34 @@ mod tests {
             crate::scene_store::test_encode_scene_dat_with_prefab_ids(&[prefab_id]),
         )
         .expect("write scene.grav");
+        write_legacy_scene_floor_selection(&scene_dir.join("build"), terrain_id);
         write_scene_sources(&scene_dir.join("src"), &scene_id, prefab_id);
         write_prefab_package(&src_prefabs_root, prefab_id);
+        write_terrain_package(&src_floors_root, terrain_id, "Test Terrain");
 
         let export_report = export_scene_packages_to_zip_from_roots(
             &src_scenes_root,
             &src_prefabs_root,
+            &src_floors_root,
             std::slice::from_ref(&scene_id),
             &zip_path,
         )
         .expect("export scene zip");
         assert_eq!(export_report.exported_scenes, 1);
         assert_eq!(export_report.exported_prefabs, 1);
+        assert_eq!(export_report.exported_terrains, 1);
 
         let import_report = import_scene_packages_from_zip_to_roots_with_policy(
             &dst_scenes_root,
             &dst_prefabs_root,
+            &dst_floors_root,
             &zip_path,
             ImportConflictPolicy::Replace,
         )
         .expect("import scene zip");
         assert_eq!(import_report.imported_scenes, 1);
         assert_eq!(import_report.imported_prefabs, 1);
+        assert_eq!(import_report.imported_terrains, 1);
         assert!(dst_scenes_root
             .join(&scene_id)
             .join("build")
@@ -960,6 +1308,17 @@ mod tests {
             .join("prefabs")
             .join(format!("{prefab_uuid}.json"))
             .exists());
+        assert!(dst_floors_root
+            .join(&terrain_uuid)
+            .join(TERRAIN_DEF_FILE_NAME)
+            .exists());
+
+        let imported_floor =
+            crate::scene_floor_selection::read_scene_floor_selection_from_build_dir(
+                &dst_scenes_root.join(&scene_id).join("build"),
+            )
+            .expect("read imported terrain selection");
+        assert_eq!(imported_floor, Some(terrain_id));
 
         let _ = std::fs::remove_dir_all(&temp_root);
     }
@@ -975,13 +1334,17 @@ mod tests {
         ));
         let src_scenes_root = temp_root.join("src_scenes");
         let src_prefabs_root = temp_root.join("src_prefabs");
+        let src_floors_root = temp_root.join("src_terrain");
         let dst_scenes_root = temp_root.join("dst_scenes");
         let dst_prefabs_root = temp_root.join("dst_prefabs");
+        let dst_floors_root = temp_root.join("dst_terrain");
         let zip_path = temp_root.join("scenes.zip");
 
         let scene_id = "alpha".to_string();
         let prefab_id = uuid::Uuid::new_v4().as_u128();
         let prefab_uuid = uuid::Uuid::from_u128(prefab_id).to_string();
+        let terrain_id = uuid::Uuid::new_v4().as_u128();
+        let terrain_uuid = uuid::Uuid::from_u128(terrain_id).to_string();
         let scene_dir = src_scenes_root.join(&scene_id);
         std::fs::create_dir_all(scene_dir.join("build")).expect("create build dir");
         std::fs::write(
@@ -989,12 +1352,15 @@ mod tests {
             crate::scene_store::test_encode_scene_dat_with_prefab_ids(&[prefab_id]),
         )
         .expect("write scene.grav");
+        write_legacy_scene_floor_selection(&scene_dir.join("build"), terrain_id);
         write_scene_sources(&scene_dir.join("src"), &scene_id, prefab_id);
         write_prefab_package(&src_prefabs_root, prefab_id);
+        write_terrain_package(&src_floors_root, terrain_id, "New Terrain");
 
         export_scene_packages_to_zip_from_roots(
             &src_scenes_root,
             &src_prefabs_root,
+            &src_floors_root,
             std::slice::from_ref(&scene_id),
             &zip_path,
         )
@@ -1002,10 +1368,12 @@ mod tests {
 
         std::fs::create_dir_all(dst_scenes_root.join(&scene_id)).expect("precreate scene");
         std::fs::create_dir_all(dst_prefabs_root.join(&prefab_uuid)).expect("precreate prefab");
+        write_terrain_package(&dst_floors_root, terrain_id, "Old Terrain");
 
         let report = import_scene_packages_from_zip_to_roots_with_policy(
             &dst_scenes_root,
             &dst_prefabs_root,
+            &dst_floors_root,
             &zip_path,
             ImportConflictPolicy::Replace,
         )
@@ -1014,6 +1382,13 @@ mod tests {
         assert_eq!(report.replaced_scenes, 1);
         assert_eq!(report.imported_prefabs, 1);
         assert_eq!(report.replaced_prefabs, 1);
+        assert_eq!(report.imported_terrains, 1);
+        assert_eq!(report.replaced_terrains, 1);
+
+        assert!(dst_floors_root
+            .join(&terrain_uuid)
+            .join(TERRAIN_DEF_FILE_NAME)
+            .exists());
 
         let _ = std::fs::remove_dir_all(&temp_root);
     }
@@ -1029,12 +1404,15 @@ mod tests {
         ));
         let src_scenes_root = temp_root.join("src_scenes");
         let src_prefabs_root = temp_root.join("src_prefabs");
+        let src_floors_root = temp_root.join("src_terrain");
         let dst_scenes_root = temp_root.join("dst_scenes");
         let dst_prefabs_root = temp_root.join("dst_prefabs");
+        let dst_floors_root = temp_root.join("dst_terrain");
         let zip_path = temp_root.join("scenes.zip");
 
         let scene_id = "alpha".to_string();
         let prefab_id = uuid::Uuid::new_v4().as_u128();
+        let terrain_id = uuid::Uuid::new_v4().as_u128();
 
         let scene_dir = src_scenes_root.join(&scene_id);
         std::fs::create_dir_all(scene_dir.join("build")).expect("create build dir");
@@ -1043,12 +1421,15 @@ mod tests {
             crate::scene_store::test_encode_scene_dat_with_prefab_ids(&[prefab_id]),
         )
         .expect("write scene.grav");
+        write_legacy_scene_floor_selection(&scene_dir.join("build"), terrain_id);
         write_scene_sources(&scene_dir.join("src"), &scene_id, prefab_id);
         write_prefab_package(&src_prefabs_root, prefab_id);
+        write_terrain_package(&src_floors_root, terrain_id, "Copy Terrain");
 
         export_scene_packages_to_zip_from_roots(
             &src_scenes_root,
             &src_prefabs_root,
+            &src_floors_root,
             std::slice::from_ref(&scene_id),
             &zip_path,
         )
@@ -1056,10 +1437,12 @@ mod tests {
 
         std::fs::create_dir_all(dst_scenes_root.join(&scene_id)).expect("precreate scene");
         write_prefab_package(&dst_prefabs_root, prefab_id);
+        write_terrain_package(&dst_floors_root, terrain_id, "Existing Terrain");
 
         let report = import_scene_packages_from_zip_to_roots_with_policy(
             &dst_scenes_root,
             &dst_prefabs_root,
+            &dst_floors_root,
             &zip_path,
             ImportConflictPolicy::KeepBoth,
         )
@@ -1068,6 +1451,8 @@ mod tests {
         assert_eq!(report.renamed_scenes, 1);
         assert_eq!(report.imported_prefabs, 1);
         assert_eq!(report.renamed_prefabs, 1);
+        assert_eq!(report.imported_terrains, 1);
+        assert_eq!(report.renamed_terrains, 1);
 
         let imported_scene_ids: Vec<String> = std::fs::read_dir(&dst_scenes_root)
             .expect("list scenes")
@@ -1092,11 +1477,31 @@ mod tests {
             .find(|id| *id != prefab_id)
             .expect("new prefab id");
 
+        let imported_terrain_ids: Vec<u128> = std::fs::read_dir(&dst_floors_root)
+            .expect("list terrains")
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter_map(|name| uuid::Uuid::parse_str(&name).ok().map(|uuid| uuid.as_u128()))
+            .collect();
+        let new_terrain_id = imported_terrain_ids
+            .iter()
+            .copied()
+            .find(|id| *id != terrain_id)
+            .expect("new terrain id");
+
         let remapped_scene_dat = dst_scenes_root.join(&new_scene_id).join("build/scene.grav");
-        let referenced = crate::scene_store::referenced_prefab_ids_in_scene_dat_path(&remapped_scene_dat)
-            .expect("read remapped scene ids");
+        let referenced =
+            crate::scene_store::referenced_prefab_ids_in_scene_dat_path(&remapped_scene_dat)
+                .expect("read remapped scene ids");
         assert!(referenced.contains(&new_prefab_id));
         assert!(!referenced.contains(&prefab_id));
+
+        let imported_floor =
+            crate::scene_floor_selection::read_scene_floor_selection_from_build_dir(
+                &dst_scenes_root.join(&new_scene_id).join("build"),
+            )
+            .expect("read remapped terrain selection");
+        assert_eq!(imported_floor, Some(new_terrain_id));
 
         let remapped_sources = crate::scene_sources::SceneSourcesV1::load_from_dir(
             &dst_scenes_root.join(&new_scene_id).join("src"),

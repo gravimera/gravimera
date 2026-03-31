@@ -1,5 +1,6 @@
 use prost::Message;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
 
@@ -112,6 +113,70 @@ pub(crate) fn migrate_legacy_scene_floor_selection_files() -> Result<(), String>
     } else {
         Err(errors.join(" | "))
     }
+}
+
+pub(crate) fn read_scene_floor_selection_from_build_dir(
+    build_dir: &Path,
+) -> Result<Option<u128>, String> {
+    let path = build_dir.join("terrain.grav");
+    match std::fs::read(&path) {
+        Ok(bytes) => {
+            let parsed = SceneTerrainSelectionFileV1::decode(bytes.as_slice()).map_err(|err| {
+                format!(
+                    "scene terrain selection: failed to decode {}: {err}",
+                    path.display()
+                )
+            })?;
+            if parsed.format_version != SCENE_TERRAIN_SELECTION_FORMAT_VERSION {
+                return Ok(None);
+            }
+            return Ok(parsed.terrain_id.map(uuid128_to_u128));
+        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => {
+            return Err(format!(
+                "scene terrain selection: failed to read {}: {err}",
+                path.display()
+            ))
+        }
+    }
+
+    let legacy_path = build_dir.join("floor_selection.json");
+    let legacy_bytes = match std::fs::read(&legacy_path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(format!(
+                "scene terrain selection: failed to read {}: {err}",
+                legacy_path.display()
+            ))
+        }
+    };
+
+    parse_legacy_scene_floor_selection(&legacy_bytes, &legacy_path)
+}
+
+pub(crate) fn remap_scene_floor_selection_in_build_dir(
+    build_dir: &Path,
+    floor_id_map: &BTreeMap<u128, u128>,
+) -> Result<(), String> {
+    if floor_id_map.is_empty() {
+        return Ok(());
+    }
+
+    let Some(floor_id) = read_scene_floor_selection_from_build_dir(build_dir)? else {
+        return Ok(());
+    };
+    let Some(new_id) = floor_id_map.get(&floor_id).copied() else {
+        return Ok(());
+    };
+    if new_id == floor_id {
+        return Ok(());
+    }
+
+    let path = build_dir.join("terrain.grav");
+    let legacy_path = build_dir.join("floor_selection.json");
+    save_scene_floor_selection_to_paths(&path, &legacy_path, Some(new_id))
 }
 
 fn load_scene_floor_selection_from_paths(

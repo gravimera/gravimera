@@ -721,7 +721,7 @@ fn workspace_scene_dat_path(active: &crate::realm::ActiveRealmScene, tab: Worksp
     }
 }
 
-fn apply_scene_floor_selection(
+pub(crate) fn apply_scene_floor_selection(
     realm_id: &str,
     scene_id: &str,
     active_floor: &mut ActiveWorldFloor,
@@ -2611,10 +2611,7 @@ fn remap_optional_uuid128(
     }
 }
 
-fn remap_uuid128(
-    value: &mut Uuid128Dat,
-    prefab_id_map: &std::collections::BTreeMap<u128, u128>,
-) {
+fn remap_uuid128(value: &mut Uuid128Dat, prefab_id_map: &std::collections::BTreeMap<u128, u128>) {
     let old_id = uuid_to_u128(value);
     if let Some(new_id) = prefab_id_map.get(&old_id) {
         *value = u128_to_uuid(*new_id);
