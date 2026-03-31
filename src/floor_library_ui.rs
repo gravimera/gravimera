@@ -79,8 +79,9 @@ impl Default for FloorLibraryExportJob {
 
 #[derive(Resource)]
 pub(crate) struct FloorLibraryImportJob {
-    receiver:
-        Mutex<Option<mpsc::Receiver<Result<Option<crate::floor_zip::FloorZipImportReport>, String>>>>,
+    receiver: Mutex<
+        Option<mpsc::Receiver<Result<Option<crate::floor_zip::FloorZipImportReport>, String>>>,
+    >,
 }
 
 impl Default for FloorLibraryImportJob {
@@ -1644,8 +1645,9 @@ pub(crate) fn floor_library_import_dialog_poll(
             let Some(policy) = policy else {
                 return Ok(None);
             };
-            let report =
-                crate::floor_zip::import_floor_packages_from_zip_with_policy(&realm_id, &path, policy)?;
+            let report = crate::floor_zip::import_floor_packages_from_zip_with_policy(
+                &realm_id, &path, policy,
+            )?;
             Ok(Some(report))
         })();
         let _ = tx.send(result);

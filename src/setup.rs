@@ -21,9 +21,9 @@ pub(crate) fn setup_rendered(
          Forms: Tab cycles forms (selected), hold C to copy source current form (release to confirm; Esc cancels).\n\
          Build/Play: hold Space to fire toward the cursor (ground or an enemy).\n\
          Build: Delete remove, M duplicate unit, Ctrl/Cmd+D duplicate build.\n\
-         Edit: WASD move selected (camera-relative; CapsLock = 1/3 speed), ,/. rotate builds, -/= scale selected (Shift bigger).\n\
+         Edit: WASD move selected (camera-relative; CapsLock = 1/3 speed), R/F move fly units up/down, ,/. rotate builds, -/= scale selected (Shift bigger).\n\
          Motions: 1..9 and 0 force-play the selected object's animation (slot 10).\n\
-         Play: Ctrl/Cmd+1/2/3 switch guns (Normal/Shotgun/Laser), R restarts, Enter command.\n\
+         Play: Ctrl/Cmd+1/2/3 switch guns (Normal/Shotgun/Laser), Shift+R restarts, Enter command.\n\
          Camera: edge-pan (cursor near window edge), rotate with Z/X/Q/E, zoom with mouse wheel (WASD pans camera when nothing selected).\n\
          Minimap: top-right."
     );

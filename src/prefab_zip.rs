@@ -168,8 +168,7 @@ pub(crate) fn import_prefab_packages_from_zip_with_policy(
             continue;
         }
 
-        let dest_root =
-            crate::realm_prefab_packages::realm_prefab_package_dir(realm_id, prefab_id);
+        let dest_root = crate::realm_prefab_packages::realm_prefab_package_dir(realm_id, prefab_id);
         let conflict = dest_root.exists();
         match (conflict, policy) {
             (false, _) => {
@@ -207,10 +206,11 @@ pub(crate) fn import_prefab_packages_from_zip_with_policy(
                         &pkg.uuid_str,
                         &stage_package_dir,
                     )?;
-                    let new_root_id =
-                        generate_unique_prefab_id(realm_id, &mut reserved_new_ids)?;
-                    let new_dest_root =
-                        crate::realm_prefab_packages::realm_prefab_package_dir(realm_id, new_root_id);
+                    let new_root_id = generate_unique_prefab_id(realm_id, &mut reserved_new_ids)?;
+                    let new_dest_root = crate::realm_prefab_packages::realm_prefab_package_dir(
+                        realm_id,
+                        new_root_id,
+                    );
                     remap_staged_prefab_package_into_dest(
                         &stage_package_dir,
                         prefab_id,
@@ -452,10 +452,8 @@ fn rewrite_prefab_defs_in_place(
             .get(&old_uuid.as_u128())
             .copied()
             .unwrap_or_else(|| old_uuid.as_u128());
-        let new_path = old_path.with_file_name(format!(
-            "{}.json",
-            uuid::Uuid::from_u128(mapped_id)
-        ));
+        let new_path =
+            old_path.with_file_name(format!("{}.json", uuid::Uuid::from_u128(mapped_id)));
         write_json_file_pretty(&new_path, &value)?;
         if new_path != *old_path {
             std::fs::remove_file(old_path).map_err(|err| {
@@ -528,17 +526,16 @@ fn rewrite_prefab_descriptors_in_place(
                 .get(&old_uuid.as_u128())
                 .copied()
                 .unwrap_or_else(|| old_uuid.as_u128());
-            let new_path = path.with_file_name(format!(
-                "{}.desc.json",
-                uuid::Uuid::from_u128(mapped_id)
-            ));
+            let new_path =
+                path.with_file_name(format!("{}.desc.json", uuid::Uuid::from_u128(mapped_id)));
 
-            let bytes =
-                std::fs::read(&path).map_err(|err| format!("Failed to read {}: {err}", path.display()))?;
+            let bytes = std::fs::read(&path)
+                .map_err(|err| format!("Failed to read {}: {err}", path.display()))?;
             match serde_json::from_slice::<serde_json::Value>(&bytes) {
                 Ok(mut value) => {
-                    if let Some(prefab_id_str) =
-                        value.get_mut("prefab_id").and_then(|v| v.as_str().map(str::to_string))
+                    if let Some(prefab_id_str) = value
+                        .get_mut("prefab_id")
+                        .and_then(|v| v.as_str().map(str::to_string))
                     {
                         if let Ok(uuid) = uuid::Uuid::parse_str(prefab_id_str.trim()) {
                             if let Some(mapped) = id_map.get(&uuid.as_u128()) {
@@ -586,8 +583,7 @@ fn rewrite_gen3d_edit_bundle_root_id(path: &Path, new_root_prefab_id: u128) -> R
         return Ok(());
     };
     if let Some(field) = value.get_mut("root_prefab_id_uuid") {
-        *field =
-            serde_json::Value::String(uuid::Uuid::from_u128(new_root_prefab_id).to_string());
+        *field = serde_json::Value::String(uuid::Uuid::from_u128(new_root_prefab_id).to_string());
     } else if let Some(obj) = value.as_object_mut() {
         obj.insert(
             "root_prefab_id_uuid".to_string(),
@@ -597,10 +593,7 @@ fn rewrite_gen3d_edit_bundle_root_id(path: &Path, new_root_prefab_id: u128) -> R
     write_json_file_pretty(path, &value)
 }
 
-fn remap_prefab_ids_in_json_value(
-    value: &mut serde_json::Value,
-    id_map: &BTreeMap<u128, u128>,
-) {
+fn remap_prefab_ids_in_json_value(value: &mut serde_json::Value, id_map: &BTreeMap<u128, u128>) {
     match value {
         serde_json::Value::Object(map) => {
             for child in map.values_mut() {
@@ -630,8 +623,7 @@ fn write_json_file_pretty(path: &Path, value: &serde_json::Value) -> Result<(), 
             .map_err(|err| format!("Failed to create {}: {err}", parent.display()))?;
     }
     let bytes = serde_json::to_vec_pretty(value).map_err(|err| err.to_string())?;
-    std::fs::write(path, bytes)
-        .map_err(|err| format!("Failed to write {}: {err}", path.display()))
+    std::fs::write(path, bytes).map_err(|err| format!("Failed to write {}: {err}", path.display()))
 }
 
 fn copy_dir_recursive(from: &Path, to: &Path) -> Result<(), String> {
@@ -639,9 +631,10 @@ fn copy_dir_recursive(from: &Path, to: &Path) -> Result<(), String> {
         return Ok(());
     }
 
-    std::fs::create_dir_all(to).map_err(|err| format!("Failed to create {}: {err}", to.display()))?;
-    let entries =
-        std::fs::read_dir(from).map_err(|err| format!("Failed to list {}: {err}", from.display()))?;
+    std::fs::create_dir_all(to)
+        .map_err(|err| format!("Failed to create {}: {err}", to.display()))?;
+    let entries = std::fs::read_dir(from)
+        .map_err(|err| format!("Failed to list {}: {err}", from.display()))?;
     for entry in entries {
         let entry = entry.map_err(|err| format!("Failed to read dir entry: {err}"))?;
         let src_path = entry.path();
@@ -770,9 +763,12 @@ mod tests {
         export_prefab_packages_to_zip_from_root(&src_root, &[prefab_id], &zip_path)
             .expect("export prefab zip");
 
-        let report =
-            import_prefab_packages_from_zip_with_policy(dst_realm, &zip_path, ImportConflictPolicy::Replace)
-                .expect("replace import");
+        let report = import_prefab_packages_from_zip_with_policy(
+            dst_realm,
+            &zip_path,
+            ImportConflictPolicy::Replace,
+        )
+        .expect("replace import");
         assert_eq!(report.imported, 1);
         assert_eq!(report.replaced, 1);
         assert_eq!(report.renamed, 0);
@@ -838,9 +834,11 @@ mod tests {
             .expect("new prefab id");
         let new_uuid = uuid::Uuid::from_u128(new_prefab_id).to_string();
 
-        let new_root = crate::realm_prefab_packages::realm_prefab_package_dir(dst_realm, new_prefab_id);
-        let prefab_json = std::fs::read_to_string(new_root.join("prefabs").join(format!("{new_uuid}.json")))
-            .expect("read new prefab json");
+        let new_root =
+            crate::realm_prefab_packages::realm_prefab_package_dir(dst_realm, new_prefab_id);
+        let prefab_json =
+            std::fs::read_to_string(new_root.join("prefabs").join(format!("{new_uuid}.json")))
+                .expect("read new prefab json");
         assert!(prefab_json.contains(&new_uuid));
         let descriptor = std::fs::read_to_string(
             new_root
@@ -849,8 +847,8 @@ mod tests {
         )
         .expect("read descriptor");
         assert!(descriptor.contains(&new_uuid));
-        let edit_bundle =
-            std::fs::read_to_string(new_root.join("gen3d_edit_bundle_v1.json")).expect("read edit bundle");
+        let edit_bundle = std::fs::read_to_string(new_root.join("gen3d_edit_bundle_v1.json"))
+            .expect("read edit bundle");
         assert!(edit_bundle.contains(&new_uuid));
 
         let _ = std::fs::remove_dir_all(&temp_root);

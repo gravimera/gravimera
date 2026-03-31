@@ -21,6 +21,61 @@ struct BuildAabb {
     supports_standing: bool,
 }
 
+fn ranges_overlap_exclusive(a_min: f32, a_max: f32, b_min: f32, b_max: f32) -> bool {
+    a_min < b_max && b_min < a_max
+}
+
+fn cylinder_y_span(translation_y: f32, origin_y: f32, height: f32) -> (f32, f32) {
+    let origin_y = if origin_y.is_finite() { origin_y } else { 0.0 };
+    let height = if height.is_finite() {
+        height.abs().max(0.0)
+    } else {
+        0.0
+    };
+    let bottom_y = translation_y - origin_y;
+    (bottom_y, bottom_y + height)
+}
+
+fn commandable_cylinder_y_span(
+    library: &ObjectLibrary,
+    prefab_id: u128,
+    transform: &Transform,
+    is_player: bool,
+) -> (f32, f32) {
+    let scale_y = safe_abs_scale_y(transform.scale);
+    let origin_y = if is_player {
+        PLAYER_Y
+    } else {
+        library.ground_origin_y_or_default(prefab_id) * scale_y
+    };
+    let height = if is_player {
+        HERO_HEIGHT_WORLD
+    } else {
+        library
+            .size(prefab_id)
+            .map(|size| size.y.abs() * scale_y)
+            .unwrap_or(HERO_HEIGHT_WORLD * scale_y)
+    };
+
+    cylinder_y_span(transform.translation.y, origin_y, height)
+}
+
+fn enemy_cylinder_y_span(
+    library: &ObjectLibrary,
+    prefab_id: u128,
+    transform: &Transform,
+    enemy_origin_y: f32,
+) -> (f32, f32) {
+    let scale_y = safe_abs_scale_y(transform.scale);
+    let origin_y = enemy_origin_y * scale_y;
+    let height = library
+        .size(prefab_id)
+        .map(|size| size.y.abs() * scale_y)
+        .unwrap_or(HERO_HEIGHT_WORLD * scale_y);
+
+    cylinder_y_span(transform.translation.y, origin_y, height)
+}
+
 fn terrain_base_ground(
     active_floor: &ActiveWorldFloor,
     pos: Vec2,
@@ -70,7 +125,8 @@ fn ground_y_for_pos(
     obstacles: &[BuildAabb],
 ) -> (f32, bool, bool) {
     let (base_ground_y, is_water) = terrain_base_ground(active_floor, pos, footprint);
-    let (support_y, has_support) = support_ground_y(pos, radius, current_ground_y, height, obstacles);
+    let (support_y, has_support) =
+        support_ground_y(pos, radius, current_ground_y, height, obstacles);
     let ground_y = if has_support {
         base_ground_y.max(support_y)
     } else {
@@ -120,7 +176,7 @@ pub(crate) fn separate_enemies(
     {
         let mut pairs = enemies.iter_combinations_mut::<2>();
         while let Some(
-            [(mut a_transform, a_collider, _a_enemy, _a_type, _a_pounce, a_health, a_died), (mut b_transform, b_collider, _b_enemy, _b_type, _b_pounce, b_health, b_died)],
+            [(mut a_transform, a_collider, a_enemy, a_prefab_id, _a_pounce, a_health, a_died), (mut b_transform, b_collider, b_enemy, b_prefab_id, _b_pounce, b_health, b_died)],
         ) = pairs.fetch_next()
         {
             if a_died.is_some()
@@ -128,6 +184,14 @@ pub(crate) fn separate_enemies(
                 || a_health.is_some_and(|health| health.current <= 0)
                 || b_health.is_some_and(|health| health.current <= 0)
             {
+                continue;
+            }
+
+            let (a_bottom_y, a_top_y) =
+                enemy_cylinder_y_span(&library, a_prefab_id.0, &a_transform, a_enemy.origin_y);
+            let (b_bottom_y, b_top_y) =
+                enemy_cylinder_y_span(&library, b_prefab_id.0, &b_transform, b_enemy.origin_y);
+            if !ranges_overlap_exclusive(a_bottom_y, a_top_y, b_bottom_y, b_top_y) {
                 continue;
             }
 
@@ -261,7 +325,7 @@ pub(crate) fn separate_commandables(
     {
         let mut pairs = units.iter_combinations_mut::<2>();
         while let Some(
-            [(_a_entity, mut a_transform, a_collider, _a_prefab_id, _a_player, a_health, a_died), (_b_entity, mut b_transform, b_collider, _b_prefab_id, _b_player, b_health, b_died)],
+            [(_a_entity, mut a_transform, a_collider, a_prefab_id, a_player, a_health, a_died), (_b_entity, mut b_transform, b_collider, b_prefab_id, b_player, b_health, b_died)],
         ) = pairs.fetch_next()
         {
             if a_died.is_some()
@@ -269,6 +333,22 @@ pub(crate) fn separate_commandables(
                 || a_health.is_some_and(|health| health.current <= 0)
                 || b_health.is_some_and(|health| health.current <= 0)
             {
+                continue;
+            }
+
+            let (a_bottom_y, a_top_y) = commandable_cylinder_y_span(
+                &library,
+                a_prefab_id.0,
+                &a_transform,
+                a_player.is_some(),
+            );
+            let (b_bottom_y, b_top_y) = commandable_cylinder_y_span(
+                &library,
+                b_prefab_id.0,
+                &b_transform,
+                b_player.is_some(),
+            );
+            if !ranges_overlap_exclusive(a_bottom_y, a_top_y, b_bottom_y, b_top_y) {
                 continue;
             }
 
@@ -712,6 +792,195 @@ mod tests {
             (transform.translation.y - expected_y).abs() < 1e-4,
             "expected y≈{expected_y} for ground_origin_y=0.25 and scale=2.0, got {}",
             transform.translation.y
+        );
+    }
+
+    #[test]
+    fn commandable_air_unit_can_fly_over_ground_unit_without_separation() {
+        let mut library = ObjectLibrary::default();
+
+        let ground_unit_id: u128 = 0x1111;
+        library.upsert(ObjectDef {
+            object_id: ground_unit_id,
+            label: "GroundUnit".into(),
+            size: Vec3::new(1.0, 2.0, 1.0),
+            ground_origin_y: None,
+            collider: ColliderProfile::CircleXZ { radius: 0.5 },
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: Some(MobilityDef {
+                mode: MobilityMode::Ground,
+                max_speed: 1.0,
+            }),
+            anchors: Vec::new(),
+            parts: Vec::new(),
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        });
+
+        let air_unit_id: u128 = 0x2222;
+        library.upsert(ObjectDef {
+            object_id: air_unit_id,
+            label: "AirUnit".into(),
+            size: Vec3::new(1.0, 2.0, 1.0),
+            ground_origin_y: None,
+            collider: ColliderProfile::CircleXZ { radius: 0.5 },
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: Some(MobilityDef {
+                mode: MobilityMode::Air,
+                max_speed: 1.0,
+            }),
+            anchors: Vec::new(),
+            parts: Vec::new(),
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        });
+
+        let mut world = World::new();
+        world.insert_resource(State::<GameMode>::new(GameMode::Build));
+        world.insert_resource(Game::default());
+        world.insert_resource(library);
+        world.insert_resource(ActiveWorldFloor::default());
+
+        let ground_entity = world
+            .spawn((
+                Commandable,
+                ObjectPrefabId(ground_unit_id),
+                Collider { radius: 0.5 },
+                Transform::from_xyz(0.0, 1.0, 0.0),
+            ))
+            .id();
+        let air_entity = world
+            .spawn((
+                Commandable,
+                ObjectPrefabId(air_unit_id),
+                Collider { radius: 0.5 },
+                Transform::from_xyz(0.0, 50.0, 0.0),
+            ))
+            .id();
+
+        world
+            .run_system_once(separate_commandables)
+            .expect("separate_commandables should run");
+
+        let ground_t = world
+            .get::<Transform>(ground_entity)
+            .expect("ground transform");
+        let air_t = world.get::<Transform>(air_entity).expect("air transform");
+
+        assert!(
+            (ground_t.translation.x - 0.0).abs() < 1e-4
+                && (ground_t.translation.z - 0.0).abs() < 1e-4
+                && (air_t.translation.x - 0.0).abs() < 1e-4
+                && (air_t.translation.z - 0.0).abs() < 1e-4,
+            "expected no XZ separation when the air unit is above the ground unit; got ground=({:.4},{:.4}) air=({:.4},{:.4})",
+            ground_t.translation.x,
+            ground_t.translation.z,
+            air_t.translation.x,
+            air_t.translation.z
+        );
+    }
+
+    #[test]
+    fn commandable_air_unit_separates_from_ground_unit_when_y_ranges_overlap() {
+        let mut library = ObjectLibrary::default();
+
+        let ground_unit_id: u128 = 0x3333;
+        library.upsert(ObjectDef {
+            object_id: ground_unit_id,
+            label: "GroundUnit".into(),
+            size: Vec3::new(1.0, 2.0, 1.0),
+            ground_origin_y: None,
+            collider: ColliderProfile::CircleXZ { radius: 0.5 },
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: Some(MobilityDef {
+                mode: MobilityMode::Ground,
+                max_speed: 1.0,
+            }),
+            anchors: Vec::new(),
+            parts: Vec::new(),
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        });
+
+        let air_unit_id: u128 = 0x4444;
+        library.upsert(ObjectDef {
+            object_id: air_unit_id,
+            label: "AirUnit".into(),
+            size: Vec3::new(1.0, 2.0, 1.0),
+            ground_origin_y: None,
+            collider: ColliderProfile::CircleXZ { radius: 0.5 },
+            interaction: ObjectInteraction::none(),
+            aim: None,
+            mobility: Some(MobilityDef {
+                mode: MobilityMode::Air,
+                max_speed: 1.0,
+            }),
+            anchors: Vec::new(),
+            parts: Vec::new(),
+            minimap_color: None,
+            health_bar_offset_y: None,
+            enemy: None,
+            muzzle: None,
+            projectile: None,
+            attack: None,
+        });
+
+        let mut world = World::new();
+        world.insert_resource(State::<GameMode>::new(GameMode::Build));
+        world.insert_resource(Game::default());
+        world.insert_resource(library);
+        world.insert_resource(ActiveWorldFloor::default());
+
+        let ground_entity = world
+            .spawn((
+                Commandable,
+                ObjectPrefabId(ground_unit_id),
+                Collider { radius: 0.5 },
+                Transform::from_xyz(0.0, 1.0, 0.0),
+            ))
+            .id();
+        let air_entity = world
+            .spawn((
+                Commandable,
+                ObjectPrefabId(air_unit_id),
+                Collider { radius: 0.5 },
+                Transform::from_xyz(0.0, 1.0, 0.0),
+            ))
+            .id();
+
+        world
+            .run_system_once(separate_commandables)
+            .expect("separate_commandables should run");
+
+        let ground_t = world
+            .get::<Transform>(ground_entity)
+            .expect("ground transform");
+        let air_t = world.get::<Transform>(air_entity).expect("air transform");
+
+        let dx = (ground_t.translation.x - air_t.translation.x).abs();
+        let dz = (ground_t.translation.z - air_t.translation.z).abs();
+        assert!(
+            dx > 1e-4 || dz > 1e-4,
+            "expected XZ separation when cylinders overlap; got ground=({:.4},{:.4}) air=({:.4},{:.4})",
+            ground_t.translation.x,
+            ground_t.translation.z,
+            air_t.translation.x,
+            air_t.translation.z
         );
     }
 }

@@ -183,7 +183,8 @@ pub(crate) fn import_floor_packages_from_zip_with_policy(
             continue;
         }
 
-        let existing_root = crate::realm_floor_packages::realm_floor_package_dir(realm_id, floor_id);
+        let existing_root =
+            crate::realm_floor_packages::realm_floor_package_dir(realm_id, floor_id);
         let conflict = existing_root.exists();
         let (dest_floor_id, replaced_this, renamed_this) = if !conflict {
             (floor_id, false, false)
@@ -199,8 +200,7 @@ pub(crate) fn import_floor_packages_from_zip_with_policy(
                     (floor_id, true, false)
                 }
                 ImportConflictPolicy::KeepBoth => {
-                    let new_id =
-                        generate_unique_floor_id(realm_id, &mut reserved_new_ids)?;
+                    let new_id = generate_unique_floor_id(realm_id, &mut reserved_new_ids)?;
                     (new_id, false, true)
                 }
             }
@@ -393,9 +393,12 @@ mod tests {
         export_floor_packages_to_zip_from_root(&src_root, &[floor_id], &zip_path)
             .expect("export floor zip");
 
-        let report =
-            import_floor_packages_from_zip_with_policy(dst_realm, &zip_path, ImportConflictPolicy::Replace)
-                .expect("replace import");
+        let report = import_floor_packages_from_zip_with_policy(
+            dst_realm,
+            &zip_path,
+            ImportConflictPolicy::Replace,
+        )
+        .expect("replace import");
         assert_eq!(report.imported, 1);
         assert_eq!(report.replaced, 1);
         assert_eq!(report.renamed, 0);
@@ -486,7 +489,8 @@ mod tests {
         let mut writer = ZipWriter::new(file);
         for floor_id in &ids {
             let package_dir = floors_root.join(uuid::Uuid::from_u128(*floor_id).to_string());
-            let zip_root = Path::new(ZIP_ROOT_DIR).join(uuid::Uuid::from_u128(*floor_id).to_string());
+            let zip_root =
+                Path::new(ZIP_ROOT_DIR).join(uuid::Uuid::from_u128(*floor_id).to_string());
             add_dir_to_zip(&mut writer, &package_dir, &zip_root)?;
         }
         writer

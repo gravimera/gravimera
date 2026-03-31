@@ -205,8 +205,9 @@ impl Default for ModelLibraryExportGlbJob {
 
 #[derive(Resource)]
 pub(crate) struct ModelLibraryImportJob {
-    receiver:
-        Mutex<Option<mpsc::Receiver<Result<Option<crate::prefab_zip::PrefabZipImportReport>, String>>>>,
+    receiver: Mutex<
+        Option<mpsc::Receiver<Result<Option<crate::prefab_zip::PrefabZipImportReport>, String>>>,
+    >,
 }
 
 impl Default for ModelLibraryImportJob {

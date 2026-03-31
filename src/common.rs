@@ -35,7 +35,8 @@ pub(crate) fn restart_game(
     lasers: Query<Entity, With<Laser>>,
     explosions: Query<Entity, With<ExplosionParticle>>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyR) {
+    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+    if !(shift && keys.just_pressed(KeyCode::KeyR)) {
         return;
     }
 

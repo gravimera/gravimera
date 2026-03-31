@@ -723,9 +723,13 @@ pub(crate) fn build_place_object(
     let base_ground_y = apply_floor_sink(sample.max_height);
 
     let center_y = match spec.kind {
-        BuildObjectKind::Block => {
-            find_block_center_y(center_xz, collider_half_xz, size.y, base_ground_y, &existing)
-        }
+        BuildObjectKind::Block => find_block_center_y(
+            center_xz,
+            collider_half_xz,
+            size.y,
+            base_ground_y,
+            &existing,
+        ),
         BuildObjectKind::Fence => find_fence_center_y(
             center_xz,
             spec.fence_axis,
@@ -734,9 +738,13 @@ pub(crate) fn build_place_object(
             base_ground_y,
             &existing,
         ),
-        BuildObjectKind::Tree => {
-            find_tree_center_y(center_xz, collider_half_xz, size.y, base_ground_y, &existing)
-        }
+        BuildObjectKind::Tree => find_tree_center_y(
+            center_xz,
+            collider_half_xz,
+            size.y,
+            base_ground_y,
+            &existing,
+        ),
     };
     let Some(center_y) = center_y else {
         return;
@@ -952,9 +960,13 @@ pub(crate) fn build_update_preview(
     let base_ground_y = apply_floor_sink(sample.max_height);
 
     let center_y = match spec.kind {
-        BuildObjectKind::Block => {
-            find_block_center_y(center_xz, collider_half_xz, size.y, base_ground_y, &existing)
-        }
+        BuildObjectKind::Block => find_block_center_y(
+            center_xz,
+            collider_half_xz,
+            size.y,
+            base_ground_y,
+            &existing,
+        ),
         BuildObjectKind::Fence => find_fence_center_y(
             center_xz,
             spec.fence_axis,
@@ -963,9 +975,13 @@ pub(crate) fn build_update_preview(
             base_ground_y,
             &existing,
         ),
-        BuildObjectKind::Tree => {
-            find_tree_center_y(center_xz, collider_half_xz, size.y, base_ground_y, &existing)
-        }
+        BuildObjectKind::Tree => find_tree_center_y(
+            center_xz,
+            collider_half_xz,
+            size.y,
+            base_ground_y,
+            &existing,
+        ),
     };
     let Some(center_y) = center_y else {
         preview.visible = false;

@@ -2,10 +2,10 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::constants::*;
-use crate::geometry::{clamp_world_xz_with_half_size, safe_abs_scale_y, snap_to_grid};
 use crate::genfloor::{
     apply_floor_sink, floor_half_size, sample_floor_footprint, ActiveWorldFloor, FloorFootprint,
 };
+use crate::geometry::{clamp_world_xz_with_half_size, safe_abs_scale_y, snap_to_grid};
 use crate::object::registry::{MobilityMode, ObjectLibrary};
 use crate::scene_store::SceneSaveRequest;
 use crate::selection_circle;
@@ -369,24 +369,24 @@ pub(crate) fn world_drag_update(
         transform.translation.x = desired.x;
         transform.translation.z = desired.y;
 
-            if active.mobility_mode != Some(MobilityMode::Air) {
-                if hit.is_floor {
-                    let footprint = FloorFootprint::Circle { radius };
-                    let sample = sample_floor_footprint(
-                        &active_floor,
-                        Vec2::new(desired.x, desired.y),
-                        footprint,
-                    );
-                    let ground_y = apply_floor_sink(sample.max_height);
-                    let scale_y = safe_abs_scale_y(transform.scale);
-                    let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
-                    transform.translation.y = ground_y + origin_y;
-                } else {
-                    let scale_y = safe_abs_scale_y(transform.scale);
-                    let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
-                    transform.translation.y = hit.surface_y + origin_y;
-                }
+        if active.mobility_mode != Some(MobilityMode::Air) {
+            if hit.is_floor {
+                let footprint = FloorFootprint::Circle { radius };
+                let sample = sample_floor_footprint(
+                    &active_floor,
+                    Vec2::new(desired.x, desired.y),
+                    footprint,
+                );
+                let ground_y = apply_floor_sink(sample.max_height);
+                let scale_y = safe_abs_scale_y(transform.scale);
+                let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
+                transform.translation.y = ground_y + origin_y;
+            } else {
+                let scale_y = safe_abs_scale_y(transform.scale);
+                let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
+                transform.translation.y = hit.surface_y + origin_y;
             }
+        }
     } else {
         let Ok((_e, mut transform, collider, dimensions, prefab_id)) =
             build_objects.get_mut(active.entity)
@@ -401,16 +401,8 @@ pub(crate) fn world_drag_update(
 
         let floor_half = floor_half_size(&active_floor);
         desired = Vec2::new(
-            clamp_world_xz_with_half_size(
-                desired.x,
-                collider.half_extents.x,
-                floor_half.x,
-            ),
-            clamp_world_xz_with_half_size(
-                desired.y,
-                collider.half_extents.y,
-                floor_half.y,
-            ),
+            clamp_world_xz_with_half_size(desired.x, collider.half_extents.x, floor_half.x),
+            clamp_world_xz_with_half_size(desired.y, collider.half_extents.y, floor_half.y),
         );
         transform.translation.x = desired.x;
         transform.translation.z = desired.y;
@@ -419,11 +411,8 @@ pub(crate) fn world_drag_update(
             let footprint = FloorFootprint::Aabb {
                 half: collider.half_extents,
             };
-            let sample = sample_floor_footprint(
-                &active_floor,
-                Vec2::new(desired.x, desired.y),
-                footprint,
-            );
+            let sample =
+                sample_floor_footprint(&active_floor, Vec2::new(desired.x, desired.y), footprint);
             let ground_y = apply_floor_sink(sample.max_height);
             let scale_y = safe_abs_scale_y(transform.scale);
             let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;

@@ -30,6 +30,7 @@ Gravimera is a sandbox with multiple modes. Some inputs are mode-dependent.
 - Camera pan (keyboard): `W` / `A` / `S` / `D` when nothing is selected
 - Camera rotate: `Z` / `X` / `Q` / `E` (Up/Down/Left/Right)
 - Direct move (selected units/build objects): `W` / `A` / `S` / `D` (camera-relative; camera follows selection horizontally with slack)
+- Fly units altitude: `R` / `F` (up/down)
 - Slow move (selected units): `CapsLock` (toggle; 1/3 speed)
 
 ## Selection
@@ -92,7 +93,7 @@ Units in Build mode:
 - Enemies do not spawn automatically.
 - Switch weapon: `Ctrl/Cmd + 1/2/3`
 - Play selected motions (units/build objects): `1..9` and `0` (slot 10)
-- Restart: `R`
+- Restart: `Shift+R`
 
 ## Build Preview (Gen3D)
 

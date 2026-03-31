@@ -1109,7 +1109,7 @@ pub(crate) fn unit_attack_execute(
                                         } else if target_player.is_some() {
                                             game.game_over = true;
                                             info!(
-                                                "GAME OVER. Final score: {}. Press R to restart.",
+                                                "GAME OVER. Final score: {}. Press Shift+R to restart.",
                                                 game.score
                                             );
                                         }
@@ -1209,7 +1209,7 @@ pub(crate) fn unit_attack_execute(
                         } else if target_player.is_some() {
                             game.game_over = true;
                             info!(
-                                "GAME OVER. Final score: {}. Press R to restart.",
+                                "GAME OVER. Final score: {}. Press Shift+R to restart.",
                                 game.score
                             );
                         }
@@ -1447,7 +1447,7 @@ pub(crate) fn brain_attack_execute(
                     } else if target_player.is_some() {
                         game.game_over = true;
                         info!(
-                            "GAME OVER. Final score: {}. Press R to restart.",
+                            "GAME OVER. Final score: {}. Press Shift+R to restart.",
                             game.score
                         );
                     }
@@ -1780,7 +1780,7 @@ pub(crate) fn bullet_enemy_collisions(
                     } else if player.is_some() {
                         game.game_over = true;
                         info!(
-                            "GAME OVER. Final score: {}. Press R to restart.",
+                            "GAME OVER. Final score: {}. Press Shift+R to restart.",
                             game.score
                         );
                     }

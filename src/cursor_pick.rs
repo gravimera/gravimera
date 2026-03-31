@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
-use crate::geometry::{point_inside_aabb_xz, safe_abs_scale_y};
 use crate::genfloor::{floor_half_size, sample_floor_point, ActiveWorldFloor};
+use crate::geometry::{point_inside_aabb_xz, safe_abs_scale_y};
 use crate::object::registry::ObjectLibrary;
 use crate::types::{AabbCollider, BuildDimensions, BuildObject, ObjectPrefabId};
 
@@ -141,8 +141,7 @@ pub(crate) fn cursor_surface_pick(
     let mut best_t = f32::INFINITY;
     let mut pick = None;
 
-    if let Some((hit, t_ground, is_water)) =
-        ray_floor_intersection(active_floor, origin, direction)
+    if let Some((hit, t_ground, is_water)) = ray_floor_intersection(active_floor, origin, direction)
     {
         best_t = t_ground;
         pick = Some(SurfacePick {

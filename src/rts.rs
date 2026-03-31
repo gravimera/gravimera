@@ -59,17 +59,18 @@ pub(crate) struct MoveCommandWorld<'w, 's> {
         ),
         With<BuildObject>,
     >,
-    enemies: Query<
-        'w,
-        's,
-        (&'static Transform, &'static Enemy, &'static ObjectPrefabId),
-        With<Enemy>,
-    >,
+    enemies:
+        Query<'w, 's, (&'static Transform, &'static Enemy, &'static ObjectPrefabId), With<Enemy>>,
     players: Query<'w, 's, (), With<Player>>,
     commandables: Query<
         'w,
         's,
-        (Entity, &'static Transform, &'static Collider, &'static ObjectPrefabId),
+        (
+            Entity,
+            &'static Transform,
+            &'static Collider,
+            &'static ObjectPrefabId,
+        ),
         With<Commandable>,
     >,
 }
@@ -826,14 +827,12 @@ pub(crate) fn move_command_input(
                     if let Some((center, half)) = pick.block_top {
                         let min_half = BUILD_UNIT_SIZE * 0.5;
                         if half.x > min_half && half.y > min_half {
-                            goal.x = goal.x.clamp(
-                                center.x - half.x + min_half,
-                                center.x + half.x - min_half,
-                            );
-                            goal.y = goal.y.clamp(
-                                center.y - half.y + min_half,
-                                center.y + half.y - min_half,
-                            );
+                            goal.x = goal
+                                .x
+                                .clamp(center.x - half.x + min_half, center.x + half.x - min_half);
+                            goal.y = goal
+                                .y
+                                .clamp(center.y - half.y + min_half, center.y + half.y - min_half);
                         }
                     }
                     (goal, pick.block_top.map(|_| pick.surface_y))
@@ -853,14 +852,12 @@ pub(crate) fn move_command_input(
             if let Some((center, half)) = pick.block_top {
                 let min_half = BUILD_UNIT_SIZE * 0.5;
                 if half.x > min_half && half.y > min_half {
-                    goal.x = goal.x.clamp(
-                        center.x - half.x + min_half,
-                        center.x + half.x - min_half,
-                    );
-                    goal.y = goal.y.clamp(
-                        center.y - half.y + min_half,
-                        center.y + half.y - min_half,
-                    );
+                    goal.x = goal
+                        .x
+                        .clamp(center.x - half.x + min_half, center.x + half.x - min_half);
+                    goal.y = goal
+                        .y
+                        .clamp(center.y - half.y + min_half, center.y + half.y - min_half);
                 }
             }
             (goal, pick.block_top.map(|_| pick.surface_y))
@@ -1109,14 +1106,25 @@ pub(crate) fn keyboard_move_input(
         dir -= right_xz;
     }
 
-    if dir.length_squared() <= 1e-6 {
+    let dir = if dir.length_squared() > 1e-6 {
+        Some(dir.normalize())
+    } else {
+        None
+    };
+
+    let mut up_dir = 0.0f32;
+    if keys.pressed(KeyCode::KeyR) {
+        up_dir += 1.0;
+    }
+    if keys.pressed(KeyCode::KeyF) {
+        up_dir -= 1.0;
+    }
+    let wants_vertical = up_dir.abs() > 1e-6;
+
+    if dir.is_none() && !wants_vertical {
         return;
     }
-    let dir = dir.normalize();
-
-    if let Some(marker) = move_state.marker.take() {
-        commands.entity(marker).try_despawn();
-    }
+    let mut any_manual_move = false;
 
     for (entity, mut transform, collider, prefab_id, order, health, died) in &mut commandables {
         if !selection.selected.contains(&entity) {
@@ -1125,10 +1133,6 @@ pub(crate) fn keyboard_move_input(
 
         if died.is_some() || health.is_some_and(|health| health.current <= 0) {
             continue;
-        }
-
-        if let Some(mut order) = order {
-            order.clear();
         }
 
         let Some(mobility) = library.mobility(prefab_id.0) else {
@@ -1142,27 +1146,64 @@ pub(crate) fn keyboard_move_input(
             continue;
         }
 
-        let step = dir * (speed * dt);
-        let start_pos = Vec2::new(transform.translation.x, transform.translation.z);
-        let mut pos = start_pos + step;
+        let wants_xz = dir.is_some();
+        let wants_y = wants_vertical && mobility.mode == crate::object::registry::MobilityMode::Air;
+        if wants_xz || wants_y {
+            if let Some(mut order) = order {
+                order.clear();
+            }
+            any_manual_move = true;
+        }
 
-        let radius = collider.radius.max(0.01);
-        let floor_half = floor_half_size(&active_floor);
-        pos.x = clamp_world_xz_with_half_size(pos.x, radius, floor_half.x);
-        pos.y = clamp_world_xz_with_half_size(pos.y, radius, floor_half.y);
+        if let Some(dir) = dir {
+            let step = dir * (speed * dt);
+            let start_pos = Vec2::new(transform.translation.x, transform.translation.z);
+            let mut pos = start_pos + step;
 
-        transform.translation.x = pos.x;
-        transform.translation.z = pos.y;
+            let radius = collider.radius.max(0.01);
+            let floor_half = floor_half_size(&active_floor);
+            pos.x = clamp_world_xz_with_half_size(pos.x, radius, floor_half.x);
+            pos.y = clamp_world_xz_with_half_size(pos.y, radius, floor_half.y);
 
-        let moved = pos - start_pos;
-        if moved.length_squared() > 1e-8 {
-            let moved_dir = moved.normalize();
-            let desired_yaw = moved_dir.x.atan2(moved_dir.y);
-            let forward = transform.rotation * Vec3::Z;
-            let current_yaw = forward.x.atan2(forward.z);
-            let max_delta = CLICK_MOVE_MAX_TURN_RATE_RADS_PER_SEC * dt;
-            let new_yaw = turn_towards_yaw(current_yaw, desired_yaw, max_delta);
-            transform.rotation = Quat::from_rotation_y(new_yaw);
+            transform.translation.x = pos.x;
+            transform.translation.z = pos.y;
+
+            let moved = pos - start_pos;
+            if moved.length_squared() > 1e-8 {
+                let moved_dir = moved.normalize();
+                let desired_yaw = moved_dir.x.atan2(moved_dir.y);
+                let forward = transform.rotation * Vec3::Z;
+                let current_yaw = forward.x.atan2(forward.z);
+                let max_delta = CLICK_MOVE_MAX_TURN_RATE_RADS_PER_SEC * dt;
+                let new_yaw = turn_towards_yaw(current_yaw, desired_yaw, max_delta);
+                transform.rotation = Quat::from_rotation_y(new_yaw);
+            }
+        }
+
+        if wants_y {
+            let dy = up_dir * (speed * dt);
+            if dy.abs() > 1e-8 {
+                transform.translation.y += dy;
+
+                // Keep air units above terrain.
+                let radius = collider.radius.max(0.01);
+                let footprint = FloorFootprint::Circle { radius };
+                let sample = sample_floor_footprint(
+                    &active_floor,
+                    Vec2::new(transform.translation.x, transform.translation.z),
+                    footprint,
+                );
+                let ground_y = apply_floor_sink(sample.max_height);
+                let scale_y = safe_abs_scale_y(transform.scale);
+                let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
+                transform.translation.y = transform.translation.y.max(ground_y + origin_y);
+            }
+        }
+    }
+
+    if any_manual_move {
+        if let Some(marker) = move_state.marker.take() {
+            commands.entity(marker).try_despawn();
         }
     }
 }

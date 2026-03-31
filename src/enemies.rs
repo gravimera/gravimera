@@ -177,8 +177,7 @@ fn spawn_enemy_rendered(
         base_ground_y,
         speed,
         &mut rng,
-    )
-    else {
+    ) else {
         return;
     };
 
@@ -814,7 +813,7 @@ pub(crate) fn update_dog_pounces(
                     if target_player.is_some() {
                         game.game_over = true;
                         info!(
-                            "GAME OVER. Final score: {}. Press R to restart.",
+                            "GAME OVER. Final score: {}. Press Shift+R to restart.",
                             game.score
                         );
                     }
@@ -977,7 +976,7 @@ pub(crate) fn dog_bite_attack(
                     player_died = true;
                     game.game_over = true;
                     info!(
-                        "GAME OVER. Final score: {}. Press R to restart.",
+                        "GAME OVER. Final score: {}. Press Shift+R to restart.",
                         game.score
                     );
                 }
@@ -1394,7 +1393,7 @@ pub(crate) fn enemy_projectile_player_collisions(
                 if target_player.is_some() {
                     game.game_over = true;
                     info!(
-                        "GAME OVER. Final score: {}. Press R to restart.",
+                        "GAME OVER. Final score: {}. Press Shift+R to restart.",
                         game.score
                     );
                 }
