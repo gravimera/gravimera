@@ -698,11 +698,17 @@ pub(crate) fn scenes_panel_delete_button_interactions(
                 let mut deleted = 0usize;
                 let mut failed = 0usize;
                 let mut skipped_active = 0usize;
+                let mut skipped_protected = 0usize;
                 let mut ids: Vec<String> = state.multi_selected_scenes.iter().cloned().collect();
                 ids.sort();
                 ids.dedup();
 
                 for scene_id in &ids {
+                    if crate::realm::is_protected_scene_id(scene_id) {
+                        skipped_protected += 1;
+                        continue;
+                    }
+
                     if *scene_id == active.scene_id {
                         skipped_active += 1;
                         continue;
@@ -724,23 +730,24 @@ pub(crate) fn scenes_panel_delete_button_interactions(
                     state.scenes_dirty = true;
                 }
 
-                let text = if failed == 0 && skipped_active == 0 {
-                    format!("Deleted {} scene(s).", deleted)
-                } else if failed == 0 {
-                    format!("Deleted {}, skipped active {}.", deleted, skipped_active)
-                } else {
-                    format!(
-                        "Deleted {}, failed {}, skipped active {}.",
-                        deleted, failed, skipped_active
-                    )
-                };
-                let kind = if failed > 0 || skipped_active > 0 {
+                let mut summary = vec![format!("Deleted {} scene(s)", deleted)];
+                if failed > 0 {
+                    summary.push(format!("failed {}", failed));
+                }
+                if skipped_active > 0 {
+                    summary.push(format!("skipped active {}", skipped_active));
+                }
+                if skipped_protected > 0 {
+                    summary.push(format!("skipped protected {}", skipped_protected));
+                }
+
+                let kind = if failed > 0 || skipped_active > 0 || skipped_protected > 0 {
                     UiToastKind::Warn
                 } else {
                     UiToastKind::Info
                 };
                 toasts.write(UiToastCommand::Show {
-                    text,
+                    text: format!("{}.", summary.join(", ")),
                     kind,
                     ttl_secs: 5.0,
                 });

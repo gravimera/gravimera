@@ -259,6 +259,26 @@ pub(crate) fn import_scene_packages_from_zip_with_policy(
     )
 }
 
+pub(crate) fn ensure_scene_imported_from_zip_if_missing(
+    realm_id: &str,
+    required_scene_id: &str,
+    zip_path: &Path,
+    policy: ImportConflictPolicy,
+) -> Result<bool, String> {
+    let scenes_root = crate::paths::realm_dir(realm_id).join("scenes");
+    let prefabs_root = crate::paths::realm_prefabs_dir(realm_id);
+    crate::realm_floor_packages::migrate_legacy_floor_storage_for_realm(realm_id)?;
+    let floors_root = crate::paths::realm_floors_dir(realm_id);
+    ensure_scene_imported_from_zip_if_missing_in_roots(
+        &scenes_root,
+        &prefabs_root,
+        &floors_root,
+        required_scene_id,
+        zip_path,
+        policy,
+    )
+}
+
 fn summarize_scene_zip_conflicts_in_roots(
     scenes_root: &Path,
     prefabs_root: &Path,
@@ -308,6 +328,45 @@ fn summarize_scene_zip_conflicts_in_roots(
         conflicting_prefab_ids,
         conflicting_terrain_ids,
     })
+}
+
+fn ensure_scene_imported_from_zip_if_missing_in_roots(
+    scenes_root: &Path,
+    prefabs_root: &Path,
+    floors_root: &Path,
+    required_scene_id: &str,
+    zip_path: &Path,
+    policy: ImportConflictPolicy,
+) -> Result<bool, String> {
+    let required_scene_id = crate::realm::sanitize_id(required_scene_id)
+        .ok_or_else(|| "required scene id contains invalid characters".to_string())?;
+    let required_scene_root = scenes_root.join(&required_scene_id);
+    if required_scene_root.is_dir() {
+        return Ok(false);
+    }
+    if required_scene_root.exists() {
+        return Err(format!(
+            "Required scene path exists but is not a directory: {}",
+            required_scene_root.display()
+        ));
+    }
+
+    import_scene_packages_from_zip_to_roots_with_policy(
+        scenes_root,
+        prefabs_root,
+        floors_root,
+        zip_path,
+        policy,
+    )?;
+
+    if !required_scene_root.is_dir() {
+        return Err(format!(
+            "Import did not create required scene `{required_scene_id}` from {}.",
+            zip_path.display()
+        ));
+    }
+
+    Ok(true)
 }
 
 fn import_scene_packages_from_zip_to_roots_with_policy(
@@ -1525,6 +1584,115 @@ mod tests {
             pinned["forms"][0],
             json!(uuid::Uuid::from_u128(new_prefab_id).to_string())
         );
+
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[test]
+    fn ensure_scene_imported_from_zip_if_missing_preserves_scene_id_and_keeps_conflicts_both() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "gravimera_scene_zip_example_scene_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let src_scenes_root = temp_root.join("src_scenes");
+        let src_prefabs_root = temp_root.join("src_prefabs");
+        let src_floors_root = temp_root.join("src_terrain");
+        let dst_scenes_root = temp_root.join("dst_scenes");
+        let dst_prefabs_root = temp_root.join("dst_prefabs");
+        let dst_floors_root = temp_root.join("dst_terrain");
+        let zip_path = temp_root.join("example_scene.zip");
+
+        let scene_id = "example_scene".to_string();
+        let prefab_id = uuid::Uuid::new_v4().as_u128();
+        let terrain_id = uuid::Uuid::new_v4().as_u128();
+
+        let scene_dir = src_scenes_root.join(&scene_id);
+        std::fs::create_dir_all(scene_dir.join("build")).expect("create build dir");
+        std::fs::write(
+            scene_dir.join("build").join("scene.grav"),
+            crate::scene_store::test_encode_scene_dat_with_prefab_ids(&[prefab_id]),
+        )
+        .expect("write scene.grav");
+        write_legacy_scene_floor_selection(&scene_dir.join("build"), terrain_id);
+        write_scene_sources(&scene_dir.join("src"), &scene_id, prefab_id);
+        write_prefab_package(&src_prefabs_root, prefab_id);
+        write_terrain_package(&src_floors_root, terrain_id, "Bundled Terrain");
+
+        export_scene_packages_to_zip_from_roots(
+            &src_scenes_root,
+            &src_prefabs_root,
+            &src_floors_root,
+            std::slice::from_ref(&scene_id),
+            &zip_path,
+        )
+        .expect("export example scene zip");
+
+        write_prefab_package(&dst_prefabs_root, prefab_id);
+        write_terrain_package(&dst_floors_root, terrain_id, "Existing Terrain");
+
+        let imported = ensure_scene_imported_from_zip_if_missing_in_roots(
+            &dst_scenes_root,
+            &dst_prefabs_root,
+            &dst_floors_root,
+            &scene_id,
+            &zip_path,
+            ImportConflictPolicy::KeepBoth,
+        )
+        .expect("import example scene");
+        assert!(imported);
+        assert!(dst_scenes_root.join(&scene_id).is_dir());
+
+        let imported_prefab_ids: Vec<u128> = std::fs::read_dir(&dst_prefabs_root)
+            .expect("list prefabs")
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter_map(|name| uuid::Uuid::parse_str(&name).ok().map(|uuid| uuid.as_u128()))
+            .collect();
+        let new_prefab_id = imported_prefab_ids
+            .iter()
+            .copied()
+            .find(|id| *id != prefab_id)
+            .expect("renamed prefab id");
+
+        let imported_terrain_ids: Vec<u128> = std::fs::read_dir(&dst_floors_root)
+            .expect("list terrains")
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter_map(|name| uuid::Uuid::parse_str(&name).ok().map(|uuid| uuid.as_u128()))
+            .collect();
+        let new_terrain_id = imported_terrain_ids
+            .iter()
+            .copied()
+            .find(|id| *id != terrain_id)
+            .expect("renamed terrain id");
+
+        let referenced = crate::scene_store::referenced_prefab_ids_in_scene_dat_path(
+            &dst_scenes_root.join(&scene_id).join("build/scene.grav"),
+        )
+        .expect("read imported scene ids");
+        assert!(referenced.contains(&new_prefab_id));
+        assert!(!referenced.contains(&prefab_id));
+
+        let imported_floor =
+            crate::scene_floor_selection::read_scene_floor_selection_from_build_dir(
+                &dst_scenes_root.join(&scene_id).join("build"),
+            )
+            .expect("read imported terrain selection");
+        assert_eq!(imported_floor, Some(new_terrain_id));
+
+        let imported_again = ensure_scene_imported_from_zip_if_missing_in_roots(
+            &dst_scenes_root,
+            &dst_prefabs_root,
+            &dst_floors_root,
+            &scene_id,
+            &zip_path,
+            ImportConflictPolicy::KeepBoth,
+        )
+        .expect("skip second import");
+        assert!(!imported_again);
 
         let _ = std::fs::remove_dir_all(&temp_root);
     }

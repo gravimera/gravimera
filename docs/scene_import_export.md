@@ -5,12 +5,13 @@ This document describes the scene package import/export workflow from the Scenes
 ## UI Workflow
 
 - In normal mode, the Scenes panel shows **Add Scene**, **Manage**, and **Import**.
+- On startup, if the active realm does not already contain `example_scene`, the app automatically imports `assets/example_scene.zip` with `Keep Both` conflict handling.
 - **Import** prompts for a zip file and imports any valid scene packages into the active realm.
 - If the zip conflicts with existing scene ids or bundled prefab package ids, the app opens a native local conflict dialog with `Replace`, `Keep Both`, and `Cancel`.
 - Click **Manage** to enter manage mode (multi-select). In manage mode the panel keeps **Import** visible and adds **Export**, **Delete**, **All**, and **None**.
 - In manage mode, click scene rows to toggle selection.
 - **Export** saves the selected scene folders plus any referenced prefab packages into one zip.
-- **Delete** removes the selected scene folders from disk, but skips the currently active scene.
+- **Delete** removes the selected scene folders from disk, but skips the currently active scene and the protected `example_scene`.
 - If no scenes are selected when exporting or deleting, the UI shows a warning toast.
 
 ## Zip Layout
@@ -41,6 +42,7 @@ Terrain packages are exported by reading each selected scene’s terrain selecti
 - Bundled prefab package ids conflict on `realm/<realm_id>/prefabs/<prefab_uuid>/`.
 - Bundled terrain package ids conflict on `realm/<realm_id>/terrain/<terrain_uuid>/`.
 - If the zip has no conflicts, import proceeds immediately.
+- The startup bootstrap import for `assets/example_scene.zip` uses `Keep Both`, so bundled prefab and terrain conflicts are duplicated under new ids instead of overwriting existing content.
 
 ## Conflict Policy
 

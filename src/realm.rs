@@ -8,6 +8,8 @@ use crate::scene_sources::SceneSourcesV1;
 
 const ACTIVE_SELECTION_FILE_NAME: &str = "active.json";
 const ACTIVE_SELECTION_FORMAT_VERSION: u32 = 1;
+const EXAMPLE_SCENE_ID: &str = "example_scene";
+const EXAMPLE_SCENE_ZIP_FILE_NAME: &str = "example_scene.zip";
 
 #[derive(Resource, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ActiveRealmScene {
@@ -53,6 +55,10 @@ pub(crate) fn realm_startup_init(mut active: ResMut<ActiveRealmScene>) {
 
     if let Some(loaded) = load_active_selection_from_disk() {
         *active = loaded;
+    }
+
+    if let Err(err) = ensure_bundled_example_scene(&active.realm_id) {
+        warn!("{err}");
     }
 
     if let Err(err) = ensure_scene_dirs(&active.realm_id, &active.scene_id) {
@@ -161,6 +167,10 @@ pub(crate) fn list_scenes(realm_id: &str) -> Vec<String> {
         out.push(crate::paths::default_scene_id().to_string());
     }
     out
+}
+
+pub(crate) fn is_protected_scene_id(scene_id: &str) -> bool {
+    scene_id.trim() == EXAMPLE_SCENE_ID
 }
 
 pub(crate) fn scene_src_dir(active: &ActiveRealmScene) -> PathBuf {
@@ -279,6 +289,41 @@ fn ensure_scene_sources_scaffold(realm_id: &str, scene_id: &str) -> Result<(), S
     sources
         .write_to_dir(&src_dir)
         .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+fn ensure_bundled_example_scene(realm_id: &str) -> Result<(), String> {
+    let scene_dir = crate::paths::scene_dir(realm_id, EXAMPLE_SCENE_ID);
+    if scene_dir.is_dir() {
+        return Ok(());
+    }
+    if scene_dir.exists() {
+        return Err(format!(
+            "Bundled example scene path exists but is not a directory: {}",
+            scene_dir.display()
+        ));
+    }
+
+    let zip_path = crate::paths::resolve_assets_dir().join(EXAMPLE_SCENE_ZIP_FILE_NAME);
+    if !zip_path.is_file() {
+        return Err(format!(
+            "Bundled example scene archive not found: {}",
+            zip_path.display()
+        ));
+    }
+
+    let imported = crate::scene_zip::ensure_scene_imported_from_zip_if_missing(
+        realm_id,
+        EXAMPLE_SCENE_ID,
+        &zip_path,
+        crate::import_conflicts::ImportConflictPolicy::KeepBoth,
+    )?;
+    if imported {
+        info!(
+            "Imported bundled example scene `{EXAMPLE_SCENE_ID}` into realm `{realm_id}` from {}.",
+            zip_path.display()
+        );
+    }
     Ok(())
 }
 
