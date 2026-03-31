@@ -6,6 +6,8 @@ Gravimera is an **AI(LLM)-driven 3D word Editor and Explorer**. You can use natu
 - Generate game scenes with highly interactive units and buildings. **[TODO]**
 - Generate a whole story. **[TODO]**
 
+Based on [Bevy engine](https://github.com/bevyengine/bevy).
+
 <img src="assets/icon.png" width="128" height="128" alt="Gravimera app icon" />
 
 ## Quickstart
