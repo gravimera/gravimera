@@ -34,7 +34,7 @@ Tip: start from `config.example.toml` so sensible defaults (including `openai.mo
 **Run:**
 
 ```bash
-cargo run
+cargo run --release # or without --release if you are debuging
 ```
 
 Or go to [releases](https://github.com/gravimera/gravimera/releases), download the latest release, and double clicks.
