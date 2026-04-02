@@ -315,7 +315,7 @@ pub(crate) fn genfloor_update_cpu_waves(
 
 pub(crate) fn genfloor_ensure_preview_floor(
     mut commands: Commands,
-    preview: Res<crate::gen3d::Gen3dPreview>,
+    mut preview: ResMut<crate::gen3d::Gen3dPreview>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut active: ResMut<ActiveWorldFloor>,
@@ -328,6 +328,29 @@ pub(crate) fn genfloor_ensure_preview_floor(
         return;
     };
     let def = active.def.clone();
+    let size_x = def.mesh.size_m[0].max(0.5);
+    let size_z = def.mesh.size_m[1].max(0.5);
+    let thickness = def.mesh.thickness_m.max(0.05);
+    let half_extents = Vec3::new(size_x, thickness, size_z) * 0.5;
+
+    let aspect = 16.0 / 9.0;
+    let mut projection = bevy::camera::PerspectiveProjection::default();
+    projection.aspect_ratio = aspect;
+    let fov_y = projection.fov;
+    let near = projection.near;
+
+    let yaw = std::f32::consts::FRAC_PI_6;
+    let pitch = -0.45;
+    let base_distance =
+        crate::orbit_capture::required_distance_for_view(half_extents, yaw, pitch, fov_y, aspect, near);
+    let distance = (base_distance * 1.1).clamp(near + 0.2, 500.0);
+
+    preview.draft_focus = Vec3::ZERO;
+    preview.view_pan = Vec3::ZERO;
+    preview.yaw = yaw;
+    preview.pitch = pitch;
+    preview.distance = distance;
+
     let mesh_handle = meshes.add(build_floor_mesh_only(&def));
     let material = build_floor_material(&def, &mut materials);
     commands.entity(root).with_children(|child| {
