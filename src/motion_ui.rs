@@ -6,7 +6,9 @@ use bevy::window::PrimaryWindow;
 use serde_json::json;
 
 use crate::constants::PLAYER_MAX_HEALTH;
-use crate::intelligence::host_plugin::{IntelligenceHostRuntime, StandaloneBrain};
+use crate::intelligence::host_plugin::{
+    IntelligenceHostRuntime, StandaloneBrain, StandaloneBrainDisabled,
+};
 use crate::intelligence::protocol::{DespawnBrainInstanceRequest, PROTOCOL_VERSION};
 use crate::intelligence::service_client::IntelligenceServiceClient;
 use crate::meta_speak::{MetaSpeakOutcome, MetaSpeakRequest, MetaSpeakRuntime, MetaSpeakVoice};
@@ -18,8 +20,9 @@ use crate::threaded_result::{
     new_shared_result, spawn_worker_thread, take_shared_result, SharedResult,
 };
 use crate::types::{
-    CameraFocus, Commandable, EmojiAtlas, Health, LaserDamageAccum, ModelSpeechBubbleCommand,
-    ModelSpeechSource, MoveOrder, ObjectPrefabId, Player, PlayerAnimator, SelectionState, UiFonts,
+    BrainAttackOrder, CameraFocus, Commandable, EmojiAtlas, Health, LaserDamageAccum,
+    ModelSpeechBubbleCommand, ModelSpeechSource, MoveOrder, ObjectPrefabId, Player, PlayerAnimator,
+    SelectionState, UiFonts,
 };
 use crate::ui::{set_ime_position_for_rich_text, ImeAnchorXPolicy};
 
@@ -1672,6 +1675,8 @@ pub(crate) fn meta_brain_ui_button_clicks(
                     }
                     commands.entity(entity).remove::<StandaloneBrain>();
                     commands.entity(entity).remove::<MoveOrder>();
+                    commands.entity(entity).remove::<BrainAttackOrder>();
+                    commands.entity(entity).insert(StandaloneBrainDisabled);
                     updated += 1;
                 }
                 Some(module_id) => {
@@ -1679,6 +1684,7 @@ pub(crate) fn meta_brain_ui_button_clicks(
                         continue;
                     }
 
+                    commands.entity(entity).remove::<StandaloneBrainDisabled>();
                     commands.entity(entity).insert(StandaloneBrain {
                         module_id: module_id.to_string(),
                         config: json!({}),
@@ -1687,6 +1693,8 @@ pub(crate) fn meta_brain_ui_button_clicks(
                         next_tick_due: 0,
                         last_error: None,
                     });
+                    commands.entity(entity).remove::<MoveOrder>();
+                    commands.entity(entity).remove::<BrainAttackOrder>();
                     updated += 1;
                 }
             }

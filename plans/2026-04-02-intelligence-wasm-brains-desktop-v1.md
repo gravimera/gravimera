@@ -26,6 +26,9 @@ How a human verifies it works (desktop):
 - [x] (2026-04-02) Define and document a minimal obs-only guest ABI v1 + binary encoding, plus a small demo guest module used in tests.
 - [x] (2026-04-02) Add unit tests that load a WASM module, spawn an instance, tick it, and verify output decoding + runaway handling (out-of-fuel trap).
 - [x] (2026-04-03) Sync built-in demo modules from `assets/intelligence/wasm_modules/` into the module store (replacing existing folders with the same `module_id`), and prefer on-disk modules over hard-coded demos.
+- [x] (2026-04-03) Host: submit `tick_many` on a worker thread and apply outputs on the main thread to avoid blocking render frames.
+- [x] (2026-04-03) Host: auto-attach default demo brains to eligible units in Play mode (and add a per-unit fallback marker to prevent re-attaching when the player selects fallback in the Meta panel).
+- [x] (2026-04-03) Fix demo `rust_source` module parsing bug (`demo.coward.v1`) and rebuild its cached `build/` artifacts.
 - [ ] Add end-to-end validation: compile, load, tick, and observe in-game behavior.
 - [x] (2026-04-03) Bundle toolchain/runtime into desktop distribution artifacts and document it (`tools/publish.py`, `docs/publishing.md`).
 

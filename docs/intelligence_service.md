@@ -104,21 +104,16 @@ WASM guest ABI + encoding details: `docs/intelligence_wasm_brains.md`.
 
 The service currently ships a few **demo** modules for development and testing:
 
-- `demo.orbit.v1`: circles around a center point.
-  - config: `{ "center": [x,z], "radius": f32, "rads_per_tick": f32 }`
-- `demo.coward.v1`: wanders/rests/“looks around”, but flees from nearby units of different `kind`.
-  - on taking damage (health drop), it guesses the attacker as the nearest hostile unit in its snapshot.
-  - if the attacker seems more powerful (based on health/max health), it panic-flees (may try to hide behind nearby buildings) and remembers that attacker as “dangerous” for ~60 seconds.
-- `demo.opportunist.v1`: mostly rests (≈3/4) and sometimes wanders (≈1/4).
-  - it may attack nearby moving units of different `kind`, and may fight back when attacked.
-  - it only engages if it estimates it can win and still remain above 1/4 health.
-  - if the attacker seems more powerful (based on health/max health), it disengages and flees.
-  - ranged units (tagged `attack.ranged` by the host) prefer to attack from distance instead of closing in.
-  - requires host-granted capabilities: `brain.move` and `brain.combat`.
-- `demo.belligerent.v1`: aggressive brain that attacks nearby units of different `kind`.
-  - when attacked, the attacker gets the most attention: it focuses that unit and chases it until it gets away (lost for a while), then resumes normal targeting.
-  - ranged units (tagged `attack.ranged`) attack from distance.
-  - requires host-granted capabilities: `brain.move` and `brain.combat`.
+- `demo.orbit.v1`
+- `demo.coward.v1`
+- `demo.opportunist.v1`
+- `demo.belligerent.v1`
+
+Notes:
+
+- In normal desktop builds, these demo module ids are shipped as on-disk **WASM modules** and seeded into `<root_dir>/intelligence/wasm_modules/` from `assets/intelligence/wasm_modules/`.
+- The seeded WASM demo modules are intentionally **simplified v1** and currently do **not** read the per-brain `config` JSON (obs-only guest ABI v1 does not carry config).
+- If the on-disk WASM module for a demo id is missing, the service falls back to the built-in Rust demo implementations in `src/intelligence/service.rs` (these may be more featureful and may use `config`).
 
 Notes:
 
@@ -141,6 +136,10 @@ If the intelligence service disconnects (or is temporarily unavailable), the hos
 
 You can override per-unit in the UI via the Meta panel’s Brain section.
 
+Performance note:
+
+- The host submits `tick_many` to the service on a dedicated worker thread and applies the results on the main thread, to avoid blocking rendering frames on service execution time.
+
 On Windows PowerShell, use `curl.exe` instead of `curl` if you hit the `Invoke-WebRequest` alias:
 
 ```powershell
@@ -151,7 +150,7 @@ curl.exe -s http://127.0.0.1:<port>/v1/health
 
 - Double-click a unit’s selection circle to open the **Meta** panel.
 - In the **Brain** section:
-  - `Fallback (default)` detaches the standalone brain.
+  - `Fallback (default)` detaches the standalone brain and prevents the host from auto-attaching a default brain to that unit.
   - Brain modules are fetched asynchronously from the service after the panel opens (via `GET /v1/modules`).
 
 ## Troubleshooting

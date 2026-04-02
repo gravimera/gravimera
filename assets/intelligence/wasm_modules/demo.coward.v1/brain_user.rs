@@ -199,7 +199,7 @@ impl<'a> Obs<'a> {
             read_f32(self.bytes, base + 36),
             read_f32(self.bytes, base + 40),
         ];
-        let tags_bits = read_u64(self.bytes, base + 80);
+        let tags_bits = read_u64(self.bytes, base + 76);
         let d2_xz = rel_pos[0] * rel_pos[0] + rel_pos[2] * rel_pos[2];
         Some(Nearby {
             kind_lo,

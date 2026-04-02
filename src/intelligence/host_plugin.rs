@@ -58,11 +58,71 @@ pub(crate) struct IntelligenceHostRuntime {
     pub(crate) modules_loaded: std::collections::HashSet<String>,
     pub(crate) last_connect_attempt_tick: u64,
     pub(crate) last_service_tick: Option<u64>,
+    tick_worker: Option<IntelligenceTickWorker>,
+    tick_in_flight: Option<InFlightTick>,
+    tick_seq: u64,
     embedded_service: Option<crate::intelligence::service::EmbeddedIntelligenceService>,
 }
 
 fn intelligence_enabled(runtime: Res<IntelligenceHostRuntime>) -> bool {
     runtime.enabled
+}
+
+struct TickManyWorkItem {
+    seq: u64,
+    req: TickManyRequest,
+}
+
+struct TickManyWorkResult {
+    seq: u64,
+    result: Result<TickManyResponse, String>,
+}
+
+struct IntelligenceTickWorker {
+    addr: SocketAddr,
+    token: Option<String>,
+    req_tx: std::sync::mpsc::SyncSender<TickManyWorkItem>,
+    resp_rx: std::sync::Mutex<std::sync::mpsc::Receiver<TickManyWorkResult>>,
+}
+
+impl IntelligenceTickWorker {
+    fn start(addr: SocketAddr, token: Option<String>) -> Self {
+        let (req_tx, req_rx) = std::sync::mpsc::sync_channel::<TickManyWorkItem>(1);
+        let (resp_tx, resp_rx) = std::sync::mpsc::channel::<TickManyWorkResult>();
+        let thread_token = token.clone();
+        if let Err(err) = std::thread::Builder::new()
+            .name("gravimera_intelligence_tick_worker".into())
+            .spawn(move || {
+                let client = IntelligenceServiceClient::new(addr, thread_token);
+                while let Ok(item) = req_rx.recv() {
+                    let result = client.tick_many(item.req);
+                    let _ = resp_tx.send(TickManyWorkResult {
+                        seq: item.seq,
+                        result,
+                    });
+                }
+            })
+        {
+            warn!("Failed to spawn intelligence tick worker thread: {err}");
+        }
+
+        Self {
+            addr,
+            token,
+            req_tx,
+            resp_rx: std::sync::Mutex::new(resp_rx),
+        }
+    }
+
+    fn token_matches(&self, token: &Option<String>) -> bool {
+        &self.token == token
+    }
+}
+
+struct InFlightTick {
+    seq: u64,
+    tick_index: u64,
+    brain_to_entity: std::collections::HashMap<String, Entity>,
 }
 
 #[derive(Component, Clone)]
@@ -74,6 +134,12 @@ pub(crate) struct StandaloneBrain {
     pub(crate) next_tick_due: u64,
     pub(crate) last_error: Option<String>,
 }
+
+/// Marker that disables auto-attaching default brains to a unit.
+///
+/// Used by the Meta panel "Fallback (default)" brain option.
+#[derive(Component)]
+pub(crate) struct StandaloneBrainDisabled;
 
 impl StandaloneBrain {
     pub(crate) fn demo_orbit() -> Self {
@@ -98,6 +164,9 @@ fn intelligence_host_init(mut runtime: ResMut<IntelligenceHostRuntime>, config: 
     runtime.modules_loaded.clear();
     runtime.last_connect_attempt_tick = 0;
     runtime.last_service_tick = None;
+    runtime.tick_worker = None;
+    runtime.tick_in_flight = None;
+    runtime.tick_seq = 0;
     runtime.embedded_service = None;
 
     runtime.service_addr = None;
@@ -223,10 +292,10 @@ fn intelligence_attach_default_brains(
     units: Query<
         (Entity, &ObjectId, &ObjectPrefabId),
         (
-            Added<Commandable>,
             Without<Player>,
             Without<Died>,
             Without<StandaloneBrain>,
+            Without<StandaloneBrainDisabled>,
         ),
     >,
 ) {
@@ -328,6 +397,25 @@ fn mark_intelligence_disconnected(runtime: &mut IntelligenceHostRuntime) {
     runtime.connected = false;
     runtime.modules_loaded.clear();
     runtime.last_service_tick = None;
+    runtime.tick_in_flight = None;
+}
+
+fn ensure_tick_worker(runtime: &mut IntelligenceHostRuntime) {
+    let Some(addr) = runtime.service_addr else {
+        runtime.tick_worker = None;
+        runtime.tick_in_flight = None;
+        return;
+    };
+
+    let token = runtime.token.clone();
+    let needs_new = match runtime.tick_worker.as_ref() {
+        Some(worker) => worker.addr != addr || !worker.token_matches(&token),
+        None => true,
+    };
+    if needs_new {
+        runtime.tick_worker = Some(IntelligenceTickWorker::start(addr, token));
+        runtime.tick_in_flight = None;
+    }
 }
 
 fn intelligence_tick(
@@ -383,13 +471,17 @@ fn intelligence_tick(
 ) {
     if !config.intelligence_service_enabled || !config.intelligence_service_mode.enabled() {
         runtime.enabled = false;
+        runtime.tick_worker = None;
+        runtime.tick_in_flight = None;
         return;
     }
 
     let Some(addr) = runtime.service_addr else {
         return;
     };
-    let client = IntelligenceServiceClient::new(addr, runtime.token.clone());
+
+    ensure_tick_worker(&mut runtime);
+
     let intelligence_ticks_per_sec = config.intelligence_service_ticks_per_sec.max(0.001);
     let connect_retry_ticks = (intelligence_ticks_per_sec * 0.5).ceil().max(1.0) as u64;
 
@@ -398,6 +490,353 @@ fn intelligence_tick(
     let tick_index = (time.elapsed_secs_f64() * intelligence_ticks_per_sec)
         .floor()
         .max(0.0) as u64;
+
+    loop {
+        let msg = match runtime.tick_worker.as_ref() {
+            Some(worker) => match worker.resp_rx.lock() {
+                Ok(rx) => rx.try_recv(),
+                Err(_) => Err(std::sync::mpsc::TryRecvError::Disconnected),
+            },
+            None => break,
+        };
+        match msg {
+            Ok(done) => {
+                let inflight_seq = runtime.tick_in_flight.as_ref().map(|t| t.seq);
+                if inflight_seq != Some(done.seq) {
+                    continue;
+                }
+                let Some(in_flight) = runtime.tick_in_flight.take() else {
+                    continue;
+                };
+
+                match done.result {
+                    Ok(resp) => {
+                        let response_tick_index = in_flight.tick_index;
+                        let brain_to_entity = in_flight.brain_to_entity;
+                        let obstacles = collect_nav_obstacles(&build_objects, &library);
+                        let caps = BudgetCaps::default();
+
+                        let mut instance_to_entity =
+                            std::collections::HashMap::<String, Entity>::new();
+                        for (
+                            entity,
+                            object_id,
+                            _transform,
+                            _collider,
+                            _prefab_id,
+                            _health,
+                            _player,
+                            _enemy,
+                            _locomotion,
+                        ) in units.iter()
+                        {
+                            let instance_id = uuid::Uuid::from_u128(object_id.0).to_string();
+                            instance_to_entity.insert(instance_id, entity);
+                        }
+
+                        for out in resp.outputs {
+                            let Some(entity) = brain_to_entity.get(&out.brain_instance_id).copied()
+                            else {
+                                continue;
+                            };
+                            let matches_instance_id = brains.get(entity).ok().is_some_and(
+                                |(_entity, _obj_id, _transform, _health, brain)| {
+                                    brain.brain_instance_id.as_deref()
+                                        == Some(out.brain_instance_id.as_str())
+                                },
+                            );
+                            if !matches_instance_id {
+                                continue;
+                            }
+
+                            let Some(mut tick_output) = out.tick_output else {
+                                if let Some(err) = out.error {
+                                    debug!(
+                                        "Intelligence tick error (brain_instance_id={}): {err}",
+                                        out.brain_instance_id
+                                    );
+                                    if err.trim() == "Unknown brain_instance_id" {
+                                        runtime.modules_loaded.clear();
+                                        if let Ok((
+                                            _entity,
+                                            _obj_id,
+                                            _transform,
+                                            _health,
+                                            mut brain,
+                                        )) = brains.get_mut(entity)
+                                        {
+                                            brain.brain_instance_id = None;
+                                            brain.next_tick_due = 0;
+                                            brain.last_error = Some(err);
+                                        }
+                                    }
+                                }
+                                continue;
+                            };
+
+                            tick_output.clamp_in_place(caps);
+                            let mut sleep_for = None;
+                            for cmd in tick_output.commands {
+                                match cmd {
+                                    BrainCommand::SleepForTicks { ticks } => {
+                                        sleep_for = Some(sleep_for.unwrap_or(0).max(ticks));
+                                    }
+                                    BrainCommand::MoveTo { pos, .. } => {
+                                        let Ok((
+                                            collider,
+                                            prefab_id,
+                                            is_player,
+                                            existing_move,
+                                            _existing_attack,
+                                        )) = movers.get(entity)
+                                        else {
+                                            continue;
+                                        };
+                                        let goal = Vec2::new(pos[0], pos[2]);
+                                        let Ok((_entity, object_id, transform, _health, brain)) =
+                                            brains.get(entity)
+                                        else {
+                                            continue;
+                                        };
+                                        let previous_target =
+                                            existing_move.and_then(|order| order.target);
+
+                                        let scale_y = safe_abs_scale_y(transform.scale);
+                                        let origin_y = if is_player.is_some() {
+                                            PLAYER_Y
+                                        } else {
+                                            library.ground_origin_y_or_default(prefab_id.0)
+                                                * scale_y
+                                        };
+                                        let current_ground_y =
+                                            (transform.translation.y - origin_y).max(0.0);
+
+                                        let radius = collider.radius.max(0.01);
+                                        let floor_half = floor_half_size(&active_floor);
+                                        let clamped_goal = Vec2::new(
+                                            clamp_world_xz_with_half_size(
+                                                goal.x,
+                                                radius,
+                                                floor_half.x,
+                                            ),
+                                            clamp_world_xz_with_half_size(
+                                                goal.y,
+                                                radius,
+                                                floor_half.y,
+                                            ),
+                                        );
+
+                                        let start = Vec2::new(
+                                            transform.translation.x,
+                                            transform.translation.z,
+                                        );
+                                        let height = library
+                                            .size(prefab_id.0)
+                                            .map(|s| s.y * scale_y)
+                                            .unwrap_or(HERO_HEIGHT_WORLD * scale_y);
+
+                                        let mut order = MoveOrder::default();
+                                        match library.mobility(prefab_id.0).map(|m| m.mode) {
+                                            Some(crate::object::registry::MobilityMode::Air) => {
+                                                order.target = Some(clamped_goal);
+                                            }
+                                            Some(crate::object::registry::MobilityMode::Ground) => {
+                                                let goal_ground_y = if pos[1].is_finite()
+                                                    && pos[1] > origin_y + 1e-4
+                                                {
+                                                    (pos[1] - origin_y).max(0.0)
+                                                } else {
+                                                    let footprint = FloorFootprint::Circle {
+                                                        radius: radius.max(0.01),
+                                                    };
+                                                    let sample = sample_floor_footprint(
+                                                        &active_floor,
+                                                        clamped_goal,
+                                                        footprint,
+                                                    );
+                                                    apply_floor_sink(sample.max_height)
+                                                };
+
+                                                let is_walkable = |_pos: Vec2| true;
+                                                let Some(path) = navigation::find_path_height_aware(
+                                                    start,
+                                                    current_ground_y,
+                                                    clamped_goal,
+                                                    goal_ground_y,
+                                                    radius,
+                                                    height,
+                                                    floor_half_size_min(&active_floor),
+                                                    NAV_GRID_SIZE,
+                                                    &obstacles,
+                                                    &is_walkable,
+                                                ) else {
+                                                    commands.entity(entity).remove::<MoveOrder>();
+                                                    continue;
+                                                };
+                                                let path = navigation::smooth_path_height_aware(
+                                                    start,
+                                                    current_ground_y,
+                                                    path,
+                                                    radius,
+                                                    height,
+                                                    NAV_GRID_SIZE,
+                                                    &obstacles,
+                                                    &is_walkable,
+                                                );
+                                                order.path = path.into();
+                                                order.target = Some(clamped_goal);
+                                            }
+                                            None => {}
+                                        }
+                                        if order.target.is_some() {
+                                            commands.entity(entity).insert(order);
+
+                                            let should_log = previous_target
+                                                .map(|prev| prev.distance(clamped_goal) >= 0.8)
+                                                .unwrap_or(true);
+                                            if should_log {
+                                                let label = library
+                                                    .get(prefab_id.0)
+                                                    .map(|def| def.label.as_ref())
+                                                    .unwrap_or("unit");
+                                                let module_id = brain.module_id.as_str();
+                                                let short_id = (object_id.0 & 0xffff_ffff) as u32;
+                                                action_log.push(
+                                                    time.elapsed_secs(),
+                                                    ActionLogSource::Brain,
+                                                    format!(
+                                                        "{label}#{short_id:08x} ({module_id}) move → ({:.1}, {:.1})",
+                                                        clamped_goal.x, clamped_goal.y
+                                                    ),
+                                                );
+                                            }
+                                        }
+                                    }
+                                    BrainCommand::AttackTarget {
+                                        target_id,
+                                        valid_until_tick,
+                                    } => {
+                                        let Ok((_entity, object_id, _transform, _health, brain)) =
+                                            brains.get(entity)
+                                        else {
+                                            continue;
+                                        };
+                                        if !brain.capabilities.iter().any(|c| c == "brain.combat") {
+                                            continue;
+                                        }
+                                        if let Some(valid_until_tick) = valid_until_tick {
+                                            if tick_index > valid_until_tick {
+                                                continue;
+                                            }
+                                        }
+
+                                        let target_id = target_id.trim();
+                                        let Some(target_entity) =
+                                            instance_to_entity.get(target_id).copied()
+                                        else {
+                                            continue;
+                                        };
+                                        if target_entity == entity {
+                                            continue;
+                                        }
+
+                                        let mut should_log = true;
+                                        if let Ok((
+                                            _collider,
+                                            prefab_id,
+                                            _player,
+                                            _move,
+                                            existing_attack,
+                                        )) = movers.get(entity)
+                                        {
+                                            if existing_attack
+                                                .is_some_and(|o| o.target == target_entity)
+                                            {
+                                                should_log = false;
+                                            }
+
+                                            if should_log {
+                                                let attacker_label = library
+                                                    .get(prefab_id.0)
+                                                    .map(|def| def.label.as_ref())
+                                                    .unwrap_or("unit");
+                                                let attacker_short_id =
+                                                    (object_id.0 & 0xffff_ffff) as u32;
+                                                let target_label = units
+                                                    .get(target_entity)
+                                                    .ok()
+                                                    .and_then(
+                                                        |(
+                                                            _e,
+                                                            _id,
+                                                            _t,
+                                                            _c,
+                                                            prefab,
+                                                            _h,
+                                                            _p,
+                                                            _en,
+                                                            _lc,
+                                                        )| {
+                                                            library
+                                                                .get(prefab.0)
+                                                                .map(|def| def.label.as_ref())
+                                                        },
+                                                    )
+                                                    .unwrap_or("unit");
+                                                action_log.push(
+                                                    time.elapsed_secs(),
+                                                    ActionLogSource::Brain,
+                                                    format!(
+                                                        "{attacker_label}#{attacker_short_id:08x} ({}) attack → {target_label}",
+                                                        brain.module_id.as_str()
+                                                    ),
+                                                );
+                                            }
+                                        }
+
+                                        commands.entity(entity).insert(
+                                            crate::types::BrainAttackOrder {
+                                                target: target_entity,
+                                                valid_until_tick,
+                                            },
+                                        );
+                                    }
+                                    _ => {}
+                                }
+                            }
+
+                            if let Some(ticks) = sleep_for {
+                                if let Ok((_entity, _obj_id, _transform, _health, mut brain)) =
+                                    brains.get_mut(entity)
+                                {
+                                    brain.next_tick_due =
+                                        response_tick_index.saturating_add(ticks as u64);
+                                }
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        debug!("Intelligence tick_many failed: {err}");
+                        if looks_like_intelligence_disconnect(err.as_str()) {
+                            mark_intelligence_disconnected(&mut runtime);
+                        }
+                    }
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => break,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                runtime.tick_worker = None;
+                runtime.tick_in_flight = None;
+                break;
+            }
+        }
+    }
+
+    if runtime.tick_in_flight.is_some() {
+        return;
+    }
+
+    let client = IntelligenceServiceClient::new(addr, runtime.token.clone());
 
     if !runtime.connected {
         // Avoid spamming connect attempts every frame.
@@ -498,7 +937,6 @@ fn intelligence_tick(
         .map(|last_tick| tick_index.saturating_sub(last_tick))
         .unwrap_or(1)
         .max(1);
-    runtime.last_service_tick = Some(tick_index);
 
     let dt_ms = ((ticks_since_last_service_tick as f64) * 1000.0 / intelligence_ticks_per_sec)
         .round()
@@ -507,7 +945,6 @@ fn intelligence_tick(
         return;
     }
 
-    let obstacles = collect_nav_obstacles(&build_objects, &library);
     let caps = BudgetCaps::default();
 
     const SENSE_RADIUS_M: f32 = 14.0;
@@ -536,12 +973,10 @@ fn intelligence_tick(
     }
 
     let mut sensed_units: Vec<SensedUnit> = Vec::new();
-    let mut instance_to_entity = std::collections::HashMap::<String, Entity>::new();
     for (entity, object_id, transform, collider, prefab_id, health, player, enemy, locomotion) in
         units.iter()
     {
         let instance_id = uuid::Uuid::from_u128(object_id.0).to_string();
-        instance_to_entity.insert(instance_id.clone(), entity);
 
         let kind = uuid::Uuid::from_u128(prefab_id.0).to_string();
         let mut tags = vec!["unit".to_string()];
@@ -748,229 +1183,33 @@ fn intelligence_tick(
         return;
     }
 
-    let resp = match client.tick_many(TickManyRequest {
+    let req = TickManyRequest {
         protocol_version: PROTOCOL_VERSION,
         items,
-    }) {
-        Ok(v) => v,
-        Err(err) => {
-            debug!("Intelligence tick_many failed: {err}");
-            if looks_like_intelligence_disconnect(err.as_str()) {
-                mark_intelligence_disconnected(&mut runtime);
-            }
-            return;
-        }
     };
 
-    for out in resp.outputs {
-        let Some(entity) = brain_to_entity.get(&out.brain_instance_id).copied() else {
-            continue;
-        };
-        let Some(mut tick_output) = out.tick_output else {
-            if let Some(err) = out.error {
-                debug!(
-                    "Intelligence tick error (brain_instance_id={}): {err}",
-                    out.brain_instance_id
-                );
-                if err.trim() == "Unknown brain_instance_id" {
-                    runtime.modules_loaded.clear();
-                    if let Ok((_entity, _obj_id, _transform, _health, mut brain)) =
-                        brains.get_mut(entity)
-                    {
-                        brain.brain_instance_id = None;
-                        brain.next_tick_due = 0;
-                        brain.last_error = Some(err);
-                    }
-                }
-            }
-            continue;
-        };
+    let req_tx = match runtime.tick_worker.as_ref() {
+        Some(worker) => worker.req_tx.clone(),
+        None => return,
+    };
+    let seq = runtime.tick_seq.wrapping_add(1);
+    runtime.tick_seq = seq;
 
-        tick_output.clamp_in_place(BudgetCaps::default());
-        let mut sleep_for = None;
-        for cmd in tick_output.commands {
-            match cmd {
-                BrainCommand::SleepForTicks { ticks } => {
-                    sleep_for = Some(sleep_for.unwrap_or(0).max(ticks));
-                }
-                BrainCommand::MoveTo { pos, .. } => {
-                    let Ok((collider, prefab_id, is_player, existing_move, _existing_attack)) =
-                        movers.get(entity)
-                    else {
-                        continue;
-                    };
-                    let goal = Vec2::new(pos[0], pos[2]);
-                    let Ok((_entity, object_id, transform, _health, brain)) = brains.get(entity)
-                    else {
-                        continue;
-                    };
-                    let previous_target = existing_move.and_then(|order| order.target);
-
-                    let scale_y = safe_abs_scale_y(transform.scale);
-                    let origin_y = if is_player.is_some() {
-                        PLAYER_Y
-                    } else {
-                        library.ground_origin_y_or_default(prefab_id.0) * scale_y
-                    };
-                    let current_ground_y = (transform.translation.y - origin_y).max(0.0);
-
-                    let radius = collider.radius.max(0.01);
-                    let floor_half = floor_half_size(&active_floor);
-                    let clamped_goal = Vec2::new(
-                        clamp_world_xz_with_half_size(goal.x, radius, floor_half.x),
-                        clamp_world_xz_with_half_size(goal.y, radius, floor_half.y),
-                    );
-
-                    let start = Vec2::new(transform.translation.x, transform.translation.z);
-                    let height = library
-                        .size(prefab_id.0)
-                        .map(|s| s.y * scale_y)
-                        .unwrap_or(HERO_HEIGHT_WORLD * scale_y);
-
-                    let mut order = MoveOrder::default();
-                    match library.mobility(prefab_id.0).map(|m| m.mode) {
-                        Some(crate::object::registry::MobilityMode::Air) => {
-                            order.target = Some(clamped_goal);
-                        }
-                        Some(crate::object::registry::MobilityMode::Ground) => {
-                            let goal_ground_y = if pos[1].is_finite() && pos[1] > origin_y + 1e-4 {
-                                (pos[1] - origin_y).max(0.0)
-                            } else {
-                                let footprint = FloorFootprint::Circle {
-                                    radius: radius.max(0.01),
-                                };
-                                let sample =
-                                    sample_floor_footprint(&active_floor, clamped_goal, footprint);
-                                apply_floor_sink(sample.max_height)
-                            };
-
-                            let is_walkable = |_pos: Vec2| true;
-                            let Some(path) = navigation::find_path_height_aware(
-                                start,
-                                current_ground_y,
-                                clamped_goal,
-                                goal_ground_y,
-                                radius,
-                                height,
-                                floor_half_size_min(&active_floor),
-                                NAV_GRID_SIZE,
-                                &obstacles,
-                                &is_walkable,
-                            ) else {
-                                commands.entity(entity).remove::<MoveOrder>();
-                                continue;
-                            };
-                            let path = navigation::smooth_path_height_aware(
-                                start,
-                                current_ground_y,
-                                path,
-                                radius,
-                                height,
-                                NAV_GRID_SIZE,
-                                &obstacles,
-                                &is_walkable,
-                            );
-                            order.path = path.into();
-                            order.target = Some(clamped_goal);
-                        }
-                        None => {}
-                    }
-                    if order.target.is_some() {
-                        commands.entity(entity).insert(order);
-
-                        let should_log = previous_target
-                            .map(|prev| prev.distance(clamped_goal) >= 0.8)
-                            .unwrap_or(true);
-                        if should_log {
-                            let label = library
-                                .get(prefab_id.0)
-                                .map(|def| def.label.as_ref())
-                                .unwrap_or("unit");
-                            let module_id = brain.module_id.as_str();
-                            let short_id = (object_id.0 & 0xffff_ffff) as u32;
-                            action_log.push(
-                                time.elapsed_secs(),
-                                ActionLogSource::Brain,
-                                format!(
-                                    "{label}#{short_id:08x} ({module_id}) move → ({:.1}, {:.1})",
-                                    clamped_goal.x, clamped_goal.y
-                                ),
-                            );
-                        }
-                    }
-                }
-                BrainCommand::AttackTarget {
-                    target_id,
-                    valid_until_tick,
-                } => {
-                    let Ok((_entity, object_id, _transform, _health, brain)) = brains.get(entity)
-                    else {
-                        continue;
-                    };
-                    if !brain.capabilities.iter().any(|c| c == "brain.combat") {
-                        continue;
-                    }
-                    if let Some(valid_until_tick) = valid_until_tick {
-                        if tick_index > valid_until_tick {
-                            continue;
-                        }
-                    }
-
-                    let target_id = target_id.trim();
-                    let Some(target_entity) = instance_to_entity.get(target_id).copied() else {
-                        continue;
-                    };
-                    if target_entity == entity {
-                        continue;
-                    }
-
-                    let mut should_log = true;
-                    if let Ok((_collider, prefab_id, _player, _move, existing_attack)) =
-                        movers.get(entity)
-                    {
-                        if existing_attack.is_some_and(|o| o.target == target_entity) {
-                            should_log = false;
-                        }
-
-                        if should_log {
-                            let attacker_label = library
-                                .get(prefab_id.0)
-                                .map(|def| def.label.as_ref())
-                                .unwrap_or("unit");
-                            let attacker_short_id = (object_id.0 & 0xffff_ffff) as u32;
-                            let target_label = units
-                                .get(target_entity)
-                                .ok()
-                                .and_then(|(_e, _id, _t, _c, prefab, _h, _p, _en, _lc)| {
-                                    library.get(prefab.0).map(|def| def.label.as_ref())
-                                })
-                                .unwrap_or("unit");
-                            action_log.push(
-                                time.elapsed_secs(),
-                                ActionLogSource::Brain,
-                                format!(
-                                    "{attacker_label}#{attacker_short_id:08x} ({}) attack → {target_label}",
-                                    brain.module_id.as_str()
-                                ),
-                            );
-                        }
-                    }
-
-                    commands
-                        .entity(entity)
-                        .insert(crate::types::BrainAttackOrder {
-                            target: target_entity,
-                            valid_until_tick,
-                        });
-                }
-                _ => {}
-            }
+    match req_tx.try_send(TickManyWorkItem { seq, req }) {
+        Ok(()) => {
+            runtime.last_service_tick = Some(tick_index);
+            runtime.tick_in_flight = Some(InFlightTick {
+                seq,
+                tick_index,
+                brain_to_entity,
+            });
         }
-
-        if let Some(ticks) = sleep_for {
-            if let Ok((_entity, _obj_id, _transform, _health, mut brain)) = brains.get_mut(entity) {
-                brain.next_tick_due = tick_index.saturating_add(ticks as u64);
-            }
+        Err(std::sync::mpsc::TrySendError::Full(_item)) => {
+            debug!("Intelligence tick_worker queue full; skipping tick.");
+        }
+        Err(std::sync::mpsc::TrySendError::Disconnected(_item)) => {
+            runtime.tick_worker = None;
+            runtime.tick_in_flight = None;
         }
     }
 }
