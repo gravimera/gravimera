@@ -139,6 +139,36 @@ pub(crate) fn delete_realm_floor_package(realm_id: &str, floor_id: u128) -> Resu
     Ok(true)
 }
 
+pub(crate) fn duplicate_realm_floor_package(realm_id: &str, floor_id: u128) -> Result<u128, String> {
+    migrate_legacy_floor_storage_for_realm(realm_id)?;
+
+    let src = realm_floor_package_dir(realm_id, floor_id);
+    if !src.exists() {
+        return Err(format!(
+            "Failed to duplicate terrain: missing package dir {}.",
+            src.display()
+        ));
+    }
+
+    let mut new_id = uuid::Uuid::new_v4().as_u128();
+    let mut dst = realm_floor_package_dir(realm_id, new_id);
+    let mut attempts = 0;
+    while dst.exists() && attempts < 5 {
+        new_id = uuid::Uuid::new_v4().as_u128();
+        dst = realm_floor_package_dir(realm_id, new_id);
+        attempts += 1;
+    }
+    if dst.exists() {
+        return Err(format!(
+            "Failed to duplicate terrain: destination already exists {}.",
+            dst.display()
+        ));
+    }
+
+    copy_dir_recursive(&src, &dst)?;
+    Ok(new_id)
+}
+
 #[allow(dead_code)]
 pub(crate) fn debug_log_missing_realm_floor_package(realm_id: &str, floor_id: u128) {
     let root = realm_floor_package_dir(realm_id, floor_id);

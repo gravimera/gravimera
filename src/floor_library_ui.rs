@@ -306,6 +306,8 @@ pub(crate) struct FloorLibraryPreviewApplyButton;
 #[derive(Component)]
 pub(crate) struct FloorLibraryPreviewDeleteButton;
 #[derive(Component)]
+pub(crate) struct FloorLibraryPreviewDuplicateButton;
+#[derive(Component)]
 pub(crate) struct FloorLibraryPreviewEditButton;
 #[derive(Component)]
 pub(crate) struct FloorLibraryPreviewCloseButton;
@@ -745,6 +747,7 @@ pub(crate) fn floor_library_update_visibility(
             With<FloorLibraryPreviewApplyButton>,
             With<FloorLibraryPreviewCloseButton>,
             With<FloorLibraryPreviewDeleteButton>,
+            With<FloorLibraryPreviewDuplicateButton>,
             With<FloorLibraryPreviewEditButton>,
             With<FloorLibraryGenfloorPlaceholderItem>,
         )>,
@@ -3107,6 +3110,29 @@ pub(crate) fn floor_library_open_preview_panel(
                                     TextColor(Color::srgb(0.92, 0.92, 0.96)),
                                 ));
                             });
+
+                        buttons
+                            .spawn((
+                                Button,
+                                Node {
+                                    padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                                BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                                FloorLibraryPreviewDuplicateButton,
+                            ))
+                            .with_children(|b| {
+                                b.spawn((
+                                    Text::new("Duplicate"),
+                                    TextFont {
+                                        font_size: 14.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                ));
+                            });
                     }
 
                     buttons
@@ -3203,6 +3229,47 @@ pub(crate) fn floor_library_preview_delete_button_interactions(
             );
             break;
         }
+    }
+}
+
+pub(crate) fn floor_library_preview_duplicate_button_interactions(
+    mut commands: Commands,
+    active: Res<ActiveRealmScene>,
+    mut state: ResMut<FloorLibraryUiState>,
+    mut buttons: Query<
+        &Interaction,
+        (Changed<Interaction>, With<FloorLibraryPreviewDuplicateButton>),
+    >,
+) {
+    if state.manage_delete_modal_root.is_some() {
+        return;
+    }
+    let Some(floor_id) = state.preview.as_ref().map(|p| p.floor_id) else {
+        return;
+    };
+    if floor_id == DEFAULT_FLOOR_ID {
+        return;
+    }
+
+    for interaction in &mut buttons {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+
+        let duplicated = match crate::realm_floor_packages::duplicate_realm_floor_package(
+            &active.realm_id,
+            floor_id,
+        ) {
+            Ok(id) => id,
+            Err(err) => {
+                warn!("{err}");
+                return;
+            }
+        };
+        state.mark_models_dirty();
+        state.request_preview(duplicated);
+        close_floor_library_preview(&mut commands, &mut state);
+        break;
     }
 }
 

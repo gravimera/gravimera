@@ -5,7 +5,7 @@
 - Top bar: click `Terrain` to open the Terrain panel.
 - Terrain panel: click `Generate` to enter GenFloor (Terrain Preview).
 - Terrain panel: click a completed terrain item to open the Terrain Preview panel.
-- Terrain Preview panel: click **Apply** to switch the active scene terrain, **Edit** to overwrite that terrain in GenFloor, **Delete** to remove it, or **Exit** to close (Default Terrain only shows **Apply**/**Exit**).
+- Terrain Preview panel: click **Apply** to switch the active scene terrain, **Edit** to overwrite that terrain in GenFloor, **Duplicate** to copy it, **Delete** to remove it, or **Exit** to close (Default Terrain only shows **Apply**/**Exit**).
 - Exiting GenFloor (Save or Cancel) returns to the Terrain panel.
 
 ## Storage Layout
