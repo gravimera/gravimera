@@ -11,7 +11,7 @@ use crate::genfloor::{
 };
 use crate::geometry::{clamp_world_xz_with_half_size, safe_abs_scale_y};
 use crate::intelligence::protocol::*;
-use crate::intelligence::sidecar_client::SidecarClient;
+use crate::intelligence::service_client::IntelligenceServiceClient;
 use crate::navigation;
 use crate::object::registry::ObjectLibrary;
 use crate::types::*;
@@ -131,20 +131,6 @@ fn intelligence_host_init(mut runtime: ResMut<IntelligenceHostRuntime>, config: 
                     runtime.enabled = false;
                     runtime.service_addr = None;
                     warn!("Embedded intelligence service disabled: {err}");
-                }
-            }
-        }
-        crate::config::IntelligenceServiceMode::Sidecar => {
-            let addr_str = config
-                .intelligence_service_addr
-                .clone()
-                .unwrap_or_else(|| "127.0.0.1:8792".to_string());
-            match addr_str.parse::<SocketAddr>() {
-                Ok(addr) => runtime.service_addr = Some(addr),
-                Err(err) => {
-                    runtime.enabled = false;
-                    runtime.service_addr = None;
-                    warn!("Intelligence service disabled: invalid addr `{addr_str}`: {err}");
                 }
             }
         }
@@ -403,7 +389,7 @@ fn intelligence_tick(
     let Some(addr) = runtime.service_addr else {
         return;
     };
-    let client = SidecarClient::new(addr, runtime.token.clone());
+    let client = IntelligenceServiceClient::new(addr, runtime.token.clone());
     let intelligence_ticks_per_sec = config.intelligence_service_ticks_per_sec.max(0.001);
     let connect_retry_ticks = (intelligence_ticks_per_sec * 0.5).ceil().max(1.0) as u64;
 

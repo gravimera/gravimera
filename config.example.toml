@@ -41,12 +41,11 @@
 #
 # Modes:
 # - "embedded" (default): run the intelligence service inside the Gravimera process.
-# - "sidecar": connect to a standalone `gravimera_intelligence_service` process (local/remote).
 # - "disabled": hard-disable standalone brains (same as `enabled = false`).
 #
 # enabled = false
 # mode = "embedded"
-# addr = "127.0.0.1:8792" # sidecar addr; embedded bind addr (use "127.0.0.1:0" for a random port)
+# addr = "127.0.0.1:0" # embedded bind addr (use "127.0.0.1:0" for a random port)
 # token = "CHANGE_ME" # optional; requires `Authorization: Bearer <token>`
 # ticks_per_sec = 6 # standalone-brain host tick rate
 #

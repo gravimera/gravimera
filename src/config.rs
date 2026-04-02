@@ -59,7 +59,6 @@ pub(crate) enum IntelligenceServiceMode {
     Disabled,
     #[default]
     Embedded,
-    Sidecar,
 }
 
 impl IntelligenceServiceMode {
@@ -601,7 +600,10 @@ fn parse_intelligence_service_mode_into_config(out: &mut AppConfig, text: &str) 
     match parse_intelligence_service_mode(text) {
         Ok(Some(value)) => out.intelligence_service_mode = value,
         Ok(None) => {}
-        Err(err) => out.errors.push(err),
+        Err(err) => {
+            out.errors.push(err);
+            out.intelligence_service_mode = IntelligenceServiceMode::Disabled;
+        }
     }
 }
 
@@ -1500,10 +1502,14 @@ fn parse_intelligence_service_mode(text: &str) -> Result<Option<IntelligenceServ
         let mode = match trimmed.to_ascii_lowercase().as_str() {
             "disabled" | "off" | "none" => IntelligenceServiceMode::Disabled,
             "embedded" => IntelligenceServiceMode::Embedded,
-            "sidecar" | "standalone" | "remote" | "external" => IntelligenceServiceMode::Sidecar,
+            "sidecar" | "standalone" | "remote" | "external" => {
+                return Err(format!(
+                    "config.toml:{line_no}: `intelligence_service.mode = \"{trimmed}\"` is no longer supported (sidecar mode was removed); use \"embedded\" or \"disabled\""
+                ));
+            }
             _ => {
                 return Err(format!(
-                    "config.toml:{line_no}: invalid `intelligence_service.mode` value `{trimmed}` (expected: \"embedded\" | \"sidecar\" | \"disabled\")"
+                    "config.toml:{line_no}: invalid `intelligence_service.mode` value `{trimmed}` (expected: \"embedded\" | \"disabled\")"
                 ));
             }
         };
@@ -3600,24 +3606,22 @@ ai_service = "claude"
     fn parses_intelligence_service_mode_from_section() {
         let text = r#"
         [intelligence_service]
-        mode = "sidecar"
+        mode = "embedded"
         "#;
         assert_eq!(
             parse_intelligence_service_mode(text).unwrap(),
-            Some(IntelligenceServiceMode::Sidecar)
+            Some(IntelligenceServiceMode::Embedded)
         );
     }
 
     #[test]
-    fn parses_intelligence_service_mode_synonym_standalone() {
+    fn parses_intelligence_service_mode_sidecar_is_error() {
         let text = r#"
         [intelligence_service]
-        mode = "standalone"
+        mode = "sidecar"
         "#;
-        assert_eq!(
-            parse_intelligence_service_mode(text).unwrap(),
-            Some(IntelligenceServiceMode::Sidecar)
-        );
+        let err = parse_intelligence_service_mode(text).unwrap_err();
+        assert!(err.contains("no longer supported"), "err={err}");
     }
 
     #[test]
@@ -3648,7 +3652,7 @@ ai_service = "claude"
     fn parses_intelligence_service_enabled_and_mode_together() {
         let text = r#"
         [intelligence_service]
-        mode = "sidecar"
+        mode = "embedded"
         enabled = true
         "#;
         let mut cfg = AppConfig::default();
@@ -3656,7 +3660,7 @@ ai_service = "claude"
         assert!(cfg.intelligence_service_enabled);
         assert_eq!(
             cfg.intelligence_service_mode,
-            IntelligenceServiceMode::Sidecar
+            IntelligenceServiceMode::Embedded
         );
     }
 

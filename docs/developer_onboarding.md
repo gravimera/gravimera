@@ -148,7 +148,6 @@ Gravimera can run under WSLg. Notes:
 Intelligence service (standalone brains):
 
 - Default mode (when enabled): **embedded** (runs inside the Gravimera process).
-- Sidecar mode: run `cargo run --bin gravimera_intelligence_service` and set `[intelligence_service].mode = "sidecar"` in `config.toml`.
 
 Docs: `docs/intelligence_service.md` (spec: `docs/gamedesign/38_intelligence_service_spec.md`).
 

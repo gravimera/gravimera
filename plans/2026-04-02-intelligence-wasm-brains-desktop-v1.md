@@ -12,7 +12,7 @@ This plan intentionally starts with an **obs-only** model: a brain receives a bo
 
 How a human verifies it works (desktop):
 
-- Start the intelligence service (embedded or sidecar) and observe `GET /v1/modules` now includes on-disk WASM modules in addition to the built-in demo modules.
+- Start the game with the embedded intelligence service enabled and observe `GET /v1/modules` now includes on-disk WASM modules in addition to the built-in demo modules.
 - Create a new Rust brain module (either by writing the user-code file manually or via the generation endpoint in a later milestone), run `POST /v1/load_module`, and observe a `.wasm` artifact is produced in the module’s cache directory.
 - Spawn a brain instance for a unit, tick it, and observe the unit performs the requested actions in Play mode without crashing the game.
 - Confirm the required rendered smoke test still passes for the game.
@@ -30,7 +30,7 @@ How a human verifies it works (desktop):
 ## Surprises & Discoveries
 
 - Observation: The “embedded” intelligence service is still exercised over HTTP/JSON on a loopback TCP socket (the host uses `SidecarClient` even for embedded mode).
-  Evidence: `src/intelligence/host_plugin.rs` constructs a `SidecarClient` from `EmbeddedIntelligenceService::listen_addr()` and uses `POST /v1/tick_many`.
+  Evidence: `src/intelligence/host_plugin.rs` constructs an `IntelligenceServiceClient` from `EmbeddedIntelligenceService::listen_addr()` and uses `POST /v1/tick_many`.
 
 ## Decision Log
 
@@ -39,7 +39,7 @@ How a human verifies it works (desktop):
   Date/Author: 2026-04-02 / Codex
 
 - Decision: Desktop-only “self-contained local compilation” is required, but we will compile in a separate OS process (a helper binary) rather than inside the simulation thread.
-  Rationale: Rust compilation is CPU-heavy and can stall the game if done in-process. A helper process is easier to timeout/kill and can share the same bundled toolchain. Both embedded and sidecar services can spawn it.
+  Rationale: Rust compilation is CPU-heavy and can stall the game if done in-process. A helper process is easier to timeout/kill and can share the same bundled toolchain. The embedded service can spawn it.
   Date/Author: 2026-04-02 / Codex
 
 - Decision: Use a simple, stable `extern "C"` ABI for the guest module rather than the component model/WIT for v1.
@@ -52,15 +52,14 @@ How a human verifies it works (desktop):
 
 ## Context and Orientation
 
-In this repository, “standalone brains” are currently implemented as Rust code that runs inside the intelligence service process, selected by `module_id` strings such as `demo.orbit.v1`. The service is exposed over a small HTTP/JSON API and is used by the game host via `SidecarClient`.
+In this repository, “standalone brains” are currently implemented as Rust code that runs inside the intelligence service process, selected by `module_id` strings such as `demo.orbit.v1`. The service is exposed over a small HTTP/JSON API and is used by the game host via `IntelligenceServiceClient`.
 
 Key files:
 
 - `src/intelligence/protocol.rs`: HTTP/JSON protocol structs, including `TickInput` and `TickOutput`.
 - `src/intelligence/service.rs`: tiny_http server implementation plus the current built-in demo brains.
 - `src/intelligence/host_plugin.rs`: the host-side integration that connects, loads modules, spawns brain instances, and sends batched `tick_many`.
-- `src/bin/gravimera_intelligence_service.rs`: sidecar service binary entrypoint.
-- `docs/intelligence_service.md`: current usage docs for embedded/sidecar modes.
+- `docs/intelligence_service.md`: current usage docs for the embedded mode.
 - `docs/gamedesign/38_intelligence_service_spec.md`: product intent and safety/perf constraints.
 
 Terms used in this plan:
@@ -208,7 +207,6 @@ This milestone is optional for v1 if we want to land compilation+execution first
 Update desktop packaging so release artifacts include:
 
 - the game binary,
-- the sidecar binary `gravimera_intelligence_service` (for sidecar mode), and
 - the bundled Rust toolchain directory needed for compilation.
 
 Update docs:
@@ -306,16 +304,12 @@ All commands are run from the repository root unless noted.
 
 Local developer workflow (after implementation):
 
-1) Start sidecar service:
-
-    cargo run --bin gravimera_intelligence_service
-
-2) Create a module folder (example):
+1) Create a module folder (example):
 
     mkdir -p test/run_1/intelligence/wasm_modules/demo.wasm_wander.v1
     # Write module.toml + brain.wasm (Milestone 1) or module.toml + brain_user.rs (Milestone 3)
 
-3) Point `GRAVIMERA_HOME` to the test folder and run the game:
+2) Point `GRAVIMERA_HOME` to the test folder and run the game (with embedded intelligence service enabled):
 
     tmpdir=$(pwd)/test/run_1/home
     mkdir -p "$tmpdir"
@@ -353,4 +347,3 @@ During implementation, keep debug artifacts under the repo’s existing test fol
 - `test/run_1/logs/` for captured compiler stderr/stdout in automated tests.
 
 When bundling for release, toolchain artifacts must not be checked into git; they are staged into `dist/` during packaging.
-

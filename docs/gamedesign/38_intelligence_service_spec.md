@@ -6,6 +6,8 @@ This document defines a **final target** architecture for “AI plugins” that 
 
 For developer/player convenience, the host may also support an **embedded** mode where the same intelligence-service implementation runs **in-process**. Embedded mode does **not** provide isolation and should only be used for **trusted** brain code (e.g. built-in/demo modules).
 
+Implementation note (2026-04-02): the current game build ships the intelligence service **embedded-only**. Sidecar/remote deployment models are deferred.
+
 A standalone brain is an optional advanced brain type alongside:
 
 - external agents driving units via the HTTP API, and

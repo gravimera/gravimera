@@ -5,14 +5,14 @@ use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
 #[derive(Clone)]
-pub(crate) struct SidecarClient {
+pub(crate) struct IntelligenceServiceClient {
     addr: SocketAddr,
     token: Option<String>,
     connect_timeout: Duration,
     io_timeout: Duration,
 }
 
-impl SidecarClient {
+impl IntelligenceServiceClient {
     pub(crate) fn new(addr: SocketAddr, token: Option<String>) -> Self {
         Self {
             addr,

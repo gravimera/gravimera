@@ -8,7 +8,7 @@ use serde_json::json;
 use crate::constants::PLAYER_MAX_HEALTH;
 use crate::intelligence::host_plugin::{IntelligenceHostRuntime, StandaloneBrain};
 use crate::intelligence::protocol::{DespawnBrainInstanceRequest, PROTOCOL_VERSION};
-use crate::intelligence::sidecar_client::SidecarClient;
+use crate::intelligence::service_client::IntelligenceServiceClient;
 use crate::meta_speak::{MetaSpeakOutcome, MetaSpeakRequest, MetaSpeakRuntime, MetaSpeakVoice};
 use crate::object::registry::ObjectLibrary;
 use crate::prefab_descriptors::PrefabDescriptorLibrary;
@@ -563,7 +563,7 @@ pub(crate) fn motion_algorithm_ui_update(
             thread_name,
             shared.clone(),
             move || {
-                let client = SidecarClient::new(addr, token);
+                let client = IntelligenceServiceClient::new(addr, token);
                 let resp = client.modules().map_err(|err| err.to_string())?;
                 if resp.protocol_version != crate::intelligence::protocol::PROTOCOL_VERSION {
                     return Err(format!(
@@ -721,7 +721,7 @@ pub(crate) fn motion_algorithm_ui_update(
         if !brain_remote_enabled {
             list.spawn((
                 Text::new(
-                    "Intelligence service disabled (set [intelligence_service] mode = \"embedded\" | \"sidecar\" in config.toml).",
+                    "Intelligence service disabled (set [intelligence_service] enabled = true and mode = \"embedded\" in config.toml).",
                 ),
                 TextFont {
                     font_size: 11.0,
@@ -1661,7 +1661,8 @@ pub(crate) fn meta_brain_ui_button_clicks(
                         }
                         if !instance_ids.is_empty() {
                             if let Some(addr) = runtime.service_addr {
-                                let client = SidecarClient::new(addr, runtime.token.clone());
+                                let client =
+                                    IntelligenceServiceClient::new(addr, runtime.token.clone());
                                 let _ = client.despawn(DespawnBrainInstanceRequest {
                                     protocol_version: PROTOCOL_VERSION,
                                     brain_instance_ids: instance_ids,

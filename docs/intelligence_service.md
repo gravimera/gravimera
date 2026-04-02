@@ -6,10 +6,9 @@ Design/spec reference: `docs/gamedesign/38_intelligence_service_spec.md`.
 
 ## Run modes
 
-When enabled, Gravimera can run the intelligence service in two ways:
+When enabled, Gravimera runs the intelligence service in one way:
 
 - **Embedded** (default): the service runs inside the Gravimera game process.
-- **Sidecar**: the service runs as a separate local/remote process (`gravimera_intelligence_service`).
 
 ## Configure the game (host)
 
@@ -26,12 +25,10 @@ Enable and configure in `config.toml`:
 [intelligence_service]
 enabled = true
 
-# "embedded" (default) | "sidecar" | "disabled"
+# "embedded" (default) | "disabled"
 mode = "embedded"
 
-# addr meaning depends on mode:
-# - embedded: bind addr (default: "127.0.0.1:0" for a random port)
-# - sidecar: service addr to connect (default: "127.0.0.1:8792")
+# Embedded bind addr (default: "127.0.0.1:0" for a random port)
 # addr = "127.0.0.1:0"
 
 # Optional: require `Authorization: Bearer <token>` on every request.
@@ -66,31 +63,6 @@ Quick checks (HTTP/JSON):
 # Replace with the logged address.
 curl -s http://127.0.0.1:<port>/v1/health
 curl -s http://127.0.0.1:<port>/v1/modules
-```
-
-## Sidecar mode (standalone process)
-
-If `mode = "sidecar"`, run the service in one terminal:
-
-```bash
-cargo run --bin gravimera_intelligence_service
-```
-
-Options:
-
-- Bind address: `--bind 127.0.0.1:8792`
-- Require auth token: `--token <token>` (expects `Authorization: Bearer <token>`)
-
-Example:
-
-```bash
-cargo run --bin gravimera_intelligence_service -- --bind 127.0.0.1:8792 --token secret
-```
-
-Then run the game in another terminal:
-
-```bash
-cargo run
 ```
 
 ## Demo brain modules (built-in)
@@ -147,16 +119,4 @@ curl.exe -s http://127.0.0.1:<port>/v1/health
   - `Fallback (default)` detaches the standalone brain.
   - Brain modules are fetched asynchronously from the service after the panel opens (via `GET /v1/modules`).
 
-## Tests
-
-`cargo test` includes an end-to-end smoke test that spawns `gravimera_intelligence_service` and exercises the `/v1/*` API.
-
 ## Troubleshooting
-
-### Windows: build/test fails with “Access is denied” removing `gravimera_intelligence_service.exe`
-
-This usually means the service process is still running and has the `.exe` open. Stop it and retry:
-
-```powershell
-Get-Process gravimera_intelligence_service -ErrorAction SilentlyContinue | Stop-Process -Force
-```
