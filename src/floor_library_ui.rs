@@ -304,6 +304,7 @@ pub(crate) struct FloorLibrarySearchFieldText;
 pub(crate) struct FloorLibraryPreviewOverlayRoot;
 #[derive(Component)]
 pub(crate) struct FloorLibraryPreviewApplyButton;
+#[derive(Component)]
 pub(crate) struct FloorLibraryPreviewDeleteButton;
 #[derive(Component)]
 pub(crate) struct FloorLibraryPreviewEditButton;
