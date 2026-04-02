@@ -292,6 +292,7 @@ fn intelligence_attach_default_brains(
     units: Query<
         (Entity, &ObjectId, &ObjectPrefabId),
         (
+            With<Commandable>,
             Without<Player>,
             Without<Died>,
             Without<StandaloneBrain>,
