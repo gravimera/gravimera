@@ -3245,7 +3245,7 @@ pub(crate) fn floor_library_preview_edit_button_interactions(
             };
             set_active_world_floor(&mut active_floor, Some(floor_id), def);
             genfloor_job.set_edit_base_floor_id(Some(floor_id));
-            genfloor_job.set_save_overwrite_floor_id(None);
+            genfloor_job.set_save_overwrite_floor_id(Some(floor_id));
             genfloor_workshop.draft = None;
             genfloor_workshop.error = None;
             let prompt_path = crate::realm_floor_packages::realm_floor_package_genfloor_source_dir(
@@ -3255,7 +3255,7 @@ pub(crate) fn floor_library_preview_edit_button_interactions(
             .join("prompt.txt");
             genfloor_workshop.prompt = std::fs::read_to_string(&prompt_path).unwrap_or_default();
             genfloor_workshop.status =
-                "Edit session loaded. Click Edit to run; auto-save writes a new terrain id."
+                "Edit session loaded. Click Edit to run; auto-save overwrites this terrain."
                     .to_string();
         }
 
