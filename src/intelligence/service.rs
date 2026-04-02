@@ -1,4 +1,5 @@
 use crate::intelligence::protocol::*;
+use crate::intelligence::wasm_brains::{list_available_wasm_module_ids, WasmBrainInstance};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -143,33 +144,66 @@ struct BelligerentBrain {
     focus_attacker_id: Option<String>,
 }
 
-#[derive(Debug)]
 enum BrainModuleState {
     DemoOrbit,
     DemoCoward(CowardBrain),
     DemoOpportunist(OpportunistBrain),
     DemoBelligerent(BelligerentBrain),
+    Wasm(WasmBrainInstance),
 }
 
-#[derive(Debug)]
 struct BrainInstance {
     config: serde_json::Value,
     capabilities: HashSet<String>,
     module_state: BrainModuleState,
 }
 
-#[derive(Default)]
 struct ServiceState {
     loaded_modules: HashSet<String>,
     brains: HashMap<String, BrainInstance>,
+    wasm_runtime: Option<crate::intelligence::wasm_brains::WasmBrainsRuntime>,
+    wasm_runtime_error: Option<String>,
 }
 
-fn module_supported(module_id: &str) -> bool {
-    let module_id = module_id.trim();
-    module_id == MODULE_DEMO_ORBIT
-        || module_id == MODULE_DEMO_COWARD
-        || module_id == MODULE_DEMO_OPPORTUNIST
-        || module_id == MODULE_DEMO_BELLIGERENT
+impl Default for ServiceState {
+    fn default() -> Self {
+        Self {
+            loaded_modules: HashSet::new(),
+            brains: HashMap::new(),
+            wasm_runtime: None,
+            wasm_runtime_error: None,
+        }
+    }
+}
+
+impl ServiceState {
+    fn wasm_runtime_mut(
+        &mut self,
+    ) -> Result<&mut crate::intelligence::wasm_brains::WasmBrainsRuntime, String> {
+        if self.wasm_runtime.is_some() {
+            return Ok(self.wasm_runtime.as_mut().expect("checked is_some"));
+        }
+        if let Some(err) = self.wasm_runtime_error.clone() {
+            return Err(err);
+        }
+        match crate::intelligence::wasm_brains::WasmBrainsRuntime::new() {
+            Ok(runtime) => {
+                self.wasm_runtime = Some(runtime);
+                Ok(self.wasm_runtime.as_mut().expect("just set"))
+            }
+            Err(err) => {
+                self.wasm_runtime_error = Some(err.clone());
+                Err(err)
+            }
+        }
+    }
+}
+
+fn demo_module_supported(module_id: &str) -> bool {
+    matches!(
+        module_id.trim(),
+        MODULE_DEMO_ORBIT | MODULE_DEMO_COWARD | MODULE_DEMO_OPPORTUNIST | MODULE_DEMO_BELLIGERENT
+    )
 }
 
 fn respond_json(request: tiny_http::Request, status: u16, body_json: String) {
@@ -265,20 +299,19 @@ fn handle_http_request(
             respond_json(request, 200, serde_json::to_string(&body).unwrap());
         }
         ("GET", "/v1/modules") => {
-            let modules = vec![
-                BrainModuleInfo {
-                    module_id: MODULE_DEMO_ORBIT.into(),
-                },
-                BrainModuleInfo {
-                    module_id: MODULE_DEMO_COWARD.into(),
-                },
-                BrainModuleInfo {
-                    module_id: MODULE_DEMO_OPPORTUNIST.into(),
-                },
-                BrainModuleInfo {
-                    module_id: MODULE_DEMO_BELLIGERENT.into(),
-                },
+            let mut module_ids = vec![
+                MODULE_DEMO_ORBIT.to_string(),
+                MODULE_DEMO_COWARD.to_string(),
+                MODULE_DEMO_OPPORTUNIST.to_string(),
+                MODULE_DEMO_BELLIGERENT.to_string(),
             ];
+            module_ids.extend(list_available_wasm_module_ids());
+            module_ids.sort();
+            module_ids.dedup();
+            let modules = module_ids
+                .into_iter()
+                .map(|module_id| BrainModuleInfo { module_id })
+                .collect();
             let body = ListModulesResponse {
                 ok: true,
                 protocol_version: PROTOCOL_VERSION,
@@ -309,15 +342,42 @@ fn handle_http_request(
                 return;
             }
             let module_id = req.module_descriptor.module_id.trim().to_string();
-            if !module_supported(&module_id) {
-                respond_json(
-                    request,
-                    404,
-                    serde_json::to_string(&ErrorResponse::new("Module not found")).unwrap(),
-                );
-                return;
+            if demo_module_supported(&module_id) {
+                state.loaded_modules.insert(module_id.clone());
+            } else {
+                let Ok(wasm) = state.wasm_runtime_mut() else {
+                    respond_json(
+                        request,
+                        500,
+                        serde_json::to_string(&ErrorResponse::new(
+                            "WASM runtime unavailable (wasmtime init failed)",
+                        ))
+                        .unwrap(),
+                    );
+                    return;
+                };
+                match wasm.load_module(module_id.as_str()) {
+                    Ok(()) => {
+                        state.loaded_modules.insert(module_id.clone());
+                    }
+                    Err(err) if err.trim() == "Module not found" => {
+                        respond_json(
+                            request,
+                            404,
+                            serde_json::to_string(&ErrorResponse::new("Module not found")).unwrap(),
+                        );
+                        return;
+                    }
+                    Err(err) => {
+                        respond_json(
+                            request,
+                            400,
+                            serde_json::to_string(&ErrorResponse::new(err)).unwrap(),
+                        );
+                        return;
+                    }
+                }
             }
-            state.loaded_modules.insert(module_id.clone());
             let resp = LoadModuleResponse {
                 ok: true,
                 protocol_version: PROTOCOL_VERSION,
@@ -348,27 +408,52 @@ fn handle_http_request(
                 return;
             }
             let module_id = req.module_id.trim().to_string();
-            if !module_supported(&module_id) {
-                respond_json(
-                    request,
-                    404,
-                    serde_json::to_string(&ErrorResponse::new("Module not found")).unwrap(),
-                );
-                return;
-            }
+            let module_state = if demo_module_supported(&module_id) {
+                match module_id.as_str() {
+                    MODULE_DEMO_ORBIT => BrainModuleState::DemoOrbit,
+                    MODULE_DEMO_COWARD => BrainModuleState::DemoCoward(CowardBrain::default()),
+                    MODULE_DEMO_OPPORTUNIST => {
+                        BrainModuleState::DemoOpportunist(OpportunistBrain::default())
+                    }
+                    MODULE_DEMO_BELLIGERENT => {
+                        BrainModuleState::DemoBelligerent(BelligerentBrain::default())
+                    }
+                    _ => BrainModuleState::DemoOrbit,
+                }
+            } else {
+                let Ok(wasm) = state.wasm_runtime_mut() else {
+                    respond_json(
+                        request,
+                        500,
+                        serde_json::to_string(&ErrorResponse::new(
+                            "WASM runtime unavailable (wasmtime init failed)",
+                        ))
+                        .unwrap(),
+                    );
+                    return;
+                };
+                match wasm.spawn_instance(module_id.as_str()) {
+                    Ok(v) => BrainModuleState::Wasm(v),
+                    Err(err) if err.trim() == "Module not found" => {
+                        respond_json(
+                            request,
+                            404,
+                            serde_json::to_string(&ErrorResponse::new("Module not found")).unwrap(),
+                        );
+                        return;
+                    }
+                    Err(err) => {
+                        respond_json(
+                            request,
+                            400,
+                            serde_json::to_string(&ErrorResponse::new(err)).unwrap(),
+                        );
+                        return;
+                    }
+                }
+            };
 
             let brain_instance_id = uuid::Uuid::new_v4().to_string();
-            let module_state = match module_id.as_str() {
-                MODULE_DEMO_ORBIT => BrainModuleState::DemoOrbit,
-                MODULE_DEMO_COWARD => BrainModuleState::DemoCoward(CowardBrain::default()),
-                MODULE_DEMO_OPPORTUNIST => {
-                    BrainModuleState::DemoOpportunist(OpportunistBrain::default())
-                }
-                MODULE_DEMO_BELLIGERENT => {
-                    BrainModuleState::DemoBelligerent(BelligerentBrain::default())
-                }
-                _ => BrainModuleState::DemoOrbit,
-            };
             let instance = BrainInstance {
                 config: req.config,
                 capabilities: req.capabilities.into_iter().collect(),
@@ -457,14 +542,23 @@ fn handle_http_request(
                 let mut tick_input = item.tick_input;
                 tick_input.clamp_in_place(caps);
 
-                let mut out = tick_brain(instance, &tick_input);
-                out.clamp_in_place(caps);
-
-                outputs.push(TickManyOutput {
-                    brain_instance_id: id,
-                    tick_output: Some(out),
-                    error: None,
-                });
+                match tick_brain(instance, &tick_input, caps) {
+                    Ok(mut out) => {
+                        out.clamp_in_place(caps);
+                        outputs.push(TickManyOutput {
+                            brain_instance_id: id,
+                            tick_output: Some(out),
+                            error: None,
+                        });
+                    }
+                    Err(err) => {
+                        outputs.push(TickManyOutput {
+                            brain_instance_id: id,
+                            tick_output: None,
+                            error: Some(err),
+                        });
+                    }
+                }
             }
 
             let resp = TickManyResponse {
@@ -484,10 +578,14 @@ fn handle_http_request(
     }
 }
 
-fn tick_brain(instance: &mut BrainInstance, input: &TickInput) -> TickOutput {
+fn tick_brain(
+    instance: &mut BrainInstance,
+    input: &TickInput,
+    caps: BudgetCaps,
+) -> Result<TickOutput, String> {
     let config = &instance.config;
     let capabilities = &instance.capabilities;
-    match &mut instance.module_state {
+    Ok(match &mut instance.module_state {
         BrainModuleState::DemoOrbit => tick_demo_orbit(config, capabilities, input),
         BrainModuleState::DemoCoward(state) => tick_demo_coward(config, capabilities, state, input),
         BrainModuleState::DemoOpportunist(state) => {
@@ -496,7 +594,8 @@ fn tick_brain(instance: &mut BrainInstance, input: &TickInput) -> TickOutput {
         BrainModuleState::DemoBelligerent(state) => {
             tick_demo_belligerent(config, capabilities, state, input)
         }
-    }
+        BrainModuleState::Wasm(wasm) => wasm.tick(input, caps, capabilities)?,
+    })
 }
 
 #[derive(Debug, Clone, Copy)]

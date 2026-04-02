@@ -4,6 +4,8 @@ use std::sync::{LazyLock, RwLock};
 
 const GRAVIMERA_HOME_ENV: &str = "GRAVIMERA_HOME";
 const REALMS_DIR_NAME: &str = "realm";
+const INTELLIGENCE_DIR_NAME: &str = "intelligence";
+const INTELLIGENCE_WASM_MODULES_DIR_NAME: &str = "wasm_modules";
 const DEFAULT_REALM_ID: &str = "default";
 const DEFAULT_SCENE_ID: &str = "default";
 
@@ -91,11 +93,21 @@ pub(crate) fn ensure_default_dirs() -> std::io::Result<()> {
     std::fs::create_dir_all(realms_dir())?;
     std::fs::create_dir_all(default_cache_dir())?;
     std::fs::create_dir_all(default_gen3d_cache_dir())?;
+    std::fs::create_dir_all(intelligence_dir())?;
+    std::fs::create_dir_all(intelligence_wasm_modules_dir())?;
     Ok(())
 }
 
 pub(crate) fn realms_dir() -> PathBuf {
     gravimera_dir().join(REALMS_DIR_NAME)
+}
+
+pub(crate) fn intelligence_dir() -> PathBuf {
+    gravimera_dir().join(INTELLIGENCE_DIR_NAME)
+}
+
+pub(crate) fn intelligence_wasm_modules_dir() -> PathBuf {
+    intelligence_dir().join(INTELLIGENCE_WASM_MODULES_DIR_NAME)
 }
 
 pub(crate) fn default_realm_id() -> &'static str {

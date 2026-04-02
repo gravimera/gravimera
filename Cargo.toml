@@ -31,6 +31,7 @@ unicode-segmentation = "1.11"
 uuid = { version = "1", features = ["v4", "v5"] }
 wgpu = { version = "27", default-features = false }
 tiny_http = "0.12"
+wasmtime = "20"
 winit = "0.30"
 zip = "0.6"
 rfd = "0.15"
@@ -40,6 +41,10 @@ ort = { version = "=2.0.0-rc.11", default-features = false, features = ["load-dy
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 x11rb = "0.13"
+
+[dev-dependencies]
+tempfile = "3"
+wat = "1"
 
 [profile.release]
 opt-level = 3

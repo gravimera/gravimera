@@ -20,16 +20,17 @@ How a human verifies it works (desktop):
 ## Progress
 
 - [x] (2026-04-02 18:10 CST) Draft this ExecPlan and align it with the current intelligence service HTTP/JSON protocol and host plugin flow.
-- [ ] Implement a WASM module registry stored under `GRAVIMERA_HOME`.
-- [ ] Implement a Rust→WASM compilation helper that uses a bundled toolchain.
-- [ ] Add a WASM runtime path in the intelligence service (per-brain instance).
-- [ ] Add a minimal “brain guest API” (obs-only) and one example WASM brain module.
+- [x] (2026-04-02) Implement an on-disk WASM module registry under `<root_dir>/intelligence/wasm_modules/` and expose it via `GET /v1/modules`.
+- [x] (2026-04-02) Implement Rust→WASM compilation for `rust_source` modules via `rustc` (toolchain lookup via `GRAVIMERA_RUSTC` or `PATH`; bundling is tracked separately).
+- [x] (2026-04-02) Add a Wasmtime-backed WASM runtime path in the embedded intelligence service (per-brain instance), with import bans + fuel + memory caps.
+- [x] (2026-04-02) Define and document a minimal obs-only guest ABI v1 + binary encoding, plus a small demo guest module used in tests.
+- [x] (2026-04-02) Add unit tests that load a WASM module, spawn an instance, tick it, and verify output decoding + runaway handling (out-of-fuel trap).
 - [ ] Add end-to-end validation: compile, load, tick, and observe in-game behavior.
 - [ ] Bundle toolchain/runtime into desktop distribution artifacts and document it.
 
 ## Surprises & Discoveries
 
-- Observation: The “embedded” intelligence service is still exercised over HTTP/JSON on a loopback TCP socket (the host uses `SidecarClient` even for embedded mode).
+- Observation: The “embedded” intelligence service is still exercised over HTTP/JSON on a loopback TCP socket (the host uses `IntelligenceServiceClient` even for embedded mode).
   Evidence: `src/intelligence/host_plugin.rs` constructs an `IntelligenceServiceClient` from `EmbeddedIntelligenceService::listen_addr()` and uses `POST /v1/tick_many`.
 
 ## Decision Log
@@ -94,14 +95,14 @@ Each module lives in:
 
 And contains:
 
-- `module.toml` (or `module.json`) with:
+- `module.json` with:
   - `module_id` (string),
   - `abi_version` (u32, start at 1),
   - `source_kind` (enum: `wasm_only` or `rust_source`),
   - optional provenance fields (created_at, prompt_hash, etc).
 - `brain.wasm` if `source_kind = wasm_only`.
-- `brain_user.rs` if `source_kind = rust_source` (used in later milestones).
-- `build/brain.wasm` (compiled output cache) in later milestones.
+- `brain_user.rs` if `source_kind = rust_source`.
+- `build/brain.wasm` (compiled output cache).
 
 Service changes:
 
@@ -236,47 +237,15 @@ Guest module restrictions (validated by host):
 
 Observation encoding v1 (binary, little-endian):
 
-The observation format must be deterministic, bounded, and cheap to parse. In v1 we use numeric ids and fixed caps derived from existing `BudgetCaps` defaults in `src/intelligence/protocol.rs`.
+The observation and output formats must be deterministic, bounded, and cheap to parse.
 
-Define:
+Canonical v1 spec + examples:
 
-- Max nearby entities: 32
-- Max events per delivery: 64 (optional; may be omitted in v1)
+- `docs/intelligence_wasm_brains.md` (obs_v1 + out_v1)
 
-At minimum, include:
+Reference implementation:
 
-- `dt_ms: u32`
-- `tick_index: u64`
-- `rng_seed: u64`
-- `self_pos: [f32; 3]`
-- `self_yaw: f32`
-- `self_vel: [f32; 3]`
-- `self_health: i32` (use `-1` for “None”)
-- `nearby_count: u32`
-- `nearby[i]` repeated `nearby_count` times:
-  - `rel_pos: [f32; 3]`
-  - `rel_vel: [f32; 3]`
-  - `health: i32` (`-1` for None)
-  - `health_max: i32` (`-1` for None)
-  - `radius: f32` (`-1.0` for None)
-  - `kind_hash: u64` (stable hash of `kind` string)
-  - `tags_hash: u64` (stable combined hash of tags; v1 coarse signal)
-
-Command encoding v1 (binary):
-
-- `command_count: u32` (max 8)
-- commands repeated:
-  - `kind: u8`
-  - payload, depending on kind:
-    - `0 = SleepForTicks { ticks: u32 }`
-    - `1 = SetMove { vec2: [f32; 2] }`
-    - `2 = MoveTo { pos: [f32; 3] }`
-    - `3 = AttackNearbyIndex { index: u32 }` (index into the nearby list)
-
-Host conversion rules:
-
-- For `AttackNearbyIndex`, the service maps `index` to `TickInput.nearby_entities[index].entity_instance_id` and emits `BrainCommand::AttackTarget { target_id, .. }`.
-- The service still applies `TickOutput::clamp_in_place` before returning to the host plugin, and the host continues to capability-gate command execution.
+- `src/intelligence/wasm_brains.rs` (`encode_obs_v1` + `decode_out_v1`)
 
 ### WASM runtime dependency
 
@@ -294,7 +263,7 @@ The compiler helper must use the bundled Rust toolchain. It must not rely on `ru
 
 In v1 we compile using `rustc` directly:
 
-    rustc --edition=2021 --crate-type=cdylib --target wasm32-unknown-unknown -O -C panic=abort -C lto=thin -C strip=symbols -o brain.wasm lib.rs
+    rustc --edition=2021 --crate-type=cdylib --target wasm32-unknown-unknown -O -C panic=abort -C lto=thin -C strip=symbols -o build/brain.wasm brain_user.rs
 
 Exact flags (especially LTO vs compile time) can be tuned, but must be fixed and hashed into the build cache key.
 
@@ -306,18 +275,18 @@ Local developer workflow (after implementation):
 
 1) Create a module folder (example):
 
-    mkdir -p test/run_1/intelligence/wasm_modules/demo.wasm_wander.v1
-    # Write module.toml + brain.wasm (Milestone 1) or module.toml + brain_user.rs (Milestone 3)
+    mkdir -p test/run_1/intelligence/wasm_modules/demo.wasm_move_to.v1
+    # Write module.json + brain.wasm (wasm_only) or module.json + brain_user.rs (rust_source)
 
 2) Point `GRAVIMERA_HOME` to the test folder and run the game (with embedded intelligence service enabled):
 
     tmpdir=$(pwd)/test/run_1/home
     mkdir -p "$tmpdir"
-    GRAVIMERA_HOME="$tmpdir" cargo run -- --rendered-seconds 2
+    GRAVIMERA_HOME="$tmpdir" cargo run
 
 Expected outcomes (after implementation):
 
-- `GET /v1/modules` includes `demo.wasm_wander.v1`.
+- `GET /v1/modules` includes `demo.wasm_move_to.v1`.
 - Selecting the module id in the Meta panel and switching to Play causes the unit to move according to the WASM brain.
 
 ## Validation and Acceptance

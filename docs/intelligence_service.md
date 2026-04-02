@@ -65,6 +65,39 @@ curl -s http://127.0.0.1:<port>/v1/health
 curl -s http://127.0.0.1:<port>/v1/modules
 ```
 
+## WASM brain modules (on disk)
+
+In addition to the built-in demo modules, the service can load **WASM brain modules** from disk.
+
+Module store root:
+
+```
+<root_dir>/intelligence/wasm_modules/
+```
+
+Each module lives in:
+
+```
+<root_dir>/intelligence/wasm_modules/<module_id>/
+```
+
+With:
+
+- `module.json`:
+  - `module_id` (string, must match folder name)
+  - `abi_version` (currently `1`)
+  - `source_kind` (`"wasm_only"` or `"rust_source"`)
+- `brain.wasm` if `source_kind = "wasm_only"`
+- `brain_user.rs` if `source_kind = "rust_source"` (compiled on demand into `build/brain.wasm`)
+
+Notes:
+
+- `GET /v1/modules` lists both built-in demo modules and on-disk WASM modules.
+- The host calls `POST /v1/load_module` automatically for modules in use; for `rust_source` modules, this triggers compilation.
+- If compilation fails, `load_module` returns an error. You can point the service at a bundled toolchain by setting `GRAVIMERA_RUSTC=/path/to/rustc`.
+
+WASM guest ABI + encoding details: `docs/intelligence_wasm_brains.md`.
+
 ## Demo brain modules (built-in)
 
 The service currently ships a few **demo** modules for development and testing:
