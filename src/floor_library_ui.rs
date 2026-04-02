@@ -15,7 +15,6 @@ use crate::config::AppConfig;
 use crate::genfloor::defs::FloorDefV1;
 use crate::genfloor::set_active_world_floor;
 use crate::genfloor::ActiveWorldFloor;
-use crate::genfloor::WorldFloor;
 use crate::orbit_capture;
 use crate::realm::ActiveRealmScene;
 use crate::rich_text::{set_rich_text_line, spawn_rich_text_line};
@@ -2792,6 +2791,8 @@ fn floor_library_load_preview_def(realm_id: &str, floor_id: u128) -> Result<Floo
 fn spawn_floor_library_preview_scene(
     commands: &mut Commands,
     images: &mut Assets<Image>,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
     def: &FloorDefV1,
 ) -> Result<SpawnedFloorLibraryPreviewScene, String> {
     let target = orbit_capture::create_render_target(
@@ -2829,9 +2830,12 @@ fn spawn_floor_library_preview_scene(
         ))
         .id();
 
+    let mesh_handle = meshes.add(crate::genfloor::build_floor_mesh_only(def));
+    let material = crate::genfloor::build_floor_material(def, materials);
     let floor_id = commands
         .spawn((
-            WorldFloor,
+            Mesh3d(mesh_handle),
+            MeshMaterial3d(material),
             FloorLibraryPreviewFloor,
             render_layer.clone(),
             Transform::IDENTITY,
@@ -2901,9 +2905,10 @@ pub(crate) fn floor_library_open_preview_panel(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<BuildScene>>,
     mut images: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     active: Res<ActiveRealmScene>,
     mut state: ResMut<FloorLibraryUiState>,
-    mut active_floor: ResMut<ActiveWorldFloor>,
 ) {
     if !matches!(mode.get(), GameMode::Build) || !matches!(build_scene.get(), BuildScene::Realm) {
         state.pending_preview = None;
@@ -2939,7 +2944,13 @@ pub(crate) fn floor_library_open_preview_panel(
         }
     };
 
-    let scene = match spawn_floor_library_preview_scene(&mut commands, &mut images, &def) {
+    let scene = match spawn_floor_library_preview_scene(
+        &mut commands,
+        &mut images,
+        &mut meshes,
+        &mut materials,
+        &def,
+    ) {
         Ok(scene) => scene,
         Err(err) => {
             warn!("{err}");
@@ -3165,7 +3176,6 @@ pub(crate) fn floor_library_open_preview_panel(
         scene_root: scene.scene_root,
         target: scene.target,
     });
-    active_floor.dirty = true;
 }
 
 pub(crate) fn floor_library_preview_delete_button_interactions(
@@ -3199,6 +3209,7 @@ pub(crate) fn floor_library_preview_delete_button_interactions(
 pub(crate) fn floor_library_preview_edit_button_interactions(
     mut commands: Commands,
     active: Res<ActiveRealmScene>,
+    mut active_floor: ResMut<ActiveWorldFloor>,
     mut state: ResMut<FloorLibraryUiState>,
     mut genfloor_job: ResMut<crate::genfloor::GenFloorAiJob>,
     mut genfloor_workshop: ResMut<crate::genfloor::GenFloorWorkshop>,
@@ -3225,6 +3236,14 @@ pub(crate) fn floor_library_preview_edit_button_interactions(
             genfloor_workshop.error =
                 Some("GenFloor build is running. Stop it before editing.".to_string());
         } else {
+            let def = match floor_library_load_preview_def(&active.realm_id, floor_id) {
+                Ok(def) => def,
+                Err(err) => {
+                    genfloor_workshop.error = Some(err);
+                    break;
+                }
+            };
+            set_active_world_floor(&mut active_floor, Some(floor_id), def);
             genfloor_job.set_edit_base_floor_id(Some(floor_id));
             genfloor_job.set_save_overwrite_floor_id(None);
             genfloor_workshop.draft = None;
