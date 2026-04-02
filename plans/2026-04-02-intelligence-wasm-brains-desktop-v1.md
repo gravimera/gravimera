@@ -27,6 +27,7 @@ How a human verifies it works (desktop):
 - [x] (2026-04-02) Add unit tests that load a WASM module, spawn an instance, tick it, and verify output decoding + runaway handling (out-of-fuel trap).
 - [x] (2026-04-03) Sync built-in demo modules from `assets/intelligence/wasm_modules/` into the module store (replacing existing folders with the same `module_id`), and prefer on-disk modules over hard-coded demos.
 - [x] (2026-04-03) Host: submit `tick_many` on a worker thread and apply outputs on the main thread to avoid blocking render frames.
+- [x] (2026-04-03) Host: avoid A* pathfinding on the render thread for brain-issued `MoveTo` (apply as straight-line target); keep A* for player-issued move orders.
 - [x] (2026-04-03) Host: auto-attach default demo brains to eligible units in Play mode (and add a per-unit fallback marker to prevent re-attaching when the player selects fallback in the Meta panel).
 - [x] (2026-04-03) Fix demo `rust_source` module parsing bug (`demo.coward.v1`) and rebuild its cached `build/` artifacts.
 - [ ] Add end-to-end validation: compile, load, tick, and observe in-game behavior.
@@ -46,6 +47,10 @@ How a human verifies it works (desktop):
 - Decision: Desktop-only “self-contained local compilation” is required, but we will compile in a separate OS process (a helper binary) rather than inside the simulation thread.
   Rationale: Rust compilation is CPU-heavy and can stall the game if done in-process. A helper process is easier to timeout/kill and can share the same bundled toolchain. The embedded service can spawn it.
   Date/Author: 2026-04-02 / Codex
+
+- Decision: Brain-issued movement must not trigger heavy pathfinding on the render thread in v1.
+  Rationale: Brains can tick frequently (up to 60 Hz target) and would otherwise cause periodic hitches if `MoveTo` recomputes A* paths each tick. In v1, `MoveTo` from brains is applied as a straight-line target. Player-issued move orders continue to use A* pathfinding.
+  Date/Author: 2026-04-03 / Codex
 
 - Decision: Use a simple, stable `extern "C"` ABI for the guest module rather than the component model/WIT for v1.
   Rationale: The component model would improve type ergonomics, but it adds tooling complexity and pushes us toward larger toolchains and additional host libraries. A minimal pointer+len ABI is sufficient for obs-only and can be validated strictly.

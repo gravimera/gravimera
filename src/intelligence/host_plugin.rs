@@ -4,15 +4,10 @@ use std::net::SocketAddr;
 
 use crate::action_log::{ActionLogSource, ActionLogState};
 use crate::config::AppConfig;
-use crate::constants::*;
-use crate::genfloor::{
-    apply_floor_sink, floor_half_size, floor_half_size_min, sample_floor_footprint,
-    ActiveWorldFloor, FloorFootprint,
-};
-use crate::geometry::{clamp_world_xz_with_half_size, safe_abs_scale_y};
+use crate::genfloor::{floor_half_size, ActiveWorldFloor};
+use crate::geometry::clamp_world_xz_with_half_size;
 use crate::intelligence::protocol::*;
 use crate::intelligence::service_client::IntelligenceServiceClient;
-use crate::navigation;
 use crate::object::registry::ObjectLibrary;
 use crate::types::*;
 
@@ -330,38 +325,6 @@ fn intelligence_attach_default_brains(
     }
 }
 
-fn collect_nav_obstacles(
-    objects: &Query<
-        (
-            &ObjectId,
-            &Transform,
-            &AabbCollider,
-            &BuildDimensions,
-            &ObjectPrefabId,
-        ),
-        With<BuildObject>,
-    >,
-    library: &ObjectLibrary,
-) -> Vec<navigation::NavObstacle> {
-    let mut obstacles = Vec::with_capacity(objects.iter().len());
-    for (_object_id, transform, collider, dimensions, prefab_id) in objects.iter() {
-        let scale_y = safe_abs_scale_y(transform.scale);
-        let origin_y = library.ground_origin_y_or_default(prefab_id.0) * scale_y;
-        let bottom_y = transform.translation.y - origin_y;
-        let top_y = bottom_y + dimensions.size.y;
-        let interaction = library.interaction(prefab_id.0);
-        obstacles.push(navigation::NavObstacle {
-            movement_block: interaction.movement_block,
-            supports_standing: interaction.supports_standing,
-            center: Vec2::new(transform.translation.x, transform.translation.z),
-            half: collider.half_extents,
-            bottom_y,
-            top_y,
-        });
-    }
-    obstacles
-}
-
 fn compute_rng_seed(
     realm_id: &str,
     scene_id: &str,
@@ -514,7 +477,6 @@ fn intelligence_tick(
                     Ok(resp) => {
                         let response_tick_index = in_flight.tick_index;
                         let brain_to_entity = in_flight.brain_to_entity;
-                        let obstacles = collect_nav_obstacles(&build_objects, &library);
                         let caps = BudgetCaps::default();
 
                         let mut instance_to_entity =
@@ -586,7 +548,7 @@ fn intelligence_tick(
                                         let Ok((
                                             collider,
                                             prefab_id,
-                                            is_player,
+                                            _is_player,
                                             existing_move,
                                             _existing_attack,
                                         )) = movers.get(entity)
@@ -594,23 +556,13 @@ fn intelligence_tick(
                                             continue;
                                         };
                                         let goal = Vec2::new(pos[0], pos[2]);
-                                        let Ok((_entity, object_id, transform, _health, brain)) =
+                                        let Ok((_entity, object_id, _transform, _health, brain)) =
                                             brains.get(entity)
                                         else {
                                             continue;
                                         };
                                         let previous_target =
                                             existing_move.and_then(|order| order.target);
-
-                                        let scale_y = safe_abs_scale_y(transform.scale);
-                                        let origin_y = if is_player.is_some() {
-                                            PLAYER_Y
-                                        } else {
-                                            library.ground_origin_y_or_default(prefab_id.0)
-                                                * scale_y
-                                        };
-                                        let current_ground_y =
-                                            (transform.translation.y - origin_y).max(0.0);
 
                                         let radius = collider.radius.max(0.01);
                                         let floor_half = floor_half_size(&active_floor);
@@ -627,64 +579,20 @@ fn intelligence_tick(
                                             ),
                                         );
 
-                                        let start = Vec2::new(
-                                            transform.translation.x,
-                                            transform.translation.z,
-                                        );
-                                        let height = library
-                                            .size(prefab_id.0)
-                                            .map(|s| s.y * scale_y)
-                                            .unwrap_or(HERO_HEIGHT_WORLD * scale_y);
-
                                         let mut order = MoveOrder::default();
                                         match library.mobility(prefab_id.0).map(|m| m.mode) {
                                             Some(crate::object::registry::MobilityMode::Air) => {
                                                 order.target = Some(clamped_goal);
                                             }
                                             Some(crate::object::registry::MobilityMode::Ground) => {
-                                                let goal_ground_y = if pos[1].is_finite()
-                                                    && pos[1] > origin_y + 1e-4
-                                                {
-                                                    (pos[1] - origin_y).max(0.0)
-                                                } else {
-                                                    let footprint = FloorFootprint::Circle {
-                                                        radius: radius.max(0.01),
-                                                    };
-                                                    let sample = sample_floor_footprint(
-                                                        &active_floor,
-                                                        clamped_goal,
-                                                        footprint,
-                                                    );
-                                                    apply_floor_sink(sample.max_height)
-                                                };
-
-                                                let is_walkable = |_pos: Vec2| true;
-                                                let Some(path) = navigation::find_path_height_aware(
-                                                    start,
-                                                    current_ground_y,
-                                                    clamped_goal,
-                                                    goal_ground_y,
-                                                    radius,
-                                                    height,
-                                                    floor_half_size_min(&active_floor),
-                                                    NAV_GRID_SIZE,
-                                                    &obstacles,
-                                                    &is_walkable,
-                                                ) else {
-                                                    commands.entity(entity).remove::<MoveOrder>();
-                                                    continue;
-                                                };
-                                                let path = navigation::smooth_path_height_aware(
-                                                    start,
-                                                    current_ground_y,
-                                                    path,
-                                                    radius,
-                                                    height,
-                                                    NAV_GRID_SIZE,
-                                                    &obstacles,
-                                                    &is_walkable,
-                                                );
-                                                order.path = path.into();
+                                                // Brain-issued movement must not stall render frames.
+                                                //
+                                                // Player-issued move orders use A* pathfinding (see `rts.rs`),
+                                                // but brains can tick frequently and would otherwise cause
+                                                // periodic hitches when we recompute paths.
+                                                //
+                                                // v1: move in a straight line toward the goal.
+                                                order.path = vec![clamped_goal].into();
                                                 order.target = Some(clamped_goal);
                                             }
                                             None => {}
