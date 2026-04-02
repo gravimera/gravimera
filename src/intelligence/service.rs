@@ -342,32 +342,15 @@ fn handle_http_request(
                 return;
             }
             let module_id = req.module_descriptor.module_id.trim().to_string();
-            if demo_module_supported(&module_id) {
-                state.loaded_modules.insert(module_id.clone());
-            } else {
-                let Ok(wasm) = state.wasm_runtime_mut() else {
-                    respond_json(
-                        request,
-                        500,
-                        serde_json::to_string(&ErrorResponse::new(
-                            "WASM runtime unavailable (wasmtime init failed)",
-                        ))
-                        .unwrap(),
-                    );
-                    return;
-                };
-                match wasm.load_module(module_id.as_str()) {
+            let mut loaded = false;
+            let mut wasm_runtime_unavailable = false;
+            match state.wasm_runtime_mut() {
+                Ok(wasm) => match wasm.load_module(module_id.as_str()) {
                     Ok(()) => {
                         state.loaded_modules.insert(module_id.clone());
+                        loaded = true;
                     }
-                    Err(err) if err.trim() == "Module not found" => {
-                        respond_json(
-                            request,
-                            404,
-                            serde_json::to_string(&ErrorResponse::new("Module not found")).unwrap(),
-                        );
-                        return;
-                    }
+                    Err(err) if err.trim() == "Module not found" => {}
                     Err(err) => {
                         respond_json(
                             request,
@@ -376,6 +359,33 @@ fn handle_http_request(
                         );
                         return;
                     }
+                },
+                Err(_) => {
+                    wasm_runtime_unavailable = true;
+                }
+            };
+
+            if !loaded {
+                if demo_module_supported(&module_id) {
+                    state.loaded_modules.insert(module_id.clone());
+                } else {
+                    if wasm_runtime_unavailable {
+                        respond_json(
+                            request,
+                            500,
+                            serde_json::to_string(&ErrorResponse::new(
+                                "WASM runtime unavailable (wasmtime init failed)",
+                            ))
+                            .unwrap(),
+                        );
+                        return;
+                    }
+                    respond_json(
+                        request,
+                        404,
+                        serde_json::to_string(&ErrorResponse::new("Module not found")).unwrap(),
+                    );
+                    return;
                 }
             }
             let resp = LoadModuleResponse {
@@ -408,40 +418,14 @@ fn handle_http_request(
                 return;
             }
             let module_id = req.module_id.trim().to_string();
-            let module_state = if demo_module_supported(&module_id) {
-                match module_id.as_str() {
-                    MODULE_DEMO_ORBIT => BrainModuleState::DemoOrbit,
-                    MODULE_DEMO_COWARD => BrainModuleState::DemoCoward(CowardBrain::default()),
-                    MODULE_DEMO_OPPORTUNIST => {
-                        BrainModuleState::DemoOpportunist(OpportunistBrain::default())
+            let mut module_state = None;
+            let mut wasm_runtime_unavailable = false;
+            match state.wasm_runtime_mut() {
+                Ok(wasm) => match wasm.spawn_instance(module_id.as_str()) {
+                    Ok(v) => {
+                        module_state = Some(BrainModuleState::Wasm(v));
                     }
-                    MODULE_DEMO_BELLIGERENT => {
-                        BrainModuleState::DemoBelligerent(BelligerentBrain::default())
-                    }
-                    _ => BrainModuleState::DemoOrbit,
-                }
-            } else {
-                let Ok(wasm) = state.wasm_runtime_mut() else {
-                    respond_json(
-                        request,
-                        500,
-                        serde_json::to_string(&ErrorResponse::new(
-                            "WASM runtime unavailable (wasmtime init failed)",
-                        ))
-                        .unwrap(),
-                    );
-                    return;
-                };
-                match wasm.spawn_instance(module_id.as_str()) {
-                    Ok(v) => BrainModuleState::Wasm(v),
-                    Err(err) if err.trim() == "Module not found" => {
-                        respond_json(
-                            request,
-                            404,
-                            serde_json::to_string(&ErrorResponse::new("Module not found")).unwrap(),
-                        );
-                        return;
-                    }
+                    Err(err) if err.trim() == "Module not found" => {}
                     Err(err) => {
                         respond_json(
                             request,
@@ -449,6 +433,45 @@ fn handle_http_request(
                             serde_json::to_string(&ErrorResponse::new(err)).unwrap(),
                         );
                         return;
+                    }
+                },
+                Err(_) => {
+                    wasm_runtime_unavailable = true;
+                }
+            };
+
+            let module_state = match module_state {
+                Some(v) => v,
+                None => {
+                    if !demo_module_supported(&module_id) {
+                        if wasm_runtime_unavailable {
+                            respond_json(
+                                request,
+                                500,
+                                serde_json::to_string(&ErrorResponse::new(
+                                    "WASM runtime unavailable (wasmtime init failed)",
+                                ))
+                                .unwrap(),
+                            );
+                            return;
+                        }
+                        respond_json(
+                            request,
+                            404,
+                            serde_json::to_string(&ErrorResponse::new("Module not found")).unwrap(),
+                        );
+                        return;
+                    }
+                    match module_id.as_str() {
+                        MODULE_DEMO_ORBIT => BrainModuleState::DemoOrbit,
+                        MODULE_DEMO_COWARD => BrainModuleState::DemoCoward(CowardBrain::default()),
+                        MODULE_DEMO_OPPORTUNIST => {
+                            BrainModuleState::DemoOpportunist(OpportunistBrain::default())
+                        }
+                        MODULE_DEMO_BELLIGERENT => {
+                            BrainModuleState::DemoBelligerent(BelligerentBrain::default())
+                        }
+                        _ => BrainModuleState::DemoOrbit,
                     }
                 }
             };

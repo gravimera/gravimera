@@ -11,6 +11,7 @@ const WASM_FILE_NAME: &str = "brain.wasm";
 const RUST_SOURCE_FILE_NAME: &str = "brain_user.rs";
 const BUILD_DIR_NAME: &str = "build";
 const BUILD_WASM_FILE_NAME: &str = "brain.wasm";
+const BUILD_SOURCE_HASH_FILE_NAME: &str = "brain_user.sha256";
 
 const ABI_VERSION_V1: u32 = 1;
 
@@ -63,6 +64,43 @@ pub(crate) struct WasmBrainInstance {
 
 pub(crate) fn list_available_wasm_module_ids() -> Vec<String> {
     list_available_wasm_module_ids_in_dir(crate::paths::intelligence_wasm_modules_dir().as_path())
+}
+
+pub(crate) fn sync_builtin_wasm_modules_from_assets() -> Result<(), String> {
+    let assets_root = crate::paths::resolve_assets_dir();
+    let src_root = assets_root.join("intelligence").join("wasm_modules");
+    if !src_root.is_dir() {
+        return Ok(());
+    }
+
+    let dst_root = crate::paths::intelligence_wasm_modules_dir();
+    std::fs::create_dir_all(&dst_root)
+        .map_err(|err| format!("create_dir_all {}: {err}", dst_root.display()))?;
+
+    let entries = std::fs::read_dir(&src_root)
+        .map_err(|err| format!("read_dir {}: {err}", src_root.display()))?;
+    for entry in entries {
+        let entry = match entry {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let file_name = entry.file_name();
+        let Some(folder) = file_name.to_str() else {
+            continue;
+        };
+        if validate_module_id(folder).is_err() {
+            continue;
+        }
+
+        let dst = dst_root.join(folder);
+        copy_dir_replace(path.as_path(), dst.as_path())?;
+    }
+
+    Ok(())
 }
 
 pub(crate) fn list_available_wasm_module_ids_in_dir(module_store_root: &Path) -> Vec<String> {
@@ -240,10 +278,15 @@ fn encode_obs_v1(input: &TickInput, caps: BudgetCaps) -> Vec<u8> {
     let nearby = input.nearby_entities.iter().take(max_nearby);
     let nearby_count: u32 = nearby.clone().count().try_into().unwrap_or(u32::MAX);
 
-    let mut out = Vec::with_capacity(64 + (nearby_count as usize) * 88);
+    let mut out = Vec::with_capacity(88 + (nearby_count as usize) * 88);
     out.extend_from_slice(&input.dt_ms.to_le_bytes());
     out.extend_from_slice(&input.tick_index.to_le_bytes());
     out.extend_from_slice(&input.rng_seed.to_le_bytes());
+    let self_kind_id = stable_u128_from_str(input.self_state.kind.as_str());
+    out.extend_from_slice(&(self_kind_id as u64).to_le_bytes());
+    out.extend_from_slice(&((self_kind_id >> 64) as u64).to_le_bytes());
+    let self_tag_bits = tags_to_bits(input.self_state.tags.iter().map(|s| s.as_str()));
+    out.extend_from_slice(&self_tag_bits.to_le_bytes());
     for v in input.self_state.pos {
         out.extend_from_slice(&v.to_le_bytes());
     }
@@ -407,7 +450,7 @@ fn tags_to_bits<'a>(tags: impl Iterator<Item = &'a str>) -> u64 {
     for t in tags {
         match t {
             "unit" => bits |= 1 << 0,
-            "build" => bits |= 1 << 1,
+            "build" | "building" => bits |= 1 << 1,
             "attack.melee" => bits |= 1 << 2,
             "attack.ranged" => bits |= 1 << 3,
             "enemy" => bits |= 1 << 4,
@@ -537,10 +580,75 @@ fn ensure_wasm_artifact(record: &WasmModuleRecord) -> Result<PathBuf, String> {
             std::fs::create_dir_all(&out_dir)
                 .map_err(|err| format!("create_dir_all {}: {err}", out_dir.display()))?;
             let out_wasm = out_dir.join(BUILD_WASM_FILE_NAME);
+            let hash_hex = sha256_hex_of_file(src.as_path())?;
+            let hash_path = out_dir.join(BUILD_SOURCE_HASH_FILE_NAME);
+            if out_wasm.is_file() && hash_path.is_file() {
+                if let Ok(existing) = std::fs::read_to_string(&hash_path) {
+                    if existing.trim() == hash_hex.as_str() {
+                        return Ok(out_wasm);
+                    }
+                }
+            }
+
             compile_rust_to_wasm(src.as_path(), out_wasm.as_path())?;
+            std::fs::write(&hash_path, hash_hex.as_bytes())
+                .map_err(|err| format!("write {}: {err}", hash_path.display()))?;
             Ok(out_wasm)
         }
     }
+}
+
+fn sha256_hex_of_file(path: &Path) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|err| format!("read {}: {err}", path.display()))?;
+    let mut h = sha2::Sha256::new();
+    h.update(bytes.as_slice());
+    let digest = h.finalize();
+    Ok(bytes_to_lower_hex(digest.as_slice()))
+}
+
+fn bytes_to_lower_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = Vec::with_capacity(bytes.len().saturating_mul(2));
+    for b in bytes {
+        out.push(HEX[((b >> 4) & 0xF) as usize]);
+        out.push(HEX[(b & 0xF) as usize]);
+    }
+    String::from_utf8(out).unwrap_or_default()
+}
+
+fn copy_dir_replace(src: &Path, dst: &Path) -> Result<(), String> {
+    if dst.exists() {
+        std::fs::remove_dir_all(dst)
+            .map_err(|err| format!("remove_dir_all {}: {err}", dst.display()))?;
+    }
+    std::fs::create_dir_all(dst)
+        .map_err(|err| format!("create_dir_all {}: {err}", dst.display()))?;
+    for entry in
+        std::fs::read_dir(src).map_err(|err| format!("read_dir {}: {err}", src.display()))?
+    {
+        let entry = match entry {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let file_type = match entry.file_type() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_replace(src_path.as_path(), dst_path.as_path())?;
+        } else if file_type.is_file() {
+            std::fs::copy(&src_path, &dst_path).map_err(|err| {
+                format!(
+                    "copy {} -> {}: {err}",
+                    src_path.display(),
+                    dst_path.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
 }
 
 fn compile_rust_to_wasm(source: &Path, out_wasm: &Path) -> Result<(), String> {
@@ -548,7 +656,22 @@ fn compile_rust_to_wasm(source: &Path, out_wasm: &Path) -> Result<(), String> {
         return Err("Rust toolchain not found (set GRAVIMERA_RUSTC or bundle a toolchain)".into());
     };
 
-    let output = std::process::Command::new(rustc)
+    let bundled_sysroot = crate::paths::resolve_bundled_rust_toolchain_dir();
+    let bundled_rustc = crate::paths::resolve_bundled_rustc_path();
+
+    let rustc_path = std::path::PathBuf::from(&rustc);
+    let use_bundled_sysroot = bundled_rustc.is_some_and(|p| p == rustc_path);
+
+    let mut cmd = std::process::Command::new(&rustc_path);
+    if use_bundled_sysroot {
+        if let Some(sysroot) = bundled_sysroot {
+            cmd.arg("--sysroot").arg(sysroot);
+        }
+    }
+
+    let max_memory_bytes: u64 = u64::from(MAX_WASM_MEMORY_PAGES) * 65536;
+
+    let output = cmd
         .arg("--edition=2021")
         .arg("--crate-type=cdylib")
         .arg("--target")
@@ -560,6 +683,8 @@ fn compile_rust_to_wasm(source: &Path, out_wasm: &Path) -> Result<(), String> {
         .arg("lto=thin")
         .arg("-C")
         .arg("strip=symbols")
+        .arg("-C")
+        .arg(format!("link-arg=--max-memory={max_memory_bytes}"))
         .arg("-o")
         .arg(out_wasm)
         .arg(source)
@@ -576,6 +701,10 @@ fn compile_rust_to_wasm(source: &Path, out_wasm: &Path) -> Result<(), String> {
 fn find_rustc() -> Option<std::ffi::OsString> {
     if let Some(v) = std::env::var_os("GRAVIMERA_RUSTC").filter(|v| !v.is_empty()) {
         return Some(v);
+    }
+
+    if let Some(path) = crate::paths::resolve_bundled_rustc_path() {
+        return Some(path.into_os_string());
     }
 
     find_in_path("rustc")
@@ -856,5 +985,53 @@ mod tests {
             .unwrap_err();
 
         assert!(err.contains("demo.loop.v1"), "err={err}");
+    }
+
+    #[test]
+    fn builtin_demo_modules_seed_and_load_from_assets() {
+        let assets_root = crate::paths::resolve_assets_dir();
+        let src_root = assets_root.join("intelligence").join("wasm_modules");
+        assert!(
+            src_root.is_dir(),
+            "Missing built-in wasm modules under {}",
+            src_root.display()
+        );
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let module_store_root = tmp.path().join("intelligence").join("wasm_modules");
+        std::fs::create_dir_all(&module_store_root).expect("create module store root");
+
+        let module_ids = [
+            "demo.orbit.v1",
+            "demo.coward.v1",
+            "demo.opportunist.v1",
+            "demo.belligerent.v1",
+        ];
+
+        for id in module_ids {
+            copy_dir_replace(
+                src_root.join(id).as_path(),
+                module_store_root.join(id).as_path(),
+            )
+            .unwrap_or_else(|err| panic!("copy {id}: {err}"));
+        }
+
+        let mut runtime =
+            WasmBrainsRuntime::new_with_module_store_root(module_store_root).expect("runtime");
+        let caps: HashSet<String> = ["brain.move".to_string(), "brain.combat".to_string()]
+            .into_iter()
+            .collect();
+        for id in module_ids {
+            runtime
+                .load_module(id)
+                .unwrap_or_else(|err| panic!("load {id}: {err}"));
+            let mut inst = runtime
+                .spawn_instance(id)
+                .unwrap_or_else(|err| panic!("spawn {id}: {err}"));
+            let out = inst
+                .tick(&demo_tick_input(), BudgetCaps::default(), &caps)
+                .unwrap_or_else(|err| panic!("tick {id}: {err}"));
+            assert!(out.commands.len() <= 8, "out={out:?}");
+        }
     }
 }

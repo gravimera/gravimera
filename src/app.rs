@@ -123,6 +123,9 @@ pub(crate) fn run() {
             config.root_dir.display()
         );
     }
+    if let Err(err) = crate::intelligence::wasm_brains::sync_builtin_wasm_modules_from_assets() {
+        eprintln!("Warning: failed to sync builtin WASM brain modules: {err}");
+    }
 
     if args.headless {
         run_headless(headless_exit_after, config);

@@ -6,6 +6,8 @@ const GRAVIMERA_HOME_ENV: &str = "GRAVIMERA_HOME";
 const REALMS_DIR_NAME: &str = "realm";
 const INTELLIGENCE_DIR_NAME: &str = "intelligence";
 const INTELLIGENCE_WASM_MODULES_DIR_NAME: &str = "wasm_modules";
+const TOOLCHAIN_DIR_NAME: &str = "toolchain";
+const TOOLCHAIN_RUST_DIR_NAME: &str = "rust";
 const DEFAULT_REALM_ID: &str = "default";
 const DEFAULT_SCENE_ID: &str = "default";
 
@@ -231,6 +233,48 @@ pub(crate) fn resolve_assets_dir() -> PathBuf {
     }
 
     PathBuf::from("assets")
+}
+
+pub(crate) fn resolve_toolchain_dir() -> Option<PathBuf> {
+    // macOS app bundles store tools under `MyApp.app/Contents/Resources/toolchain`.
+    if let Some(exe_dir) = exe_dir() {
+        if looks_like_macos_app_bundle_exe_dir(&exe_dir) {
+            if let Some(contents_dir) = exe_dir.parent() {
+                let candidate = contents_dir.join("Resources").join(TOOLCHAIN_DIR_NAME);
+                if candidate.is_dir() {
+                    return Some(candidate);
+                }
+            }
+        }
+
+        let candidate = exe_dir.join(TOOLCHAIN_DIR_NAME);
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
+
+    if let Ok(cwd) = std::env::current_dir() {
+        let candidate = cwd.join(TOOLCHAIN_DIR_NAME);
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+pub(crate) fn resolve_bundled_rust_toolchain_dir() -> Option<PathBuf> {
+    resolve_toolchain_dir().and_then(|dir| {
+        let rust = dir.join(TOOLCHAIN_RUST_DIR_NAME);
+        rust.is_dir().then_some(rust)
+    })
+}
+
+pub(crate) fn resolve_bundled_rustc_path() -> Option<PathBuf> {
+    let toolchain = resolve_bundled_rust_toolchain_dir()?;
+    let rustc_name = if cfg!(windows) { "rustc.exe" } else { "rustc" };
+    let rustc = toolchain.join("bin").join(rustc_name);
+    rustc.is_file().then_some(rustc)
 }
 
 fn path_from_env(value: &OsStr) -> Option<PathBuf> {

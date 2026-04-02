@@ -21,12 +21,13 @@ How a human verifies it works (desktop):
 
 - [x] (2026-04-02 18:10 CST) Draft this ExecPlan and align it with the current intelligence service HTTP/JSON protocol and host plugin flow.
 - [x] (2026-04-02) Implement an on-disk WASM module registry under `<root_dir>/intelligence/wasm_modules/` and expose it via `GET /v1/modules`.
-- [x] (2026-04-02) Implement Rust→WASM compilation for `rust_source` modules via `rustc` (toolchain lookup via `GRAVIMERA_RUSTC` or `PATH`; bundling is tracked separately).
+- [x] (2026-04-02) Implement Rust→WASM compilation for `rust_source` modules via `rustc` (toolchain lookup via `GRAVIMERA_RUSTC`, bundled `toolchain/rust/`, or `PATH`).
 - [x] (2026-04-02) Add a Wasmtime-backed WASM runtime path in the embedded intelligence service (per-brain instance), with import bans + fuel + memory caps.
 - [x] (2026-04-02) Define and document a minimal obs-only guest ABI v1 + binary encoding, plus a small demo guest module used in tests.
 - [x] (2026-04-02) Add unit tests that load a WASM module, spawn an instance, tick it, and verify output decoding + runaway handling (out-of-fuel trap).
+- [x] (2026-04-03) Sync built-in demo modules from `assets/intelligence/wasm_modules/` into the module store (replacing existing folders with the same `module_id`), and prefer on-disk modules over hard-coded demos.
 - [ ] Add end-to-end validation: compile, load, tick, and observe in-game behavior.
-- [ ] Bundle toolchain/runtime into desktop distribution artifacts and document it.
+- [x] (2026-04-03) Bundle toolchain/runtime into desktop distribution artifacts and document it (`tools/publish.py`, `docs/publishing.md`).
 
 ## Surprises & Discoveries
 
@@ -49,7 +50,7 @@ How a human verifies it works (desktop):
 
 ## Outcomes & Retrospective
 
-- (not started) This section will be updated as milestones complete.
+- (2026-04-03) Gravimera can now run standalone brains implemented as WASM modules under strict limits (Wasmtime + fuel + memory caps, obs-only/no-imports ABI). Desktop packaging can bundle a Rust toolchain so `rust_source` modules compile locally without external installs, and built-in demo brains are shipped as on-disk modules synced from `assets/`.
 
 ## Context and Orientation
 

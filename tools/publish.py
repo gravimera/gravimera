@@ -19,6 +19,8 @@ ROOT = Path(__file__).resolve().parents[1]
 ASSETS_DIR = ROOT / "assets"
 CARGO_TOML = ROOT / "Cargo.toml"
 DIST_DIR = ROOT / "dist"
+TOOLCHAIN_DIR_NAME = "toolchain"
+TOOLCHAIN_RUST_DIR_NAME = "rust"
 
 APP_NAME = "Gravimera"
 BUNDLE_ID = "com.flowbehappy.gravimera"
@@ -37,9 +39,14 @@ Without `--target`, the script packages the host-default build.
 With one or more `--target` flags, the script packages each explicit target
 triple and suffixes artifact names with that target to avoid overwriting.
 
-Runtime data is not bundled. Gravimera stores runtime config/save/cache under
-`~/.gravimera/` by default (override with `root_dir` in config or the
+Runtime data (config/save/cache) is not bundled. Gravimera stores runtime data
+under `~/.gravimera/` by default (override with `root_dir` in config or the
 `GRAVIMERA_HOME` environment variable).
+
+By default, the script also bundles a Rust toolchain (with the
+`wasm32-unknown-unknown` standard library) under `toolchain/rust/` so players
+can compile `rust_source` Intelligence WASM brain modules locally without
+installing Rust.
 """
 
 EXAMPLES = """Examples:
@@ -237,6 +244,107 @@ def _ensure_explicit_targets_installed(specs: list[BuildSpec]) -> None:
         raise SystemExit("\n".join(lines))
 
 
+def _rustc_host_triple() -> str:
+    output = _check_output(["rustc", "-vV"])
+    for raw in output.splitlines():
+        line = raw.strip()
+        if line.startswith("host: "):
+            return line.split(":", 1)[1].strip()
+    raise SystemExit("Failed to parse `rustc -vV` output (missing `host:` line).")
+
+
+def _rustup_active_toolchain_name() -> str | None:
+    try:
+        output = _check_output(["rustup", "show", "active-toolchain"])
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    # Format: "<toolchain> (default)".
+    return output.strip().split()[0] if output.strip() else None
+
+
+def _derive_toolchain_for_target(
+    *, active_toolchain: str | None, host_triple: str, desired_host_triple: str
+) -> str | None:
+    if active_toolchain is None:
+        return None
+    suffix = f"-{host_triple}"
+    if desired_host_triple == host_triple:
+        return active_toolchain
+    if active_toolchain.endswith(suffix):
+        channel = active_toolchain[: -len(suffix)]
+        if channel:
+            return f"{channel}-{desired_host_triple}"
+    return None
+
+
+def _toolchain_sysroot_for_toolchain(toolchain: str) -> Path:
+    try:
+        rustc_path = _check_output(["rustup", "which", "rustc", "--toolchain", toolchain]).strip()
+    except (OSError, subprocess.CalledProcessError):
+        raise SystemExit(
+            "Failed to locate rustc for toolchain "
+            f"{toolchain!r}. Install it via:\n"
+            f"  rustup toolchain install {toolchain}"
+        )
+    rustc = Path(rustc_path)
+    sysroot = rustc.parent.parent
+    if not sysroot.is_dir():
+        raise SystemExit(f"Invalid sysroot for toolchain {toolchain!r}: {sysroot}")
+    return sysroot
+
+
+def _toolchain_sysroot_for_spec(spec: BuildSpec) -> tuple[Path, str | None]:
+    host_triple = _rustc_host_triple()
+    active = _rustup_active_toolchain_name()
+    desired_host_triple = spec.target or host_triple
+
+    toolchain = _derive_toolchain_for_target(
+        active_toolchain=active,
+        host_triple=host_triple,
+        desired_host_triple=desired_host_triple,
+    )
+
+    if toolchain is None:
+        if spec.target and spec.target != host_triple:
+            raise SystemExit(
+                "Cannot auto-bundle a Rust toolchain for non-host target "
+                f"{spec.target!r} without rustup. Install rustup and the matching toolchain."
+            )
+        sysroot_text = _check_output(["rustc", "--print", "sysroot"]).strip()
+        sysroot = Path(sysroot_text)
+        if not sysroot.is_dir():
+            raise SystemExit(f"Invalid rustc sysroot: {sysroot}")
+        return (sysroot, None)
+
+    sysroot = _toolchain_sysroot_for_toolchain(toolchain)
+    return (sysroot, toolchain)
+
+
+def _ensure_wasm_target_installed(*, sysroot: Path, toolchain: str | None) -> None:
+    wasm_std = sysroot / "lib" / "rustlib" / "wasm32-unknown-unknown"
+    if wasm_std.is_dir():
+        return
+    if toolchain:
+        raise SystemExit(
+            "Rust toolchain sysroot is missing wasm32-unknown-unknown stdlib:\n"
+            f"  {wasm_std}\n"
+            "Install it via:\n"
+            f"  rustup target add wasm32-unknown-unknown --toolchain {toolchain}"
+        )
+    raise SystemExit(
+        "Rust toolchain sysroot is missing wasm32-unknown-unknown stdlib:\n"
+        f"  {wasm_std}\n"
+        "Install it via:\n"
+        "  rustup target add wasm32-unknown-unknown"
+    )
+
+
+def _bundle_rust_toolchain(*, sysroot: Path, dst_root: Path) -> None:
+    dst = dst_root / TOOLCHAIN_DIR_NAME / TOOLCHAIN_RUST_DIR_NAME
+    print(f"Bundling Rust toolchain sysroot: {sysroot} -> {dst}")
+    _copy_tree(sysroot, dst)
+
+
 def _build_release(*, target: str | None) -> None:
     cmd = ["cargo", "build", "--release", "--bin", "gravimera"]
     if target:
@@ -252,7 +360,14 @@ def _release_bin_path(*, target: str | None, exe_name: str) -> Path:
     return base / exe_name
 
 
-def _package_windows(*, version: str, bin_path: Path, out_dir: Path, artifact_suffix: str | None) -> None:
+def _package_windows(
+    *,
+    version: str,
+    bin_path: Path,
+    out_dir: Path,
+    artifact_suffix: str | None,
+    rust_sysroot: Path | None,
+) -> None:
     pkg_name = _package_name(version=version, platform="windows", artifact_suffix=artifact_suffix)
     pkg_dir = out_dir / pkg_name
     _clean_dir(pkg_dir)
@@ -261,13 +376,22 @@ def _package_windows(*, version: str, bin_path: Path, out_dir: Path, artifact_su
     _copy_tree(ASSETS_DIR, pkg_dir / "assets")
     shutil.copy2(ROOT / "README.md", pkg_dir / "README.md")
     shutil.copy2(ROOT / "config.example.toml", pkg_dir / "config.example.toml")
+    if rust_sysroot is not None:
+        _bundle_rust_toolchain(sysroot=rust_sysroot, dst_root=pkg_dir)
 
     zip_path = out_dir / f"{pkg_name}.zip"
     _make_zip(zip_path, pkg_dir)
     print(f"Wrote {zip_path}")
 
 
-def _package_linux(*, version: str, bin_path: Path, out_dir: Path, artifact_suffix: str | None) -> None:
+def _package_linux(
+    *,
+    version: str,
+    bin_path: Path,
+    out_dir: Path,
+    artifact_suffix: str | None,
+    rust_sysroot: Path | None,
+) -> None:
     pkg_name = _package_name(version=version, platform="linux", artifact_suffix=artifact_suffix)
     pkg_dir = out_dir / pkg_name
     _clean_dir(pkg_dir)
@@ -278,6 +402,8 @@ def _package_linux(*, version: str, bin_path: Path, out_dir: Path, artifact_suff
     _copy_tree(ASSETS_DIR, pkg_dir / "assets")
     shutil.copy2(ROOT / "README.md", pkg_dir / "README.md")
     shutil.copy2(ROOT / "config.example.toml", pkg_dir / "config.example.toml")
+    if rust_sysroot is not None:
+        _bundle_rust_toolchain(sysroot=rust_sysroot, dst_root=pkg_dir)
 
     tar_path = out_dir / f"{pkg_name}.tar.gz"
     _make_targz(tar_path, pkg_dir)
@@ -324,6 +450,7 @@ def _package_macos(
     out_dir: Path,
     artifact_suffix: str | None,
     bundle_name: str,
+    rust_sysroot: Path | None,
 ) -> None:
     pkg_name = _package_name(version=version, platform="macos", artifact_suffix=artifact_suffix)
     app_dir = out_dir / f"{bundle_name}.app"
@@ -342,6 +469,8 @@ def _package_macos(
 
     _copy_tree(ASSETS_DIR, resources / "assets")
     shutil.copy2(ASSETS_DIR / "icon.icns", resources / "icon.icns")
+    if rust_sysroot is not None:
+        _bundle_rust_toolchain(sysroot=rust_sysroot, dst_root=resources)
 
     _write_info_plist(contents / "Info.plist", version=version)
 
@@ -365,6 +494,11 @@ def main() -> int:
         metavar="TARGET",
         help="Cargo target triple (repeatable)",
     )
+    parser.add_argument(
+        "--no-bundle-rust-toolchain",
+        action="store_true",
+        help="Do not bundle the Rust toolchain under toolchain/rust/ (WASM brain compilation will require Rust installed).",
+    )
     args = parser.parse_args()
 
     _ensure_icons()
@@ -384,12 +518,26 @@ def main() -> int:
         if not bin_path.is_file():
             raise SystemExit(f"Missing release binary: {bin_path}")
 
+        rust_sysroot = None
+        if not args.no_bundle_rust_toolchain:
+            host_platform = _host_platform()
+            if spec.platform != host_platform:
+                raise SystemExit(
+                    "Bundled toolchains must be packaged on the target platform.\n"
+                    f"Host platform: {host_platform}\n"
+                    f"Requested package platform: {spec.platform}\n"
+                    "Re-run `tools/publish.py` on that platform, or pass `--no-bundle-rust-toolchain`."
+                )
+            rust_sysroot, toolchain = _toolchain_sysroot_for_spec(spec)
+            _ensure_wasm_target_installed(sysroot=rust_sysroot, toolchain=toolchain)
+
         if spec.platform == "windows":
             _package_windows(
                 version=version,
                 bin_path=bin_path,
                 out_dir=out_dir,
                 artifact_suffix=spec.artifact_suffix,
+                rust_sysroot=rust_sysroot,
             )
         elif spec.platform == "macos":
             _package_macos(
@@ -398,6 +546,7 @@ def main() -> int:
                 out_dir=out_dir,
                 artifact_suffix=spec.artifact_suffix,
                 bundle_name=spec.bundle_name,
+                rust_sysroot=rust_sysroot,
             )
         else:
             _package_linux(
@@ -405,6 +554,7 @@ def main() -> int:
                 bin_path=bin_path,
                 out_dir=out_dir,
                 artifact_suffix=spec.artifact_suffix,
+                rust_sysroot=rust_sysroot,
             )
 
     return 0

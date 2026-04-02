@@ -94,7 +94,9 @@ Notes:
 
 - `GET /v1/modules` lists both built-in demo modules and on-disk WASM modules.
 - The host calls `POST /v1/load_module` automatically for modules in use; for `rust_source` modules, this triggers compilation.
-- If compilation fails, `load_module` returns an error. You can point the service at a bundled toolchain by setting `GRAVIMERA_RUSTC=/path/to/rustc`.
+- If compilation fails, `load_module` returns an error. You can override the compiler via `GRAVIMERA_RUSTC=/path/to/rustc` (useful for development).
+- On startup, the game syncs built-in demo modules from `assets/intelligence/wasm_modules/` into the module store (replacing existing folders with the same `module_id`).
+- The desktop distribution bundles a Rust toolchain under `toolchain/rust/`, and the service auto-detects it for `rust_source` compilation (`GRAVIMERA_RUSTC` remains an override).
 
 WASM guest ABI + encoding details: `docs/intelligence_wasm_brains.md`.
 
