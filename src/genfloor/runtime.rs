@@ -316,6 +316,8 @@ pub(crate) fn genfloor_update_cpu_waves(
 pub(crate) fn genfloor_ensure_preview_floor(
     mut commands: Commands,
     preview: Res<crate::gen3d::Gen3dPreview>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     mut active: ResMut<ActiveWorldFloor>,
     floors: Query<Entity, With<GenfloorPreviewFloor>>,
 ) {
@@ -325,10 +327,15 @@ pub(crate) fn genfloor_ensure_preview_floor(
     let Some(root) = preview.root else {
         return;
     };
+    let def = active.def.clone();
+    let mesh_handle = meshes.add(build_floor_mesh_only(&def));
+    let material = build_floor_material(&def, &mut materials);
     commands.entity(root).with_children(|child| {
         child.spawn((
             WorldFloor,
             GenfloorPreviewFloor,
+            Mesh3d(mesh_handle),
+            MeshMaterial3d(material),
             RenderLayers::layer(crate::gen3d::GEN3D_PREVIEW_UI_LAYER),
             Transform::IDENTITY,
             Visibility::Inherited,
