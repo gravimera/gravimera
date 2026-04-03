@@ -27,6 +27,25 @@ Example outputs:
 - `dist/linux/gravimera-0.1.0-linux.tar.gz`
 - `dist/windows/gravimera-0.1.0-windows.zip`
 
+## macOS signing + notarization (recommended for GitHub Releases)
+
+If you upload macOS artifacts to GitHub Releases, users will download a quarantined zip and Gatekeeper will assess the app. To avoid the “app is damaged” / blocked warnings, ship a **Developer ID–signed** and **notarized** app.
+
+On macOS:
+
+```bash
+python3 tools/publish.py --macos-notarize
+```
+
+Notes:
+
+- `--macos-notarize` implies `--macos-sign` and uses hardened runtime.
+- Provide the Developer ID identity via `--macos-codesign-identity` (or `GRAVIMERA_MACOS_CODESIGN_IDENTITY`).
+  - List identities: `security find-identity -v -p codesigning`
+- Notarization authentication (choose one):
+  - Recommended: create a notarytool keychain profile and pass `--macos-notarytool-profile` (or `GRAVIMERA_MACOS_NOTARYTOOL_PROFILE`).
+  - Or pass `--macos-notary-apple-id`, `--macos-notary-team-id`, `--macos-notary-password` (or the matching `GRAVIMERA_MACOS_NOTARY_*` env vars). Prefer `@keychain:<item>` for the password.
+
 ## Build + package explicit targets
 
 `--target` is repeatable. Each explicit target is built and packaged according to the target triple instead of the host OS, and the artifact names include the target triple so a single run can emit multiple packages without overwriting earlier ones.

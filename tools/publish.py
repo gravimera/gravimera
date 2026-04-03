@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 import stat
 import subprocess
 import sys
 import tarfile
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,6 +79,18 @@ class BuildSpec:
     bundle_name: str
 
 
+@dataclass(frozen=True)
+class MacOSSigningConfig:
+    sign: bool
+    notarize: bool
+    identity: str | None
+    entitlements: Path | None
+    notarytool_profile: str | None
+    apple_id: str | None
+    team_id: str | None
+    password: str | None
+
+
 def _read_version() -> str:
     text = CARGO_TOML.read_text(encoding="utf-8")
     in_package = False
@@ -93,8 +107,13 @@ def _read_version() -> str:
     raise RuntimeError("Cargo.toml: missing [package].version")
 
 
-def _run(cmd: list[str], *, cwd: Path = ROOT) -> None:
-    print("+", " ".join(cmd))
+def _run(cmd: list[str], *, cwd: Path = ROOT, redact: set[int] | None = None) -> None:
+    shown = list(cmd)
+    if redact:
+        for idx in redact:
+            if 0 <= idx < len(shown):
+                shown[idx] = "<REDACTED>"
+    print("+", " ".join(shown))
     subprocess.check_call(cmd, cwd=str(cwd))
 
 
@@ -157,6 +176,95 @@ def _make_targz(tar_path: Path, folder: Path) -> None:
         tar_path.unlink()
     with tarfile.open(tar_path, "w:gz") as tf:
         tf.add(folder, arcname=folder.name)
+
+
+def _make_macos_app_zip(zip_path: Path, app_dir: Path) -> None:
+    if zip_path.exists():
+        zip_path.unlink()
+    if sys.platform == "darwin":
+        _run(
+            [
+                "ditto",
+                "-c",
+                "-k",
+                "--sequesterRsrc",
+                "--keepParent",
+                str(app_dir),
+                str(zip_path),
+            ]
+        )
+        return
+    _make_zip(zip_path, app_dir)
+
+
+def _require_macos(action: str) -> None:
+    if sys.platform != "darwin":
+        raise SystemExit(f"{action} is only supported on macOS (darwin).")
+
+
+def _codesign_macos_app(*, app_dir: Path, identity: str, entitlements: Path | None) -> None:
+    _require_macos("codesign")
+    cmd = [
+        "codesign",
+        "--force",
+        "--options",
+        "runtime",
+        "--timestamp",
+        "--sign",
+        identity,
+        "--deep",
+    ]
+    if entitlements is not None:
+        cmd += ["--entitlements", str(entitlements)]
+    cmd.append(str(app_dir))
+    _run(cmd)
+    _run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app_dir)])
+
+
+def _notarize_zip(
+    *,
+    zip_path: Path,
+    notarytool_profile: str | None,
+    apple_id: str | None,
+    team_id: str | None,
+    password: str | None,
+) -> None:
+    _require_macos("notarytool")
+    cmd = ["xcrun", "notarytool", "submit", str(zip_path), "--wait"]
+    redact: set[int] | None = None
+    if notarytool_profile:
+        cmd += ["--keychain-profile", notarytool_profile]
+    else:
+        missing: list[str] = []
+        if not apple_id:
+            missing.append("--macos-notary-apple-id (or GRAVIMERA_MACOS_NOTARY_APPLE_ID)")
+        if not team_id:
+            missing.append("--macos-notary-team-id (or GRAVIMERA_MACOS_NOTARY_TEAM_ID)")
+        if not password:
+            missing.append("--macos-notary-password (or GRAVIMERA_MACOS_NOTARY_PASSWORD)")
+        if missing:
+            joined = "\n  - ".join(missing)
+            raise SystemExit(
+                "Missing notarization credentials.\n"
+                "Provide either:\n"
+                "  - --macos-notarytool-profile (recommended)\n"
+                "or all of:\n"
+                "  - --macos-notary-apple-id\n"
+                "  - --macos-notary-team-id\n"
+                "  - --macos-notary-password\n"
+                "Missing:\n"
+                f"  - {joined}\n"
+            )
+        cmd += ["--apple-id", apple_id, "--team-id", team_id, "--password", password]
+        redact = {len(cmd) - 1}
+    _run(cmd, redact=redact)
+
+
+def _staple_and_assess_app(*, app_dir: Path) -> None:
+    _require_macos("stapler")
+    _run(["xcrun", "stapler", "staple", "-v", str(app_dir)])
+    _run(["xcrun", "stapler", "validate", "-v", str(app_dir)])
+    _run(["spctl", "--assess", "--type", "execute", "-vv", str(app_dir)])
 
 
 def _host_platform() -> str:
@@ -454,6 +562,7 @@ def _package_macos(
     artifact_suffix: str | None,
     bundle_name: str,
     rust_sysroot: Path | None,
+    signing: MacOSSigningConfig | None,
 ) -> None:
     pkg_name = _package_name(version=version, platform="macos", artifact_suffix=artifact_suffix)
     app_dir = out_dir / f"{bundle_name}.app"
@@ -478,7 +587,28 @@ def _package_macos(
     _write_info_plist(contents / "Info.plist", version=version)
 
     zip_path = out_dir / f"{pkg_name}.zip"
-    _make_zip(zip_path, app_dir)
+    if signing and (signing.sign or signing.notarize):
+        if not signing.identity:
+            raise SystemExit(
+                "macOS signing requested but no codesign identity provided.\n"
+                "Provide --macos-codesign-identity or set GRAVIMERA_MACOS_CODESIGN_IDENTITY.\n"
+                "Tip: list identities via `security find-identity -v -p codesigning`."
+            )
+        _codesign_macos_app(app_dir=app_dir, identity=signing.identity, entitlements=signing.entitlements)
+        if signing.notarize:
+            with tempfile.TemporaryDirectory(prefix="gravimera-notarize-") as tmpdir:
+                upload_zip = Path(tmpdir) / f"{pkg_name}-notarize.zip"
+                _make_macos_app_zip(upload_zip, app_dir)
+                _notarize_zip(
+                    zip_path=upload_zip,
+                    notarytool_profile=signing.notarytool_profile,
+                    apple_id=signing.apple_id,
+                    team_id=signing.team_id,
+                    password=signing.password,
+                )
+            _staple_and_assess_app(app_dir=app_dir)
+
+    _make_macos_app_zip(zip_path, app_dir)
     print(f"Wrote {zip_path}")
 
 
@@ -507,6 +637,52 @@ def main() -> int:
         action="store_true",
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--macos-sign",
+        action="store_true",
+        help="Codesign macOS app bundles with hardened runtime (requires Developer ID Application identity).",
+    )
+    parser.add_argument(
+        "--macos-notarize",
+        action="store_true",
+        help="Notarize + staple macOS app bundles (implies --macos-sign).",
+    )
+    parser.add_argument(
+        "--macos-codesign-identity",
+        default=os.environ.get("GRAVIMERA_MACOS_CODESIGN_IDENTITY"),
+        metavar="IDENTITY",
+        help="Codesign identity (or set GRAVIMERA_MACOS_CODESIGN_IDENTITY).",
+    )
+    parser.add_argument(
+        "--macos-entitlements",
+        default=os.environ.get("GRAVIMERA_MACOS_ENTITLEMENTS"),
+        metavar="PATH",
+        help="Optional entitlements plist for codesign (or set GRAVIMERA_MACOS_ENTITLEMENTS).",
+    )
+    parser.add_argument(
+        "--macos-notarytool-profile",
+        default=os.environ.get("GRAVIMERA_MACOS_NOTARYTOOL_PROFILE"),
+        metavar="PROFILE",
+        help="Keychain profile name for `xcrun notarytool` (recommended; or set GRAVIMERA_MACOS_NOTARYTOOL_PROFILE).",
+    )
+    parser.add_argument(
+        "--macos-notary-apple-id",
+        default=os.environ.get("GRAVIMERA_MACOS_NOTARY_APPLE_ID"),
+        metavar="EMAIL",
+        help="Apple ID email for notarization (or set GRAVIMERA_MACOS_NOTARY_APPLE_ID). Ignored if --macos-notarytool-profile is set.",
+    )
+    parser.add_argument(
+        "--macos-notary-team-id",
+        default=os.environ.get("GRAVIMERA_MACOS_NOTARY_TEAM_ID"),
+        metavar="TEAMID",
+        help="Team ID for notarization (or set GRAVIMERA_MACOS_NOTARY_TEAM_ID). Ignored if --macos-notarytool-profile is set.",
+    )
+    parser.add_argument(
+        "--macos-notary-password",
+        default=os.environ.get("GRAVIMERA_MACOS_NOTARY_PASSWORD"),
+        metavar="PASSWORD",
+        help="App-specific password or @keychain:<item> for notarization (or set GRAVIMERA_MACOS_NOTARY_PASSWORD). Ignored if --macos-notarytool-profile is set.",
+    )
     args = parser.parse_args()
 
     _ensure_icons()
@@ -525,6 +701,28 @@ def main() -> int:
         bin_path = _release_bin_path(target=spec.target, exe_name=spec.exe_name)
         if not bin_path.is_file():
             raise SystemExit(f"Missing release binary: {bin_path}")
+
+        macos_signing: MacOSSigningConfig | None = None
+        if spec.platform == "macos":
+            sign = bool(args.macos_sign or args.macos_notarize)
+            notarize = bool(args.macos_notarize)
+            entitlements = Path(args.macos_entitlements).expanduser() if args.macos_entitlements else None
+            macos_signing = MacOSSigningConfig(
+                sign=sign,
+                notarize=notarize,
+                identity=args.macos_codesign_identity,
+                entitlements=entitlements,
+                notarytool_profile=args.macos_notarytool_profile,
+                apple_id=args.macos_notary_apple_id,
+                team_id=args.macos_notary_team_id,
+                password=args.macos_notary_password,
+            )
+            if (sign or notarize) and sys.platform != "darwin":
+                raise SystemExit(
+                    "macOS signing/notarization must be run on macOS.\n"
+                    f"Host platform: {sys.platform}\n"
+                    "Re-run `tools/publish.py` on macOS, or omit --macos-sign/--macos-notarize."
+                )
 
         rust_sysroot = None
         if args.bundle_rust_toolchain:
@@ -555,6 +753,7 @@ def main() -> int:
                 artifact_suffix=spec.artifact_suffix,
                 bundle_name=spec.bundle_name,
                 rust_sysroot=rust_sysroot,
+                signing=macos_signing,
             )
         else:
             _package_linux(
