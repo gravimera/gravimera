@@ -1295,6 +1295,22 @@ pub(crate) fn enter_gen3d_mode(
                                                 Gen3dPromptScrollPanel,
                                             ))
                                             .with_children(|scroll| {
+                                                scroll.spawn((
+                                                    Node {
+                                                        position_type: PositionType::Absolute,
+                                                        left: Val::Px(0.0),
+                                                        top: Val::Px(0.0),
+                                                        width: Val::Px(2.0),
+                                                        height: Val::Px(18.0),
+                                                        ..default()
+                                                    },
+                                                    BackgroundColor(Color::srgba(
+                                                        0.92, 0.98, 1.0, 0.0,
+                                                    )),
+                                                    ZIndex(50),
+                                                    Visibility::Hidden,
+                                                    Gen3dPromptCaret,
+                                                ));
                                                 scroll
                                                     .spawn((
                                                         Node {
@@ -1745,6 +1761,40 @@ pub(crate) fn gen3d_prompt_box_focus(
     }
 }
 
+pub(crate) fn gen3d_prompt_defocus_on_click_outside(
+    build_scene: Res<State<BuildScene>>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    mut workshop: ResMut<Gen3dWorkshop>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+    prompt_boxes: Query<(&ComputedNode, &UiGlobalTransform), With<Gen3dPromptBox>>,
+) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
+        return;
+    }
+    if !workshop.prompt_focused {
+        return;
+    }
+    if !mouse_buttons.just_pressed(MouseButton::Left) {
+        return;
+    }
+    let Ok(mut window) = windows.single_mut() else {
+        return;
+    };
+    let Some(cursor) = window.physical_cursor_position() else {
+        return;
+    };
+    let Ok((node, transform)) = prompt_boxes.single() else {
+        return;
+    };
+    if node.contains_point(*transform, cursor) {
+        return;
+    }
+
+    workshop.prompt_focused = false;
+    workshop.prompt_scrollbar_drag = None;
+    window.ime_enabled = false;
+}
+
 pub(crate) fn gen3d_prompt_ime_position(
     build_scene: Res<State<BuildScene>>,
     workshop: Res<Gen3dWorkshop>,
@@ -1794,6 +1844,96 @@ pub(crate) fn gen3d_prompt_ime_position(
         &children,
         &nodes,
     );
+}
+
+pub(crate) fn gen3d_prompt_input_indicator(
+    build_scene: Res<State<BuildScene>>,
+    workshop: Res<Gen3dWorkshop>,
+    time: Res<Time>,
+    panels: Query<(&ComputedNode, &UiGlobalTransform), With<Gen3dPromptScrollPanel>>,
+    rich_text: Query<Entity, With<Gen3dPromptRichText>>,
+    hint_text: Query<Entity, With<Gen3dPromptHintText>>,
+    children: Query<&Children>,
+    nodes: Query<(
+        &ComputedNode,
+        &UiGlobalTransform,
+        Option<&Text>,
+        Option<&TextSpan>,
+        Option<&ImageNode>,
+        Option<&Visibility>,
+    ), Without<Gen3dPromptCaret>>,
+    mut carets: Query<(&mut Node, &mut BackgroundColor, &mut Visibility), With<Gen3dPromptCaret>>,
+    mut blink_t: Local<f32>,
+) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
+        return;
+    }
+
+    let Ok((panel_node, panel_transform)) = panels.single() else {
+        return;
+    };
+    let Ok((mut caret_node, mut caret_bg, mut caret_vis)) = carets.single_mut() else {
+        return;
+    };
+
+    if !workshop.prompt_focused {
+        *caret_vis = Visibility::Hidden;
+        *blink_t = 0.0;
+        return;
+    }
+    *caret_vis = Visibility::Inherited;
+
+    let prompt_empty = workshop.prompt.trim().is_empty();
+    let rich_root = if prompt_empty {
+        hint_text.iter().next()
+    } else {
+        rich_text.iter().next()
+    };
+    let anchor_x = if prompt_empty {
+        ImeAnchorXPolicy::ContentLeft
+    } else {
+        ImeAnchorXPolicy::LineEnd
+    };
+
+    let Some(anchor_px) = crate::ui::rich_text_anchor_px(
+        panel_node,
+        *panel_transform,
+        rich_root,
+        anchor_x,
+        &children,
+        &nodes,
+    ) else {
+        return;
+    };
+
+    let Some(local) = panel_transform
+        .try_inverse()
+        .map(|transform| transform.transform_point2(anchor_px))
+    else {
+        return;
+    };
+
+    const CARET_W_PX: f32 = 2.0;
+    const CARET_H_PX: f32 = 18.0;
+
+    let panel_scale = panel_node.inverse_scale_factor();
+    let panel_w = panel_node.size.x.max(0.0) * panel_scale;
+    let panel_h = panel_node.size.y.max(0.0) * panel_scale;
+
+    let left = ((local.x + panel_node.size.x * 0.5) * panel_scale)
+        .clamp(0.0, (panel_w - CARET_W_PX).max(0.0));
+    let bottom = ((local.y + panel_node.size.y * 0.5) * panel_scale).clamp(0.0, panel_h.max(0.0));
+    let top = (bottom - CARET_H_PX).clamp(0.0, (panel_h - CARET_H_PX).max(0.0));
+
+    caret_node.left = Val::Px(left);
+    caret_node.top = Val::Px(top);
+    caret_node.width = Val::Px(CARET_W_PX);
+    caret_node.height = Val::Px(CARET_H_PX);
+
+    *blink_t = (*blink_t + time.delta_secs()).clamp(0.0, 10_000.0);
+    let blink_on = (*blink_t % 1.0) < 0.55;
+    let alpha = if blink_on { 0.95 } else { 0.0 };
+    *caret_bg = BackgroundColor(Color::srgba(0.92, 0.98, 1.0, alpha));
 }
 
 pub(crate) fn gen3d_exit_button(
@@ -2192,7 +2332,7 @@ pub(crate) fn gen3d_prompt_text_input(
     if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
-    let mut accept_input = workshop.prompt_focused;
+    let accept_input = workshop.prompt_focused;
     if accept_input {
         if let Ok(mut window) = windows.single_mut() {
             window.ime_enabled = true;
@@ -2201,17 +2341,8 @@ pub(crate) fn gen3d_prompt_text_input(
 
     for event in ime_events.read() {
         if let Ime::Commit { value, .. } = event {
-            if !value.is_empty() {
-                if !accept_input {
-                    accept_input = true;
-                    workshop.prompt_focused = true;
-                    if let Ok(mut window) = windows.single_mut() {
-                        window.ime_enabled = true;
-                    }
-                }
-                if accept_input {
-                    push_prompt_text(&mut workshop, value);
-                }
+            if accept_input && !value.is_empty() {
+                push_prompt_text(&mut workshop, value);
             }
         }
     }
@@ -2220,45 +2351,7 @@ pub(crate) fn gen3d_prompt_text_input(
         if event.state != bevy::input::ButtonState::Pressed {
             continue;
         }
-        let mut handled = false;
         if !accept_input {
-            if let Some(text) = &event.text {
-                if !text.is_empty() {
-                    accept_input = true;
-                    workshop.prompt_focused = true;
-                    if let Ok(mut window) = windows.single_mut() {
-                        window.ime_enabled = true;
-                    }
-                }
-            } else if matches!(event.key_code, KeyCode::KeyV) {
-                let modifier = keys.pressed(KeyCode::ControlLeft)
-                    || keys.pressed(KeyCode::ControlRight)
-                    || keys.pressed(KeyCode::SuperLeft)
-                    || keys.pressed(KeyCode::SuperRight);
-                if modifier {
-                    if let Some(text) = crate::clipboard::read_text() {
-                        accept_input = true;
-                        workshop.prompt_focused = true;
-                        if let Ok(mut window) = windows.single_mut() {
-                            window.ime_enabled = true;
-                        }
-                        if accept_input {
-                            push_prompt_text(&mut workshop, &text);
-                            handled = true;
-                        }
-                    }
-                }
-                if !accept_input {
-                    continue;
-                }
-            } else {
-                continue;
-            }
-            if !accept_input {
-                continue;
-            }
-        }
-        if handled {
             continue;
         }
         match event.key_code {

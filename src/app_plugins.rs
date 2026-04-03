@@ -675,6 +675,11 @@ impl Plugin for RenderedGen3dPlugin {
                     .after(crate::gen3d::gen3d_handle_drag_and_drop)
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::gen3d::gen3d_prompt_defocus_on_click_outside
+                    .after(crate::gen3d::gen3d_clear_images_button)
+                    .before(crate::gen3d::gen3d_prompt_box_focus)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::gen3d::gen3d_prompt_box_focus
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
@@ -933,6 +938,8 @@ impl Plugin for RenderedGen3dPlugin {
                     .after(crate::gen3d::gen3d_preview_export_dialog_poll)
                     .after(crate::gen3d::gen3d_preview_animation_option_buttons)
                     .after(crate::gen3d::gen3d_poll_ai_job),
+                crate::gen3d::gen3d_prompt_input_indicator
+                    .after(crate::gen3d::gen3d_update_ui_text),
                 crate::gen3d::gen3d_rebuild_preview_animation_dropdown_options_ui
                     .after(crate::gen3d::gen3d_apply_draft_to_preview),
                 crate::gen3d::gen3d_update_preview_animation_dropdown_ui

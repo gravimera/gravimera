@@ -107,7 +107,7 @@ fn ui_content_bounds(node: &ComputedNode, transform: UiGlobalTransform) -> Optio
     Some(UiBounds { min, max })
 }
 
-fn collect_rich_text_bounds(
+fn collect_rich_text_bounds<F: QueryFilter>(
     root: Entity,
     children_q: &Query<&Children>,
     node_q: &Query<(
@@ -117,7 +117,7 @@ fn collect_rich_text_bounds(
         Option<&TextSpan>,
         Option<&ImageNode>,
         Option<&Visibility>,
-    )>,
+    ), F>,
 ) -> Vec<UiBounds> {
     let mut stack = vec![root];
     let mut bounds = Vec::new();
@@ -165,8 +165,7 @@ fn last_line_bounds(bounds: &[UiBounds]) -> Option<UiBounds> {
     line
 }
 
-pub(crate) fn set_ime_position_for_rich_text(
-    window: &mut Window,
+pub(crate) fn rich_text_anchor_px<F: QueryFilter>(
     field_node: &ComputedNode,
     field_transform: UiGlobalTransform,
     rich_text_root: Option<Entity>,
@@ -179,11 +178,9 @@ pub(crate) fn set_ime_position_for_rich_text(
         Option<&TextSpan>,
         Option<&ImageNode>,
         Option<&Visibility>,
-    )>,
-) {
-    let Some(content_bounds) = ui_content_bounds(field_node, field_transform) else {
-        return;
-    };
+    ), F>,
+) -> Option<Vec2> {
+    let content_bounds = ui_content_bounds(field_node, field_transform)?;
     let mut anchor = Vec2::new(
         content_bounds.min.x + IME_ANCHOR_X_PADDING_PX,
         content_bounds.min.y + IME_ANCHOR_FALLBACK_Y_OFFSET_PX,
@@ -205,6 +202,39 @@ pub(crate) fn set_ime_position_for_rich_text(
     } else {
         anchor.x = min_x;
     }
+    if anchor.is_finite() {
+        Some(anchor)
+    } else {
+        None
+    }
+}
+
+pub(crate) fn set_ime_position_for_rich_text(
+    window: &mut Window,
+    field_node: &ComputedNode,
+    field_transform: UiGlobalTransform,
+    rich_text_root: Option<Entity>,
+    anchor_x: ImeAnchorXPolicy,
+    children_q: &Query<&Children>,
+    node_q: &Query<(
+        &ComputedNode,
+        &UiGlobalTransform,
+        Option<&Text>,
+        Option<&TextSpan>,
+        Option<&ImageNode>,
+        Option<&Visibility>,
+    )>,
+) {
+    let Some(anchor) = rich_text_anchor_px(
+        field_node,
+        field_transform,
+        rich_text_root,
+        anchor_x,
+        children_q,
+        node_q,
+    ) else {
+        return;
+    };
     let scale = window.scale_factor() as f32;
     if !scale.is_finite() || scale <= 0.0 {
         return;

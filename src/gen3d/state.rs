@@ -304,6 +304,9 @@ pub(crate) struct Gen3dPromptBox;
 pub(crate) struct Gen3dPromptScrollPanel;
 
 #[derive(Component)]
+pub(crate) struct Gen3dPromptCaret;
+
+#[derive(Component)]
 pub(crate) struct Gen3dPromptScrollbarTrack;
 
 #[derive(Component)]

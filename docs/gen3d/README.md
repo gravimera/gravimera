@@ -102,8 +102,8 @@ component tree, not just the first root layer.
   original assembled draft center.
 - Hovering uses a flatter segmented frame rather than a filled selection box so bright components
   stay readable.
-- With the cursor over the preview, use `W` / `A` / `S` / `D` or the arrow keys to pan the preview
-  view.
+- With the cursor over the preview (and the prompt box unfocused), use `W` / `A` / `S` / `D` or the
+  arrow keys to pan the preview view. Click outside the prompt box to defocus it.
 - In explode mode, separated components show their names directly in the preview. Hover still shows
   the fuller info card.
 

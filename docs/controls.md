@@ -101,6 +101,8 @@ Enter/exit the Gen3D workshop from Build mode via the top-left workspace dropdow
 
 - Preview orbit: `LMB` drag on the preview panel
 - Preview zoom: mouse wheel on the preview panel
+- Prompt input: click the prompt box to focus it (caret shows). Click outside the prompt box to
+  defocus so `W` / `A` / `S` / `D` controls the preview again.
 - Preview pan: with the cursor over the preview, `W` / `A` / `S` / `D` or arrow keys
 - Component inspection: move the cursor over a visible preview component to show a frame and info
   card; when parent/child frames overlap, the more specific nested component wins
