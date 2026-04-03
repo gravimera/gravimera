@@ -6,17 +6,17 @@ This document must be maintained in accordance with /Users/lxl/projects/aiprojec
 
 ## Objective
 
-Enable scenes to keep a stable scene_id for their directory name while exposing a separate, user-facing display name in the Scenes list. After this change, renaming a scene updates only the display name stored in scene metadata and does not rename the directory. GenScene and manual scene creation should populate the display name without blocking build start, and the UI should always fall back to scene_id when the display name is missing.
+Enable scenes to keep a stable scene_id for their directory name while exposing a separate, user-facing display name in the Scenes list. GenScene and manual scene creation should populate the display name without blocking build start, and the UI should always fall back to scene_id when the display name is missing. In-panel rename UI is explicitly out of scope.
 
 ## Purpose / Big Picture
 
-Users should be able to rename scenes freely without changing on-disk directories or breaking references. The Scenes list will show a readable display name rather than a raw directory name, and GenScene will assign a short display name from the prompt while keeping an internal scene_id for filesystem paths. This makes scene organization clearer and reduces build-time stalls caused by naming logic.
+Users should be able to manage scenes without changing on-disk directories or breaking references. The Scenes list will show a readable display name rather than a raw directory name, and GenScene will assign a short display name from the prompt while keeping an internal scene_id for filesystem paths. This makes scene organization clearer and reduces build-time stalls caused by naming logic.
 
 ## Progress
 
 - [x] (2026-04-03 09:40 CST) Draft and validate this ExecPlan.
 - [x] (2026-04-03 18:10 CST) Update scene metadata helpers to read and write display names separately from scene_id.
-- [x] (2026-04-03 18:15 CST) Replace Scenes list labels with display names and add rename UI that only updates metadata.
+- [x] (2026-04-03 18:15 CST) Replace Scenes list labels with display names and keep directory names bound to scene_id only.
 - [x] (2026-04-03 18:20 CST) Update GenScene creation to allocate scene_id independently and set display name from the prompt without blocking build start.
 - [ ] (2026-04-03 18:25 CST) Add tests and update docs to reflect the new display name behavior (completed: docs updates; remaining: tests).
 
@@ -28,7 +28,7 @@ Observation: GenScene allocates scene_id by slugifying or translating the prompt
 
 ## Decision Log
 
-Decision: Use the existing meta.json label field as the display name surfaced in the Scenes list and editable by the user. Rationale: The label already exists in the scene scaffold and is the natural home for a user-facing name. Date/Author: 2026-04-03 / Codex.
+Decision: Use the existing meta.json label field as the display name surfaced in the Scenes list and editable by the user via future UI. Rationale: The label already exists in the scene scaffold and is the natural home for a user-facing name. Date/Author: 2026-04-03 / Codex.
 
 Decision: Keep scene_id as the stable directory identifier and never rename directories when a display name changes. Rationale: The user explicitly wants renaming to avoid touching directory names, and this keeps references stable. Date/Author: 2026-04-03 / Codex.
 
@@ -54,14 +54,14 @@ In this plan, “scene_id” means the directory name under the realm’s scenes
 
 - [ ] Add helper functions in /Users/lxl/projects/aiprojects/gravimera/src/realm.rs to read and write the scene display name in meta.json, with a fallback to scene_id when the label is missing or empty, and reuse the existing SceneSourcesV1 load/write path.
 - [ ] Update the Scenes list rebuild to resolve display names for each scene_id, append “(Current)” to the display name, and keep selection logic and sorting keyed by scene_id and timestamps.
-- [ ] Add a rename flow in the Scenes panel that edits only the display name, validates trimmed non-empty input, saves via the new helper, and refreshes the list without touching directories or multi-select mode.
+- [ ] Do not add a rename flow in the Scenes panel; keep display names stored in metadata and updateable via future UX without changing directories.
 - [ ] Adjust GenScene creation to allocate scene_id independently of the display name and write a short prompt-derived display name to meta.json without blocking build start.
-- [ ] Add tests under /Users/lxl/projects/aiprojects/gravimera/test/run_1 that cover display name persistence, rename behavior, and fallback to scene_id, and update any existing scene metadata tests that assume label equals scene_id.
-- [ ] Update documentation under /Users/lxl/projects/aiprojects/gravimera/docs to describe display names and rename behavior, keeping README.md concise.
+- [ ] Add tests under /Users/lxl/projects/aiprojects/gravimera/test/run_1 that cover display name persistence and fallback to scene_id, and update any existing scene metadata tests that assume label equals scene_id.
+- [ ] Update documentation under /Users/lxl/projects/aiprojects/gravimera/docs to describe display names and scene_id-based directories, keeping README.md concise.
 
 ## Plan of Work
 
-First, add metadata helpers in realm.rs to read and write a scene display name from meta.json. This mirrors the existing description helpers and provides a single place to define the fallback rule and validation. Next, update the Scenes list rebuild to load the display name for each scene and render it with the current-scene suffix, keeping all selection logic based on scene_id. Then add a rename workflow in the Scenes panel that edits only the display name, validates it, writes it to metadata, and refreshes the list; this should be designed to work in the normal mode and avoid interference with multi-select mode. After the UI is updated, change GenScene’s scene creation to decouple directory names from display names by allocating scene_id independently and writing a prompt-derived display name to metadata without blocking the build start. Finally, add tests under test/run_1 to exercise display name persistence and rename behavior, and update documentation to describe the new naming behavior.
+First, add metadata helpers in realm.rs to read and write a scene display name from meta.json. This mirrors the existing description helpers and provides a single place to define the fallback rule and validation. Next, update the Scenes list rebuild to load the display name for each scene and render it with the current-scene suffix, keeping all selection logic based on scene_id. After the UI is updated, change GenScene’s scene creation to decouple directory names from display names by allocating scene_id independently and writing a prompt-derived display name to metadata without blocking the build start. Finally, add tests under test/run_1 to exercise display name persistence and fallback behavior, and update documentation to describe the new naming behavior.
 
 ## Concrete Steps
 
@@ -84,17 +84,17 @@ Work from /Users/lxl/projects/aiprojects/gravimera.
 ## Potential Risks and Mitigations
 
 1. Risk: Loading display names for many scenes could slow list rebuilds. Mitigation: Cache labels in memory during a rebuild or read metadata lazily and fall back to scene_id when reads fail.
-2. Risk: Display names could be set to empty or whitespace-only values. Mitigation: Enforce trimming and non-empty validation in the rename UI and in GenScene label generation.
+2. Risk: Display names could be set to empty or whitespace-only values. Mitigation: Enforce trimming and non-empty validation when creating new scenes and in GenScene label generation.
 3. Risk: GenScene label updates could race with other metadata writes. Mitigation: Centralize label writes in the realm helper and serialize updates via the existing scene source load/write path.
 
 ## Alternative Approaches
 
-1. Keep using scene_id in the UI and only add a rename action that renames directories, accepting the filesystem change and potential reference churn. This is simpler but conflicts with the user’s desire to keep directory names stable.
+1. Keep using scene_id in the UI and avoid display names entirely. This is simpler but conflicts with the desire to keep user-facing names readable and decoupled from directory identifiers.
 2. Store display names in a separate index file per realm rather than meta.json. This could avoid touching scene metadata but adds a new storage location and requires synchronization logic.
 
 ## Idempotence and Recovery
 
-The metadata update steps are safe to run multiple times because they only overwrite the label field in meta.json. If a rename fails mid-way, the directory remains unchanged and the list can revert to the prior display name by reloading metadata. If a display name is invalid, fall back to scene_id to keep the UI usable.
+The metadata update steps are safe to run multiple times because they only overwrite the label field in meta.json. If a label write fails, the directory remains unchanged and the list can revert to scene_id by reloading metadata. If a display name is invalid, fall back to scene_id to keep the UI usable.
 
 ## Artifacts and Notes
 
@@ -106,3 +106,4 @@ Use SceneSourcesV1 in /Users/lxl/projects/aiprojects/gravimera/src/scene_sources
 
 Plan update note (2026-04-03): Shortened Implementation Plan task text to satisfy validator length checks and reran validation; the validator script exits early due to its numbered-task grep under set -e, but all reported checks passed.
 Plan update note (2026-04-03): Marked completed implementation steps, recorded decisions for UUID-based scene_id allocation and prompt-derived display names, and noted tests still pending.
+Plan update note (2026-04-03): Removed the Scenes rename button per user request; display names remain stored in metadata and used in the list, but there is no in-panel rename UI.

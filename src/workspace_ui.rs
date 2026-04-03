@@ -4,11 +4,10 @@ use crate::rich_text::spawn_rich_text_line;
 use crate::types::{BuildScene, EmojiAtlas, GameMode, UiFonts};
 use crate::workspace_scenes_ui::{
     AddSceneAddButton, AddSceneCancelButton, AddSceneErrorText, AddSceneNameField,
-    AddSceneNameFieldText, AddScenePanelRoot, SceneNameConfirmButtonText,
-    ScenesAddSceneButton, ScenesAddSceneButtonText, ScenesDeleteButton, ScenesExportButton,
-    ScenesGenerateButton, ScenesGenerateButtonText, ScenesImportButton, ScenesList,
-    ScenesListScrollPanel, ScenesManageButton, ScenesManageButtonText, ScenesManageOnlyAction,
-    ScenesRenameButton, ScenesRenameButtonText, ScenesScrollbarThumb, ScenesScrollbarTrack,
+    AddSceneNameFieldText, AddScenePanelRoot, ScenesAddSceneButton, ScenesAddSceneButtonText,
+    ScenesDeleteButton, ScenesExportButton, ScenesGenerateButton, ScenesGenerateButtonText,
+    ScenesImportButton, ScenesList, ScenesListScrollPanel, ScenesManageButton,
+    ScenesManageButtonText, ScenesManageOnlyAction, ScenesScrollbarThumb, ScenesScrollbarTrack,
     ScenesSelectAllButton, ScenesSelectNoneButton, SCENES_PANEL_WIDTH_PX,
 };
 
@@ -405,30 +404,6 @@ pub(crate) fn setup_workspace_ui(
                             },
                             BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
                             BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
-                            ScenesRenameButton,
-                        ))
-                        .with_children(|b| {
-                            b.spawn((
-                                Text::new("Rename"),
-                                TextFont {
-                                    font_size: 14.0,
-                                    ..default()
-                                },
-                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                                ScenesRenameButtonText,
-                            ));
-                        });
-
-                    actions
-                        .spawn((
-                            Button,
-                            Node {
-                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
-                                border: UiRect::all(Val::Px(1.0)),
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
-                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
                             ScenesManageButton,
                         ))
                         .with_children(|b| {
@@ -708,7 +683,6 @@ pub(crate) fn setup_workspace_ui(
                                     ..default()
                                 },
                                 TextColor(Color::srgb(0.92, 0.92, 0.96)),
-                                SceneNameConfirmButtonText,
                             ));
                         });
 

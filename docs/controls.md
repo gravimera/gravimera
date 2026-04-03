@@ -15,7 +15,6 @@ Gravimera is a sandbox with multiple modes. Some inputs are mode-dependent.
 - Models panel (hidden by default): in **Object Preview**, click **Show Models** / **Hide Models** (top-left)
 - 3D Models panel manage mode: click **Manage** (panel header) to enter multi-select. **Export**/**Delete** + **All**/**None** appear; `Shift`+click selects a range. Click **Done** to exit.
 - Scenes panel manage mode: click **Manage** (panel header) to enter multi-select. **Import** stays available, and **Export**/**Delete** + **All**/**None** appear. Delete skips the currently active scene.
-- Scenes panel rename: click **Rename** to edit the display name shown in the list (this does not change the scene directory or scene_id).
 - Scene package import/export details: `docs/scene_import_export.md`
 - Terrain panel manage mode: click **Manage** (panel header) to enter multi-select. **Export**/**Delete** + **All**/**None** appear; `Shift`+click selects a range. The **Default Terrain** row is not selectable. Click **Done** to exit.
 - Terrain panel preview/apply: click a terrain item to open its preview, then click **Apply** to switch the scene terrain. The preview overlay also offers **Edit** (opens GenFloor to overwrite this terrain), **Duplicate**, **Delete**, and **Exit** (Default Terrain only shows **Apply**/**Exit**).
