@@ -4,7 +4,7 @@ Gravimera ships as:
 
 - the game binary
 - an `assets/` folder next to the binary (Windows/Linux), or inside the app bundle (macOS)
-- a bundled Rust toolchain under `toolchain/rust/` (used for local compilation of Intelligence WASM brain modules)
+- optionally, a bundled Rust toolchain under `toolchain/rust/` (enable with `python3 tools/publish.py --bundle-rust-toolchain`, used for local compilation of Intelligence WASM brain modules)
 
 Runtime data (config/save/cache) lives under `~/.gravimera/` and is not bundled.
 
@@ -73,9 +73,10 @@ Notes:
 - `tools/publish.py` does not install compilers or SDKs for you. If a Rust target is missing, it prints the `rustup target add ...` command to run.
 - Whether a non-host target can compile still depends on the toolchain/linker support available on your machine.
 - Toolchain bundling:
-  - By default, `tools/publish.py` bundles the active Rust sysroot under `toolchain/rust/` in the output package.
-  - This requires the `wasm32-unknown-unknown` standard library to be present for the bundled toolchain.
-  - Disable with: `python3 tools/publish.py --no-bundle-rust-toolchain` (smaller artifacts; players will need Rust installed to compile `rust_source` brain modules).
+  - By default, `tools/publish.py` does not bundle a Rust toolchain (smaller artifacts; players will need Rust installed to compile `rust_source` brain modules).
+  - Enable bundling with: `python3 tools/publish.py --bundle-rust-toolchain`
+  - Bundling requires the `wasm32-unknown-unknown` standard library to be present for the bundled toolchain.
+  - Bundled toolchains must be packaged on the target platform (e.g. package Windows toolchains on Windows).
 
 ## Icons
 

@@ -43,10 +43,10 @@ Runtime data (config/save/cache) is not bundled. Gravimera stores runtime data
 under `~/.gravimera/` by default (override with `root_dir` in config or the
 `GRAVIMERA_HOME` environment variable).
 
-By default, the script also bundles a Rust toolchain (with the
+Optionally, the script can bundle a Rust toolchain (with the
 `wasm32-unknown-unknown` standard library) under `toolchain/rust/` so players
 can compile `rust_source` Intelligence WASM brain modules locally without
-installing Rust.
+installing Rust (enable with `--bundle-rust-toolchain`).
 """
 
 EXAMPLES = """Examples:
@@ -62,6 +62,9 @@ EXAMPLES = """Examples:
 
   Build and package an explicit Linux target:
     python3 tools/publish.py --target x86_64-unknown-linux-gnu
+
+  Include a bundled Rust toolchain in the output package:
+    python3 tools/publish.py --bundle-rust-toolchain
 """
 
 
@@ -495,9 +498,14 @@ def main() -> int:
         help="Cargo target triple (repeatable)",
     )
     parser.add_argument(
+        "--bundle-rust-toolchain",
+        action="store_true",
+        help="Bundle the Rust toolchain under toolchain/rust/ (enables local compilation of `rust_source` brain modules without Rust installed).",
+    )
+    parser.add_argument(
         "--no-bundle-rust-toolchain",
         action="store_true",
-        help="Do not bundle the Rust toolchain under toolchain/rust/ (WASM brain compilation will require Rust installed).",
+        help=argparse.SUPPRESS,
     )
     args = parser.parse_args()
 
@@ -519,14 +527,14 @@ def main() -> int:
             raise SystemExit(f"Missing release binary: {bin_path}")
 
         rust_sysroot = None
-        if not args.no_bundle_rust_toolchain:
+        if args.bundle_rust_toolchain:
             host_platform = _host_platform()
             if spec.platform != host_platform:
                 raise SystemExit(
                     "Bundled toolchains must be packaged on the target platform.\n"
                     f"Host platform: {host_platform}\n"
                     f"Requested package platform: {spec.platform}\n"
-                    "Re-run `tools/publish.py` on that platform, or pass `--no-bundle-rust-toolchain`."
+                    "Re-run `tools/publish.py` on that platform, or re-run without `--bundle-rust-toolchain`."
                 )
             rust_sysroot, toolchain = _toolchain_sysroot_for_spec(spec)
             _ensure_wasm_target_installed(sysroot=rust_sysroot, toolchain=toolchain)

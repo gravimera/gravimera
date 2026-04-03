@@ -149,8 +149,8 @@ For a `rust_source` module, the service shells out to `rustc` to compile `brain_
 
 It looks for `rustc` in:
 
-1. `GRAVIMERA_RUSTC` (recommended for bundled toolchains)
-2. the bundled toolchain (`toolchain/rust/bin/rustc`, auto-detected relative to the running executable)
+1. `GRAVIMERA_RUSTC` (recommended when shipping a bundled toolchain)
+2. a bundled toolchain (`toolchain/rust/bin/rustc`, auto-detected relative to the running executable, if present)
 3. `PATH`
 
 Compilation is cached under:
