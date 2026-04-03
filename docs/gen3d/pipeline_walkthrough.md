@@ -113,6 +113,8 @@ Pipeline stages (simplified):
    - Skipped when strategy is `draft_ops_only`
 3. `EnsureComponents`
    - Tool: `llm_generate_components_v1` (missing-only)
+   - Note: component conversion enforces the plan’s `target_size` contract (axis alignment + reasonable per-axis scale). Drafts with permuted local axes or extreme size mismatch are rejected to trigger regeneration.
+   - Optional deterministic copy/mirror (edit prompt hint): if the edit prompt explicitly asks to mirror/copy a component that has a left/right counterpart in the plan, the pipeline applies `mirror_component_v1` / `copy_component_v1` before DraftOps (mode `detached`, `anchors=preserve_interfaces`).
 4. DraftOps-first in-place edits:
    - `EditQueryComponentParts` (tool: `query_component_parts_v1` for each scoped component)
      - Snapshot payloads now include both `parts[]` and `articulation_nodes[]`.
@@ -143,6 +145,9 @@ This list matches the deterministic calls in `src/gen3d/ai/pipeline_orchestrator
     - Args (forced regen): `{ "component_indices": [0,2,3], "force": true }`
   - `apply_reuse_groups_v1`
     - Args (pipeline): `{ "version": 1 }`
+  - `mirror_component_v1` / `copy_component_v1` (seeded edit pre-step; optional)
+    - Args (pipeline): `{ "source_component": "<name>", "targets": ["<name>"], "mode": "detached", "anchors": "preserve_interfaces" }`
+    - Used when the edit prompt explicitly requests mirroring/copying between left/right components that both exist in the plan.
 
 - Seeded edit: part snapshots + DraftOps
   - `query_component_parts_v1`

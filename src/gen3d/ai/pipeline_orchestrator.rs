@@ -4,10 +4,10 @@ use bevy::prelude::*;
 use crate::config::AppConfig;
 use crate::gen3d::agent::tools::{
     TOOL_ID_APPLY_DRAFT_OPS, TOOL_ID_APPLY_REUSE_GROUPS, TOOL_ID_GET_PLAN_TEMPLATE,
-    TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_DRAFT_OPS, TOOL_ID_LLM_GENERATE_MOTIONS,
-    TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_GENERATE_PLAN_OPS, TOOL_ID_LLM_REVIEW_DELTA,
-    TOOL_ID_LLM_SELECT_EDIT_STRATEGY, TOOL_ID_QA, TOOL_ID_QUERY_COMPONENT_PARTS,
-    TOOL_ID_RENDER_PREVIEW,
+    TOOL_ID_COPY_COMPONENT, TOOL_ID_LLM_GENERATE_COMPONENTS, TOOL_ID_LLM_GENERATE_DRAFT_OPS,
+    TOOL_ID_LLM_GENERATE_MOTIONS, TOOL_ID_LLM_GENERATE_PLAN, TOOL_ID_LLM_GENERATE_PLAN_OPS,
+    TOOL_ID_LLM_REVIEW_DELTA, TOOL_ID_LLM_SELECT_EDIT_STRATEGY, TOOL_ID_MIRROR_COMPONENT,
+    TOOL_ID_QA, TOOL_ID_QUERY_COMPONENT_PARTS, TOOL_ID_RENDER_PREVIEW,
 };
 use crate::gen3d::agent::{
     append_agent_trace_event_v1, AgentTraceEventV1, Gen3dToolCallJsonV1, Gen3dToolResultJsonV1,
@@ -32,6 +32,166 @@ use super::{
     fail_job, finish_job_best_effort, Gen3dAiJob, Gen3dAiPhase, Gen3dPendingFinishRun,
     Gen3dPipelineStage,
 };
+
+fn extract_edit_copy_mirror_ops(
+    prompt: &str,
+    plan_hash: &str,
+    planned_components: &[super::Gen3dPlannedComponent],
+) -> Vec<super::Gen3dEditCopyMirrorOp> {
+    if prompt.trim().is_empty() {
+        return Vec::new();
+    }
+
+    let prompt_lower = prompt.to_lowercase();
+
+    // 1) Collect component-name mentions in the prompt.
+    let mut mentions: Vec<(usize, &str)> = Vec::new();
+    for component in planned_components.iter() {
+        let name = component.name.as_str();
+        for (idx, _) in prompt.match_indices(name) {
+            mentions.push((idx, name));
+        }
+    }
+    if mentions.is_empty() {
+        return Vec::new();
+    }
+    mentions.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+    // 2) For each keyword hit, pick the nearest mentioned component as the source.
+    #[derive(Clone, Copy)]
+    enum Kind {
+        Mirror,
+        Copy,
+    }
+
+    fn find_keyword_positions(haystack: &str, needle: &str) -> Vec<usize> {
+        haystack.match_indices(needle).map(|(idx, _)| idx).collect()
+    }
+
+    fn span_distance(pos: usize, start: usize, end: usize) -> usize {
+        if pos < start {
+            start - pos
+        } else if pos > end {
+            pos - end
+        } else {
+            0
+        }
+    }
+
+    fn nearest_mention<'a>(
+        keyword_pos: usize,
+        mentions: &'a [(usize, &'a str)],
+        max_dist: usize,
+    ) -> Option<&'a str> {
+        let mut best: Option<(&'a str, usize)> = None;
+        for (idx, name) in mentions.iter().copied() {
+            let dist = span_distance(keyword_pos, idx, idx + name.len());
+            if dist > max_dist {
+                continue;
+            }
+            match best {
+                Some((_, best_dist)) if dist >= best_dist => {}
+                _ => best = Some((name, dist)),
+            }
+        }
+        best.map(|(name, _)| name)
+    }
+
+    fn swap_left_right(name: &str) -> Option<String> {
+        if let Some(prefix) = name.strip_suffix("_left") {
+            return Some(format!("{prefix}_right"));
+        }
+        if let Some(prefix) = name.strip_suffix("_right") {
+            return Some(format!("{prefix}_left"));
+        }
+        if let Some(prefix) = name.strip_suffix("_l") {
+            return Some(format!("{prefix}_r"));
+        }
+        if let Some(prefix) = name.strip_suffix("_r") {
+            return Some(format!("{prefix}_l"));
+        }
+        if let Some(rest) = name.strip_prefix("left_") {
+            return Some(format!("right_{rest}"));
+        }
+        if let Some(rest) = name.strip_prefix("right_") {
+            return Some(format!("left_{rest}"));
+        }
+        None
+    }
+
+    let names_set: std::collections::HashSet<&str> =
+        planned_components.iter().map(|c| c.name.as_str()).collect();
+
+    let mut keyword_hits: Vec<(usize, Kind)> = Vec::new();
+    // Mirror-ish keywords.
+    for idx in find_keyword_positions(prompt, "镜像") {
+        keyword_hits.push((idx, Kind::Mirror));
+    }
+    for idx in find_keyword_positions(prompt, "对称") {
+        keyword_hits.push((idx, Kind::Mirror));
+    }
+    for idx in find_keyword_positions(&prompt_lower, "mirror") {
+        keyword_hits.push((idx, Kind::Mirror));
+    }
+    for idx in find_keyword_positions(&prompt_lower, "symmetr") {
+        keyword_hits.push((idx, Kind::Mirror));
+    }
+    // Copy-ish keywords.
+    for idx in find_keyword_positions(prompt, "复制") {
+        keyword_hits.push((idx, Kind::Copy));
+    }
+    for idx in find_keyword_positions(&prompt_lower, "copy") {
+        keyword_hits.push((idx, Kind::Copy));
+    }
+    for idx in find_keyword_positions(&prompt_lower, "duplicate") {
+        keyword_hits.push((idx, Kind::Copy));
+    }
+
+    if keyword_hits.is_empty() {
+        return Vec::new();
+    }
+    keyword_hits.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+    let mut out: Vec<super::Gen3dEditCopyMirrorOp> = Vec::new();
+    let mut seen: std::collections::HashSet<(String, String, String)> = std::collections::HashSet::new();
+
+    const MAX_KEYWORD_TO_NAME_DIST_BYTES: usize = 48;
+    for (keyword_pos, kind) in keyword_hits {
+        let Some(source) = nearest_mention(keyword_pos, &mentions, MAX_KEYWORD_TO_NAME_DIST_BYTES)
+        else {
+            continue;
+        };
+        let Some(target) = swap_left_right(source) else {
+            continue;
+        };
+        if !names_set.contains(target.as_str()) {
+            continue;
+        }
+
+        let (tool_id, verb) = match kind {
+            Kind::Mirror => (TOOL_ID_MIRROR_COMPONENT, "mirror"),
+            Kind::Copy => (TOOL_ID_COPY_COMPONENT, "copy"),
+        };
+
+        let key = (tool_id.to_string(), source.to_string(), target.clone());
+        if !seen.insert(key) {
+            continue;
+        }
+
+        out.push(super::Gen3dEditCopyMirrorOp {
+            tool_id: tool_id.to_string(),
+            args: serde_json::json!({
+                "source_component": source,
+                "targets": [target.as_str()],
+                "mode": "detached",
+                "anchors": "preserve_interfaces",
+            }),
+            summary: format!("{verb} {source} → {target} (plan_hash={})", plan_hash),
+        });
+    }
+
+    out
+}
 
 fn truncate_text_to_max_words_preserving_whitespace(
     text: &str,
@@ -1361,6 +1521,66 @@ fn poll_pipeline_tick(
             }
 
             job.pipeline.components_attempts = 0;
+
+            if edit_session {
+                let plan_hash = job.plan_hash.clone();
+                if job.pipeline.edit_copy_mirror_plan_hash.as_deref() != Some(plan_hash.as_str()) {
+                    job.pipeline.edit_copy_mirror_ops = extract_edit_copy_mirror_ops(
+                        job.user_prompt_raw.as_str(),
+                        plan_hash.as_str(),
+                        &job.planned_components,
+                    );
+                    job.pipeline.edit_copy_mirror_next_idx = 0;
+                    job.pipeline.edit_copy_mirror_plan_hash = Some(plan_hash);
+                }
+
+                if job.pipeline.edit_copy_mirror_next_idx < job.pipeline.edit_copy_mirror_ops.len()
+                {
+                    let op = job.pipeline.edit_copy_mirror_ops
+                        [job.pipeline.edit_copy_mirror_next_idx]
+                        .clone();
+                    workshop.status = format!("Pipeline: {}…", op.summary);
+                    if let Some(result) = start_pipeline_tool_call(
+                        config,
+                        time,
+                        commands,
+                        images,
+                        workshop,
+                        feedback_history,
+                        job,
+                        draft,
+                        preview,
+                        preview_model,
+                        &op.tool_id,
+                        op.args,
+                    ) {
+                        pipeline_record_tool_result(workshop, job, &*draft, &result);
+                        if !result.ok {
+                            stop_pipeline_best_effort(
+                                commands,
+                                review_cameras,
+                                workshop,
+                                job,
+                                format!(
+                                    "Pipeline stopped: failed to apply edit copy/mirror op (tool_id={}): {}",
+                                    result.tool_id,
+                                    result.error.as_deref().unwrap_or("<unknown error>")
+                                ),
+                            );
+                            return;
+                        }
+                        job.pipeline.edit_copy_mirror_next_idx =
+                            job.pipeline.edit_copy_mirror_next_idx.saturating_add(1);
+                        if job.pipeline.edit_copy_mirror_next_idx
+                            < job.pipeline.edit_copy_mirror_ops.len()
+                        {
+                            return;
+                        }
+                    } else {
+                        return;
+                    }
+                }
+            }
 
             job.pipeline.stage = if edit_session && !job.pipeline.edit_draft_ops_done {
                 job.pipeline.query_parts_next_idx = 0;

@@ -144,10 +144,12 @@ session.
 For edit requests like “make the wings larger” or “keep this component but make internal parts
 animatable” where regeneration is not required, Gen3D prefers **in-place DraftOps edits**:
 
-1. Capture editable part snapshots (per-component): `query_component_parts_v1`
+1. Optional deterministic component-level reuse (copy/mirror)
+   - For edit requests like “roof_right should mirror roof_left”, the pipeline applies `mirror_component_v1` / `copy_component_v1` before DraftOps (mode `detached`, `anchors=preserve_interfaces`).
+2. Capture editable part snapshots (per-component): `query_component_parts_v1`
    - The pipeline prefers a small scope (selected via `llm_select_edit_strategy_v1`).
-2. Ask the model for DraftOps suggestions: `llm_generate_draft_ops_v1` (`scope_components=[...]`)
-3. Apply atomically with revision gating:
+3. Ask the model for DraftOps suggestions: `llm_generate_draft_ops_v1` (`scope_components=[...]`)
+4. Apply atomically with revision gating:
    - Pipeline: `apply_draft_ops_v1` with `atomic=true` and `if_assembly_rev=<current>`
    - Manual/debugging: `apply_last_draft_ops_v1` (applies the latest `draft_ops_suggested_last.json`)
      or `apply_draft_ops_from_event_v1` (applies a specific suggestion `event_id`)

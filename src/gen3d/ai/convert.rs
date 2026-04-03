@@ -2907,6 +2907,7 @@ pub(super) fn ai_to_component_def(
 
     let size = size_from_primitive_parts(&parts);
     error_if_component_axis_permutation(component_name, component.planned_size, size)?;
+    error_if_component_size_mismatch(component_name, component.planned_size, size)?;
     let collider = collider_profile_from_ai(ai.collider.clone(), size)?;
 
     Ok(ConvertedComponentDef {
@@ -2938,6 +2939,46 @@ fn size_match_error(actual: Vec3, planned: Vec3) -> f32 {
     ((actual - planned).abs() / planned).x
         + ((actual - planned).abs() / planned).y
         + ((actual - planned).abs() / planned).z
+}
+
+fn error_if_component_size_mismatch(
+    component_name: &str,
+    planned_size: Vec3,
+    measured_size: Vec3,
+) -> Result<(), String> {
+    // The plan's `target_size` is a contract. Allow reasonable variance, but reject components
+    // that are wildly off-scale so we fail fast and trigger regeneration with an actionable error.
+    const MIN_AXIS_RATIO: f32 = 0.20;
+    const MAX_AXIS_RATIO: f32 = 6.00;
+
+    let planned = planned_size.abs().max(Vec3::splat(0.01));
+    let measured = measured_size.abs().max(Vec3::splat(0.01));
+
+    let ratio = Vec3::new(measured.x / planned.x, measured.y / planned.y, measured.z / planned.z);
+    let ok = ratio.x >= MIN_AXIS_RATIO
+        && ratio.x <= MAX_AXIS_RATIO
+        && ratio.y >= MIN_AXIS_RATIO
+        && ratio.y <= MAX_AXIS_RATIO
+        && ratio.z >= MIN_AXIS_RATIO
+        && ratio.z <= MAX_AXIS_RATIO;
+    if ok {
+        return Ok(());
+    }
+
+    let err = size_match_error(measured, planned);
+    Err(format!(
+        "AI draft for component `{component_name}` has a large size mismatch vs the plan's target_size. Planned target_size=[{:.3},{:.3},{:.3}] but measured local AABB=[{:.3},{:.3},{:.3}] (rel_err_sum={:.3}, axis_ratio=[{:.2},{:.2},{:.2}]). Regenerate this component and ensure the component-local axes match the plan (+X right, +Y up, +Z forward) and the overall AABB matches target_size per axis (avoid implicit axis swaps via per-part rotations).",
+        planned.x,
+        planned.y,
+        planned.z,
+        measured.x,
+        measured.y,
+        measured.z,
+        err,
+        ratio.x,
+        ratio.y,
+        ratio.z
+    ))
 }
 
 fn error_if_component_axis_permutation(
@@ -3472,6 +3513,57 @@ mod tests {
             ai_to_component_def(&planned, ai, None).expect_err("expected axis-permutation error");
         assert!(err.contains("permuted local axes"));
         assert!(err.contains("permuted AABB"));
+    }
+
+    #[test]
+    fn rejects_large_size_mismatch_against_planned_size() {
+        let planned = Gen3dPlannedComponent {
+            display_name: "1. mismatched_component".into(),
+            name: "mismatched_component".into(),
+            purpose: String::new(),
+            modeling_notes: String::new(),
+            pos: Vec3::ZERO,
+            rot: Quat::IDENTITY,
+            planned_size: Vec3::new(0.12, 0.85, 0.95),
+            actual_size: None,
+            anchors: vec![crate::object::registry::AnchorDef {
+                name: "mount".into(),
+                transform: Transform::IDENTITY,
+            }],
+            contacts: Vec::new(),
+            articulation_nodes: Vec::new(),
+            root_animations: Vec::new(),
+            attach_to: None,
+        };
+
+        // Geometry is wildly off on +X compared to planned [0.12,0.85,0.95].
+        let ai = AiDraftJsonV1 {
+            version: 2,
+            collider: None,
+            anchors: vec![AiAnchorJson {
+                name: "mount".into(),
+                pos: [0.0, 0.0, 0.0],
+                forward: [0.0, 0.0, 1.0],
+                up: [0.0, 1.0, 0.0],
+            }],
+            articulation_nodes: Vec::new(),
+            parts: vec![AiPartJson {
+                primitive: AiPrimitiveJson::Cuboid,
+                params: None,
+                color: Some([0.2, 0.3, 0.4, 1.0]),
+                render_priority: None,
+                pos: [0.0, 0.0, 0.0],
+                forward: None,
+                up: None,
+                scale: [1.0, 0.85, 0.95],
+            }],
+        };
+
+        let err =
+            ai_to_component_def(&planned, ai, None).expect_err("expected size-mismatch error");
+        assert!(err.contains("size mismatch"));
+        assert!(err.contains("target_size"));
+        assert!(err.contains("measured local AABB"));
     }
 
     #[test]

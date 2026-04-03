@@ -122,6 +122,13 @@ impl Gen3dPipelineStage {
 }
 
 #[derive(Clone, Debug, Default)]
+pub(super) struct Gen3dEditCopyMirrorOp {
+    pub(super) tool_id: String,
+    pub(super) args: serde_json::Value,
+    pub(super) summary: String,
+}
+
+#[derive(Clone, Debug, Default)]
 pub(super) struct Gen3dPipelineState {
     pub(super) stage: Gen3dPipelineStage,
     pub(super) tool_seq: u32,
@@ -142,6 +149,10 @@ pub(super) struct Gen3dPipelineState {
     /// For edit sessions: the component allow-list used for `query_component_parts_v1` + `llm_generate_draft_ops_v1.scope_components`.
     /// Empty means "all components".
     pub(super) edit_scope_components: Vec<String>,
+    /// For edit sessions: queued deterministic copy/mirror tool calls parsed from the edit prompt.
+    pub(super) edit_copy_mirror_ops: Vec<Gen3dEditCopyMirrorOp>,
+    pub(super) edit_copy_mirror_next_idx: usize,
+    pub(super) edit_copy_mirror_plan_hash: Option<String>,
     pub(super) draft_ops_attempts: u32,
     pub(super) components_attempts: u32,
     pub(super) qa_attempts: u32,
