@@ -3,7 +3,7 @@
 Gravimera is an **AI(LLM)-driven 3D word Editor and Explorer**. You can use natural languages to:
 
 - Generate any 3D model with motion animations and make it directly playable in the world.
-- Generate game scenes with highly interactive units and buildings. **[TODO]**
+- Generate game scenes with highly interactive units and buildings.
 - Generate a whole story. **[TODO]**
 
 Based on [Bevy](https://github.com/bevyengine/bevy) engine.
@@ -53,6 +53,7 @@ Or go to [releases](https://github.com/gravimera/gravimera/releases), download t
 - Specs (contracts/formats): [docs/gamedesign/specs.md](docs/gamedesign/specs.md)
 - Gen3D workflow + schemas: [docs/gen3d/README.md](docs/gen3d/README.md)
 - GenFloor workflow + schemas: [docs/genfloor/README.md](docs/genfloor/README.md)
+- GenScene workflow: [docs/gen_scene/README.md](docs/gen_scene/README.md)
 - Scene import/export: [docs/scene_import_export.md](docs/scene_import_export.md)
 - Terrain import/export: [docs/terrain_import_export.md](docs/terrain_import_export.md)
 - Controls (rendered UI): [docs/controls.md](docs/controls.md)

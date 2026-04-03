@@ -1,6 +1,6 @@
 # Gravimera Local Automation HTTP API (v1)
 
-Gravimera can expose a **local-only** HTTP API that lets external tools/agents drive the game (select/move/fire/mode/Gen3D/screenshot) for automated testing.
+Gravimera can expose a **local-only** HTTP API that lets external tools/agents drive the game (select/move/fire/mode/Gen3D/GenScene/screenshot) for automated testing.
 
 The API is “semantic” (game actions). It intentionally does **not** expose raw keyboard/mouse event injection endpoints; use `/v1/select`, `/v1/move`, `/v1/fire`, `/v1/mode`, etc.
 
@@ -171,7 +171,7 @@ Response (shape):
 
 Notes:
 
-- `build_scene` is only meaningful when `mode="build"` and is one of: `realm`, `preview`, `floor_preview`.
+- `build_scene` is only meaningful when `mode="build"` and is one of: `realm`, `preview`, `floor_preview`, `scene_preview`.
 
 ### `GET /v1/discovery`
 
@@ -843,6 +843,9 @@ For legacy compatibility, `gen3d` (alias `gen3d_workshop`) maps to the same beha
 
 To enter the GenFloor workshop (Terrain Preview scene), set `mode` to `floor_preview`.
 For legacy compatibility, `genfloor` maps to the same behavior.
+
+To enter GenScene (Scene Preview), set `mode` to `scene_preview`.
+For legacy compatibility, `gen_scene` / `genscene` map to the same behavior.
 
 ```bash
 curl -s -X POST http://127.0.0.1:8791/v1/mode \
@@ -1781,22 +1784,23 @@ curl -s -X POST http://127.0.0.1:8791/v1/genfloor/stop \
   -d '{}'
 ```
 
-## Scene Build endpoints
+## GenScene endpoints
 
-Scene Build runs the **Scene Builder** (AI-driven scene generation) for the active realm/scene.
+GenScene runs the AI-driven scene generator. It creates a new scene immediately, then selects or
+generates terrain + prefabs and applies placements to build the scene.
 
 Requirements:
 
 - Rendered mode (not headless).
-- Build Realm scene (not Preview).
+- Build mode.
 - OpenAI config in `config.toml`.
 
-### `GET /v1/scene_build/status`
+### `GET /v1/gen_scene/status`
 
 Fetch current build status (or the last build summary).
 
 ```bash
-curl -s http://127.0.0.1:8791/v1/scene_build/status
+curl -s http://127.0.0.1:8791/v1/gen_scene/status
 ```
 
 Response (shape):
@@ -1806,38 +1810,53 @@ Response (shape):
   "ok": true,
   "status": {
     "running": true,
-    "run_id": "scene_build_...",
-    "message": "Step 2/5 done: ...",
-    "run_dir": "/abs/path/to/.gravimera/realm/<realm_id>/scenes/<scene_id>/runs/<run_id>",
-    "phase": "step_request",
-    "step_index": 2,
-    "total_steps": 5
+    "run_id": "gen_scene_...",
+    "phase": "planning",
+    "message": "Planning scene…",
+    "scene_id": "NewScene_...",
+    "error": null
   }
 }
 ```
 
-### `POST /v1/scene_build/start`
+### `POST /v1/gen_scene/prompt`
 
-Start a new Scene Build from a text description.
+Set the GenScene prompt (required before Build).
 
 ```bash
-curl -s -X POST http://127.0.0.1:8791/v1/scene_build/start \
+curl -s -X POST http://127.0.0.1:8791/v1/gen_scene/prompt \
   -H 'Content-Type: application/json' \
-  -d '{"description":"A small garden with a cottage, trees, flowers, and a path."}'
+  -d '{"prompt":"A small garden with a cottage, trees, flowers, and a path."}'
 ```
 
 Response:
 
 ```json
-{"ok":true,"run_id":"scene_build_..."}
+{"ok":true}
 ```
 
-### `POST /v1/scene_build/stop`
+### `POST /v1/gen_scene/build`
 
-Cancel the current Scene Build (best-effort; in-flight LLM calls may still finish but are ignored).
+Start a new GenScene build using the current prompt.
 
 ```bash
-curl -s -X POST http://127.0.0.1:8791/v1/scene_build/stop \
+curl -s -X POST http://127.0.0.1:8791/v1/gen_scene/build \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+Response:
+
+```json
+{"ok":true,"run_id":"gen_scene_..."}
+```
+
+### `POST /v1/gen_scene/stop`
+
+Cancel the current GenScene build (best-effort; in-flight LLM calls may still finish but are ignored).
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/gen_scene/stop \
   -H 'Content-Type: application/json' \
   -d '{}'
 ```
@@ -1845,7 +1864,7 @@ curl -s -X POST http://127.0.0.1:8791/v1/scene_build/stop \
 Response (shape):
 
 ```json
-{"ok":true,"canceled":true,"run_id":"scene_build_..."}
+{"ok":true,"canceled":true,"run_id":"gen_scene_..."}
 ```
 
 ## `POST /v1/shutdown`

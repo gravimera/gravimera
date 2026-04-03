@@ -8,9 +8,9 @@ Gravimera is a sandbox with multiple modes. Some inputs are mode-dependent.
 - Entering Build mode restores unit health and revives dead units.
 - Cycle forms (selected multi-form objects): `Tab` (`Shift+Tab` plays the transform animation at 1/10 speed)
 - Copy current form: hold `C` (captures current selection as destinations), hover a single source object, then release `C` to confirm (press `Esc` to cancel)
-- Workspace selector: use the top-left dropdown (**Object Preview** / **Scene Build**) (Build mode only)
-- Workspaces are isolated: **Object Preview** saves to `scene.grav`, **Scene Build** saves to `scene.build.grav`, and switching swaps the saved world.
-- Camera position/zoom are also isolated per workspace.
+- Workspace selector: use the top-left dropdown (**Object Preview**) (Build mode only)
+- Object Preview saves to `scene.grav`. Camera position/zoom are isolated per workspace.
+- GenScene: open the **Scenes** panel and click **Generate** to open the GenScene panel.
 - Gen3D workshop: in **Object Preview**, click **Gen3D** (top-left)
 - Models panel (hidden by default): in **Object Preview**, click **Show Models** / **Hide Models** (top-left)
 - 3D Models panel manage mode: click **Manage** (panel header) to enter multi-select. **Export**/**Delete** + **All**/**None** appear; `Shift`+click selects a range. Click **Done** to exit.
@@ -109,3 +109,13 @@ Enter/exit the Gen3D workshop from Build mode via the top-left workspace dropdow
   centered on the exploded assembly while explode is active
 - Preview export: use the preview panel `Export` button to choose a local folder, then write still
   PNGs, animated GIFs, and a manifest for the current draft preview motions
+
+## Scene Preview (GenScene)
+
+Open the **Scenes** panel and click **Generate** to enter GenScene (Scene Preview). The layout
+matches Gen3D, with a prompt bar, preview panel, and Build/Stop buttons. Full workflow:
+`docs/gen_scene/README.md`.
+
+- Build: creates a new scene immediately, then selects or generates terrain + models.
+- Stop: cancels the current build (best-effort).
+- Close: only available when a build is not running.
