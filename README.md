@@ -39,8 +39,6 @@ Tip: start from `config.example.toml` so sensible defaults (including `openai.mo
 cargo run --release # or without --release if you are debuging
 ```
 
-Or go to [releases](https://github.com/gravimera/gravimera/releases), download the latest release, and double clicks.
-
 ## Screenshots
 <img src="screenshots/ss1.png" width="640" height="374" alt="ss1.png" />
 <img src="screenshots/ss2.png" width="640" height="374" alt="ss2.png" />
