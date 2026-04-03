@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::constants::DEFAULT_OBJECT_SIZE_M;
 use crate::object::registry::{ColliderProfile, ObjectLibrary};
+use crate::scene_instance_visuals::SceneInstanceVisualsPending;
 use crate::scene_sources::{SceneSourcesIndexPaths, SceneSourcesV1, SCENE_SOURCES_FORMAT_VERSION};
 use crate::scene_sources_patch::{
     apply_patch_to_sources, SceneSourcesPatchSummaryV1, SceneSourcesPatchV1,
@@ -405,6 +406,7 @@ fn spawn_build_object_minimal(
             half_extents: collider_half_xz,
         },
         transform,
+        SceneInstanceVisualsPending,
     ));
     if let Some(tint) = tint {
         entity_commands.insert(ObjectTint(tint));
@@ -453,6 +455,7 @@ fn spawn_unit_minimal(
         Commandable,
         Collider { radius },
         transform,
+        SceneInstanceVisualsPending,
     ));
     if let Some(tint) = tint {
         entity_commands.insert(ObjectTint(tint));

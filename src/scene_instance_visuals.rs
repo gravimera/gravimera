@@ -6,6 +6,8 @@ use crate::types::{BuildObject, Commandable, ObjectPrefabId, ObjectTint, Player,
 
 #[derive(Component)]
 pub(crate) struct SceneInstanceVisualsSpawned;
+#[derive(Component)]
+pub(crate) struct SceneInstanceVisualsPending;
 
 pub(crate) fn ensure_scene_instance_visuals_spawned(
     mut commands: Commands,
@@ -19,10 +21,10 @@ pub(crate) fn ensure_scene_instance_visuals_spawned(
     objects: Query<
         (Entity, &ObjectPrefabId, Option<&ObjectTint>),
         (
-            With<SceneLayerOwner>,
             Without<SceneInstanceVisualsSpawned>,
             Without<Player>,
             Or<(With<BuildObject>, With<Commandable>)>,
+            Or<(With<SceneLayerOwner>, With<SceneInstanceVisualsPending>)>,
         ),
     >,
 ) {
@@ -43,5 +45,6 @@ pub(crate) fn ensure_scene_instance_visuals_spawned(
             tint,
         );
         ec.insert(SceneInstanceVisualsSpawned);
+        ec.remove::<SceneInstanceVisualsPending>();
     }
 }

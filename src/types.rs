@@ -430,6 +430,7 @@ pub(crate) enum BuildScene {
     Realm,
     Preview,
     FloorPreview,
+    ScenePreview,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

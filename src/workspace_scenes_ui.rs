@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use bevy::window::Ime;
 use bevy::window::PrimaryWindow;
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{mpsc, Mutex};
 
 use crate::realm::ActiveRealmScene;
@@ -39,6 +39,7 @@ pub(crate) struct ScenesPanelUiState {
     pub(crate) import_dialog_pending_realm: Option<String>,
     scrollbar_drag: Option<ScenesPanelScrollbarDrag>,
     last_realm_id: Option<String>,
+    last_scene_id: Option<String>,
     last_panel_open: bool,
 }
 
@@ -111,6 +112,7 @@ impl Default for ScenesPanelUiState {
             import_dialog_pending_realm: None,
             scrollbar_drag: None,
             last_realm_id: None,
+            last_scene_id: None,
             last_panel_open: false,
         }
     }
@@ -136,6 +138,12 @@ pub(crate) struct ScenesManageButtonText;
 
 #[derive(Component)]
 pub(crate) struct ScenesImportButton;
+
+#[derive(Component)]
+pub(crate) struct ScenesGenerateButton;
+
+#[derive(Component)]
+pub(crate) struct ScenesGenerateButtonText;
 
 #[derive(Component)]
 pub(crate) struct ScenesExportButton;
@@ -225,11 +233,17 @@ pub(crate) fn scenes_panel_sync_active_realm(
     let realm_changed = state.last_realm_id.as_deref() != Some(active.realm_id.as_str());
     if realm_changed {
         state.last_realm_id = Some(active.realm_id.clone());
+        state.last_scene_id = Some(active.scene_id.clone());
         state.scenes_dirty = true;
         state.multi_selected_scenes.clear();
         state.export_dialog_pending_ids.clear();
         state.export_dialog_pending_realm = None;
         state.import_dialog_pending_realm = None;
+    }
+    let scene_changed = state.last_scene_id.as_deref() != Some(active.scene_id.as_str());
+    if scene_changed {
+        state.last_scene_id = Some(active.scene_id.clone());
+        state.scenes_dirty = true;
     }
 
     if open && !state.last_panel_open {
@@ -514,6 +528,44 @@ pub(crate) fn scenes_panel_import_button_interactions(
                         .pick_file();
                     let _ = tx.send(path);
                 });
+            }
+        }
+    }
+}
+
+pub(crate) fn scenes_panel_generate_button_interactions(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    top: Res<TopPanelUiState>,
+    mut state: ResMut<ScenesPanelUiState>,
+    mut next_build_scene: ResMut<NextState<BuildScene>>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (Changed<Interaction>, With<ScenesGenerateButton>),
+    >,
+) {
+    if !scenes_panel_open(&mode, &build_scene, &top) {
+        return;
+    }
+
+    for (interaction, mut bg, mut border) in &mut buttons {
+        match *interaction {
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75));
+                *border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65));
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.07, 0.07, 0.09, 0.84));
+                *border = BorderColor::all(Color::srgba(0.35, 0.35, 0.42, 0.75));
+            }
+            Interaction::Pressed => {
+                *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
+                *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
+
+                state.add_open = false;
+                state.focused_field = ScenesUiField::None;
+                state.error = None;
+                next_build_scene.set(BuildScene::ScenePreview);
             }
         }
     }
@@ -1300,18 +1352,12 @@ pub(crate) fn scenes_panel_text_input(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<BuildScene>>,
     top: Res<TopPanelUiState>,
-    scene_ui: Res<crate::scene_authoring_ui::SceneAuthoringUiState>,
     mut state: ResMut<ScenesPanelUiState>,
     keys: Res<ButtonInput<KeyCode>>,
     mut keyboard: bevy::ecs::message::MessageReader<KeyboardInput>,
     mut ime_events: bevy::ecs::message::MessageReader<Ime>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
-    if scene_ui.is_open() {
-        keyboard.clear();
-        ime_events.clear();
-        return;
-    }
     if !scenes_panel_open(&mode, &build_scene, &top) || !state.add_open {
         keyboard.clear();
         ime_events.clear();
@@ -1401,13 +1447,9 @@ pub(crate) fn scenes_panel_clear_keyboard_state_when_captured(
     mode: Res<State<GameMode>>,
     build_scene: Res<State<BuildScene>>,
     top: Res<TopPanelUiState>,
-    scene_ui: Res<crate::scene_authoring_ui::SceneAuthoringUiState>,
     state: Res<ScenesPanelUiState>,
     mut keys: Option<ResMut<ButtonInput<KeyCode>>>,
 ) {
-    if scene_ui.is_open() {
-        return;
-    }
     if !scenes_panel_open(&mode, &build_scene, &top)
         || !state.add_open
         || state.focused_field == ScenesUiField::None
@@ -1729,6 +1771,7 @@ pub(crate) fn scenes_panel_update_styles(
                 &Interaction,
                 Option<&ScenesManageButton>,
                 Option<&ScenesImportButton>,
+                Option<&ScenesGenerateButton>,
                 Option<&ScenesExportButton>,
                 Option<&ScenesDeleteButton>,
                 Option<&ScenesSelectAllButton>,
@@ -1739,6 +1782,7 @@ pub(crate) fn scenes_panel_update_styles(
             Or<(
                 With<ScenesManageButton>,
                 With<ScenesImportButton>,
+                With<ScenesGenerateButton>,
                 With<ScenesExportButton>,
                 With<ScenesDeleteButton>,
                 With<ScenesSelectAllButton>,
@@ -1853,7 +1897,7 @@ pub(crate) fn scenes_panel_update_styles(
 
     {
         let mut action_buttons = params.p4();
-        for (interaction, manage, _import, export, delete, _all, _none, mut bg, mut border) in
+        for (interaction, manage, _import, _generate, export, delete, _all, _none, mut bg, mut border) in
             &mut action_buttons
         {
             let selected = manage.is_some() && state.multi_select_mode;
@@ -1987,13 +2031,4 @@ fn is_windows_reserved_name(name: &str) -> bool {
             | "LPT8"
             | "LPT9"
     )
-}
-
-#[allow(dead_code)]
-fn scene_build_scene_dat_path(realm_id: &str, scene_id: &str) -> PathBuf {
-    let scene_dat = crate::paths::scene_dat_path(realm_id, scene_id);
-    let dir = scene_dat
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
-    dir.join("scene.build.grav")
 }

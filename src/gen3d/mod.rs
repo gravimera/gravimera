@@ -26,8 +26,8 @@ const GEN3D_MAX_REQUEST_IMAGES: usize = GEN3D_MAX_IMAGES + GEN3D_REVIEW_VIEW_IMA
 const GEN3D_MAX_PARTS: usize = 1024;
 const GEN3D_MAX_COMPONENTS: usize = 64;
 const GEN3D_MAX_CHAT_HISTORY_MESSAGES: usize = 24;
-const GEN3D_PROMPT_MAX_WORDS: usize = 250;
-const GEN3D_PROMPT_MAX_CHARS: usize = 2000;
+pub(crate) const GEN3D_PROMPT_MAX_WORDS: usize = 250;
+pub(crate) const GEN3D_PROMPT_MAX_CHARS: usize = 2000;
 // Hard cap for the one-time “reference image → object summary” step.
 //
 // Note: downstream Gen3D prompts include this summary text, so we keep a hard bound for latency and
@@ -135,7 +135,7 @@ fn gen3d_draft_projectile_object_id() -> u128 {
     builtin_object_id(GEN3D_DRAFT_PROJECTILE_KEY)
 }
 
-pub(crate) use ai::gen3d_generate_text_simple;
+pub(crate) use ai::{gen3d_generate_text_simple, gen3d_generate_text_simple_with_prefix};
 pub(crate) use ai::{
     gen3d_apply_draft_ops_from_api, gen3d_apply_pending_seed_from_prefab,
     gen3d_cancel_build_from_api, gen3d_copy_from_workspace_from_api,

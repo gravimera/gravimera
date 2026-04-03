@@ -447,7 +447,7 @@ fn run_rendered_catching_panics(
 }
 
 fn run_headless(exit_after_seconds: Option<f32>, config: crate::config::AppConfig) {
-    // Shared AI request limiter (Scene Build + Gen3D).
+    // Shared AI request limiter (GenScene + Gen3D).
     crate::ai_limiter::set_max_permits(config.gen3d_max_parallel_components.max(1) + 1);
     let log_level = config.log_level;
 
@@ -540,7 +540,7 @@ fn bevy_log_filter(level: bevy::log::Level) -> String {
 }
 
 fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfig) -> AppExit {
-    // Shared AI request limiter (Scene Build + Gen3D).
+    // Shared AI request limiter (GenScene + Gen3D).
     crate::ai_limiter::set_max_permits(config.gen3d_max_parallel_components.max(1) + 1);
     let log_level = config.log_level;
 
@@ -590,7 +590,9 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     app.init_resource::<crate::genfloor::GenFloorAiJob>();
     app.init_resource::<crate::genfloor::GenfloorThumbnailCaptureRuntime>();
     app.init_resource::<crate::genfloor::ActiveWorldFloor>();
-    app.init_resource::<crate::scene_authoring_ui::SceneAuthoringUiState>();
+    app.init_resource::<crate::gen_scene::GenSceneWorkshop>();
+    app.init_resource::<crate::gen_scene::GenSceneJob>();
+    app.init_resource::<crate::gen_scene::GenScenePreview>();
     app.init_resource::<crate::model_library_ui::ModelLibraryUiState>();
     app.init_resource::<crate::model_library_ui::ModelLibraryExportJob>();
     app.init_resource::<crate::model_library_ui::ModelLibraryExportGlbJob>();
@@ -615,7 +617,6 @@ fn run_rendered(exit_after_seconds: Option<f32>, config: crate::config::AppConfi
     app.init_resource::<crate::workspace_scenes_ui::ScenesPanelExportDialogJob>();
     app.init_resource::<crate::workspace_scenes_ui::ScenesPanelImportDialogJob>();
     app.init_resource::<crate::world_drag::WorldDragState>();
-    app.init_resource::<crate::scene_build_ai::SceneBuildAiRuntime>();
     app.init_resource::<crate::realm::ActiveRealmScene>();
     app.init_resource::<crate::realm::PendingRealmSceneSwitch>();
     app.add_plugins(crate::automation::AutomationPlugin);

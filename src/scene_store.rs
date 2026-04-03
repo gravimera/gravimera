@@ -714,10 +714,6 @@ fn workspace_scene_dat_path(active: &crate::realm::ActiveRealmScene, tab: Worksp
     let base = crate::realm::scene_dat_path(active);
     match tab {
         WorkspaceTab::ObjectPreview => base,
-        WorkspaceTab::SceneBuild => {
-            let dir = base.parent().unwrap_or_else(|| Path::new("."));
-            dir.join("scene.build.grav")
-        }
     }
 }
 

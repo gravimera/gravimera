@@ -1918,6 +1918,95 @@ fn mock_generate_text_via_openai(
             "tags": ["mock", "gen3d"]
         })
         .to_string()
+    } else if stable_prefix == "gen_scene" {
+        #[derive(serde::Deserialize)]
+        struct GenSceneCatalogSnapshot {
+            #[serde(default)]
+            floors: Vec<GenSceneCatalogFloor>,
+            #[serde(default)]
+            prefabs: Vec<GenSceneCatalogPrefab>,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct GenSceneCatalogFloor {
+            id: String,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct GenSceneCatalogPrefab {
+            id: String,
+        }
+
+        fn extract_catalog(user_text: &str) -> Option<GenSceneCatalogSnapshot> {
+            let marker = "Catalog (JSON):";
+            let after = user_text.split(marker).nth(1)?;
+            let json = after.trim();
+            if json.is_empty() {
+                return None;
+            }
+            serde_json::from_str::<GenSceneCatalogSnapshot>(json).ok()
+        }
+
+        let catalog = extract_catalog(user_text);
+        let asset_key = "asset_1";
+
+        let terrain = match catalog.as_ref().and_then(|c| c.floors.first()) {
+            Some(floor) => serde_json::json!({
+                "existing_floor_id": floor.id,
+                "genfloor_prompt": serde_json::Value::Null,
+            }),
+            None => serde_json::json!({
+                "existing_floor_id": serde_json::Value::Null,
+                "genfloor_prompt": "A simple ground plane (mock).",
+            }),
+        };
+
+        let asset = match catalog.as_ref().and_then(|c| c.prefabs.first()) {
+            Some(prefab) => serde_json::json!({
+                "key": asset_key,
+                "existing_prefab_id": prefab.id,
+                "gen3d_prompt": serde_json::Value::Null,
+            }),
+            None => serde_json::json!({
+                "key": asset_key,
+                "existing_prefab_id": serde_json::Value::Null,
+                "gen3d_prompt": "A simple prop (mock).",
+            }),
+        };
+
+        serde_json::json!({
+            "version": 1,
+            "terrain": terrain,
+            "assets": [asset],
+            "placements": [
+                { "asset_key": asset_key, "x": 0.0, "z": 0.0, "yaw_deg": 0.0 }
+            ]
+        })
+        .to_string()
+    } else if stable_prefix == "gen_scene_name" {
+        fn ascii_words(text: &str) -> Vec<String> {
+            let mut out = Vec::new();
+            let mut current = String::new();
+            for ch in text.chars() {
+                if ch.is_ascii_alphanumeric() {
+                    current.push(ch.to_ascii_lowercase());
+                } else if !current.is_empty() {
+                    out.push(current.clone());
+                    current.clear();
+                }
+            }
+            if !current.is_empty() {
+                out.push(current);
+            }
+            out
+        }
+
+        let words = ascii_words(user_text);
+        if words.is_empty() {
+            "mock_scene".to_string()
+        } else {
+            words.into_iter().take(3).collect::<Vec<_>>().join(" ")
+        }
     } else if stable_prefix == "genfloor" {
         let t = user_text.to_ascii_lowercase();
 

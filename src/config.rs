@@ -21,7 +21,7 @@ pub(crate) struct AppConfig {
     /// Max time to wait for an AI backend to start sending a response body.
     ///
     /// Applied as a "first-byte timeout" for streaming AI requests (Gen3D), and as a total curl
-    /// `--max-time` cap for non-streaming AI requests (Scene Build AI).
+    /// `--max-time` cap for non-streaming AI requests (GenScene planning).
     pub(crate) ai_request_timeout_secs: u64,
     pub(crate) gen3d_cache_dir: Option<PathBuf>,
     pub(crate) gen3d_ai_service: Gen3dAiService,

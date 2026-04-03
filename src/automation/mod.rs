@@ -492,11 +492,19 @@ struct AutomationGen3d<'w> {
     scene_saves: MessageWriter<'w, SceneSaveRequest>,
 }
 
+#[derive(SystemParam)]
+struct AutomationGenScene<'w> {
+    workshop: Option<ResMut<'w, crate::gen_scene::GenSceneWorkshop>>,
+    job: Option<ResMut<'w, crate::gen_scene::GenSceneJob>>,
+    scenes_panel: Option<ResMut<'w, crate::workspace_scenes_ui::ScenesPanelUiState>>,
+}
+
 struct AutomationContext<
     'a,
     'cmd_w,
     'cmd_s,
     'gen3d_w,
+    'gen_scene_w,
     'world_w,
     'world_s,
     'exit_w,
@@ -511,6 +519,7 @@ struct AutomationContext<
     prefab_descriptors: &'a mut PrefabDescriptorLibrary,
     meta_speak: &'a MetaSpeakRuntime,
     gen3d: &'a mut AutomationGen3d<'gen3d_w>,
+    gen_scene: &'a mut AutomationGenScene<'gen_scene_w>,
     world: &'a AutomationWorld<'world_w, 'world_s>,
     mode: Option<&'a State<GameMode>>,
     next_mode: Option<&'a mut NextState<GameMode>>,
@@ -522,7 +531,6 @@ struct AutomationContext<
     runtime: &'a mut AutomationRuntime,
     speak_runtime: &'a mut AutomationSpeakRuntime,
     scene_workspace: &'a mut crate::scene_sources_runtime::SceneSourcesWorkspace,
-    scene_build_runtime: Option<&'a mut crate::scene_build_ai::SceneBuildAiRuntime>,
     pending_realm_scene_switch: &'a mut crate::realm::PendingRealmSceneSwitch,
     speech_events: &'a mut MessageWriter<'speech_w, ModelSpeechBubbleCommand>,
     toast_events: &'a mut MessageWriter<'toast_w, UiToastCommand>,
@@ -552,7 +560,6 @@ fn automation_process_requests(
     active: Option<Res<crate::realm::ActiveRealmScene>>,
     mut runtime: ResMut<AutomationRuntime>,
     mut scene_workspace: ResMut<crate::scene_sources_runtime::SceneSourcesWorkspace>,
-    mut scene_build_runtime: Option<ResMut<crate::scene_build_ai::SceneBuildAiRuntime>>,
     mode: Option<Res<State<GameMode>>>,
     mut next_mode: Option<ResMut<NextState<GameMode>>>,
     build_scene: Option<Res<State<BuildScene>>>,
@@ -562,6 +569,7 @@ fn automation_process_requests(
     mut library: ResMut<ObjectLibrary>,
     mut prefab_descriptors: ResMut<PrefabDescriptorLibrary>,
     mut gen3d: AutomationGen3d,
+    mut gen_scene: AutomationGenScene,
     world: AutomationWorld,
 ) {
     if !runtime.enabled || !config.automation_enabled {
@@ -617,6 +625,7 @@ fn automation_process_requests(
             prefab_descriptors: &mut prefab_descriptors,
             meta_speak: &io.meta_speak,
             gen3d: &mut gen3d,
+            gen_scene: &mut gen_scene,
             world: &world,
             mode: mode.as_deref(),
             next_mode: next_mode.as_deref_mut(),
@@ -628,7 +637,6 @@ fn automation_process_requests(
             runtime: &mut runtime,
             speak_runtime: &mut io.speak_runtime,
             scene_workspace: &mut scene_workspace,
-            scene_build_runtime: scene_build_runtime.as_deref_mut(),
             pending_realm_scene_switch: &mut io.pending_realm_scene_switch,
             speech_events: &mut io.speech_events,
             toast_events: &mut io.toast_events,
@@ -877,12 +885,15 @@ struct Gen3dTaskEnqueueRequest {
 }
 
 #[derive(Deserialize)]
-struct SceneBuildStartRequest {
-    description: String,
+struct GenScenePromptRequest {
+    prompt: String,
 }
 
 #[derive(Deserialize)]
-struct SceneBuildStopRequest {}
+struct GenSceneBuildRequest {}
+
+#[derive(Deserialize)]
+struct GenSceneStopRequest {}
 
 #[derive(Deserialize)]
 struct SceneSourcesImportRequest {
@@ -929,6 +940,7 @@ fn handle_scene_sources_routes<
     'cmd_w,
     'cmd_s,
     'gen3d_w,
+    'gen_scene_w,
     'world_w,
     'world_s,
     'exit_w,
@@ -940,6 +952,7 @@ fn handle_scene_sources_routes<
         'cmd_w,
         'cmd_s,
         'gen3d_w,
+        'gen_scene_w,
         'world_w,
         'world_s,
         'exit_w,
@@ -1360,6 +1373,7 @@ fn handle_gen3d_routes<
     'cmd_w,
     'cmd_s,
     'gen3d_w,
+    'gen_scene_w,
     'world_w,
     'world_s,
     'exit_w,
@@ -1371,6 +1385,7 @@ fn handle_gen3d_routes<
         'cmd_w,
         'cmd_s,
         'gen3d_w,
+        'gen_scene_w,
         'world_w,
         'world_s,
         'exit_w,
@@ -2811,137 +2826,14 @@ fn handle_gen3d_routes<
     }
 }
 
-fn handle_scene_build_routes<
-    'a,
-    'cmd_w,
-    'cmd_s,
-    'gen3d_w,
-    'world_w,
-    'world_s,
-    'exit_w,
-    'speech_w,
-    'toast_w,
->(
-    ctx: &mut AutomationContext<
-        'a,
-        'cmd_w,
-        'cmd_s,
-        'gen3d_w,
-        'world_w,
-        'world_s,
-        'exit_w,
-        'speech_w,
-        'toast_w,
-    >,
-    msg: &AutomationRequest,
-) -> Option<AutomationReply> {
-    let commands = &mut *ctx.commands;
-    let config = ctx.config;
-    let active_realm_id = ctx.active_realm_id;
-    let active_scene_id = ctx.active_scene_id;
-    let library = &mut *ctx.library;
-    let mut scene_build_runtime = ctx.scene_build_runtime.as_deref_mut();
 
-    let mode = ctx.mode;
-    let build_scene = ctx.build_scene;
-
-    match (msg.method.as_str(), msg.path.as_str()) {
-        ("GET", "/v1/scene_build/status") => {
-            let Some(scene_build) = scene_build_runtime.as_deref() else {
-                return Some(json_error(
-                    501,
-                    "Scene Build is not available in this app mode.",
-                ));
-            };
-            let status = scene_build.automation_status();
-            let body = serde_json::json!({ "ok": true, "status": status }).to_string();
-            Some(AutomationReply {
-                status: 200,
-                body: body.into_bytes(),
-                content_type: "application/json",
-            })
-        }
-        ("POST", "/v1/scene_build/start") => {
-            let Some(mode) = mode else {
-                return Some(json_error(501, "Scene Build requires rendered mode."));
-            };
-            if let Some(build_scene) = build_scene {
-                if matches!(mode.get(), GameMode::Build)
-                    && matches!(build_scene.get(), BuildScene::Preview)
-                {
-                    return Some(json_error(409, "Switch to the Realm scene first."));
-                }
-            }
-            let Some(scene_build) = scene_build_runtime.as_deref_mut() else {
-                return Some(json_error(
-                    501,
-                    "Scene Build is not available in this app mode.",
-                ));
-            };
-            let req: SceneBuildStartRequest = match serde_json::from_slice(&msg.body) {
-                Ok(v) => v,
-                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
-            };
-
-            let active = crate::realm::ActiveRealmScene {
-                realm_id: active_realm_id.to_string(),
-                scene_id: active_scene_id.to_string(),
-            };
-            let run_id = match crate::scene_build_ai::start_scene_build_from_description(
-                scene_build,
-                config,
-                &active,
-                library,
-                &req.description,
-            ) {
-                Ok(run_id) => run_id,
-                Err(err) => {
-                    let status = if err.to_lowercase().contains("already running") {
-                        409
-                    } else {
-                        400
-                    };
-                    return Some(json_error(status, err));
-                }
-            };
-
-            let body = serde_json::json!({ "ok": true, "run_id": run_id }).to_string();
-            Some(AutomationReply {
-                status: 200,
-                body: body.into_bytes(),
-                content_type: "application/json",
-            })
-        }
-        ("POST", "/v1/scene_build/stop") => {
-            let _req: SceneBuildStopRequest = match serde_json::from_slice(&msg.body) {
-                Ok(v) => v,
-                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
-            };
-            let Some(scene_build) = scene_build_runtime.as_deref_mut() else {
-                return Some(json_error(
-                    501,
-                    "Scene Build is not available in this app mode.",
-                ));
-            };
-            let run_id = scene_build.cancel_in_flight(commands, "canceled via API");
-            let body =
-                serde_json::json!({ "ok": true, "canceled": run_id.is_some(), "run_id": run_id })
-                    .to_string();
-            Some(AutomationReply {
-                status: 200,
-                body: body.into_bytes(),
-                content_type: "application/json",
-            })
-        }
-        _ => Some(json_error(404, "Not found")),
-    }
-}
 
 fn handle_animation_routes<
     'a,
     'cmd_w,
     'cmd_s,
     'gen3d_w,
+    'gen_scene_w,
     'world_w,
     'world_s,
     'exit_w,
@@ -2953,6 +2845,7 @@ fn handle_animation_routes<
         'cmd_w,
         'cmd_s,
         'gen3d_w,
+        'gen_scene_w,
         'world_w,
         'world_s,
         'exit_w,
@@ -3064,6 +2957,7 @@ fn handle_realm_scene_routes<
     'cmd_w,
     'cmd_s,
     'gen3d_w,
+    'gen_scene_w,
     'world_w,
     'world_s,
     'exit_w,
@@ -3075,6 +2969,7 @@ fn handle_realm_scene_routes<
         'cmd_w,
         'cmd_s,
         'gen3d_w,
+        'gen_scene_w,
         'world_w,
         'world_s,
         'exit_w,
@@ -3235,6 +3130,7 @@ fn handle_ui_routes<
     'cmd_w,
     'cmd_s,
     'gen3d_w,
+    'gen_scene_w,
     'world_w,
     'world_s,
     'exit_w,
@@ -3246,6 +3142,7 @@ fn handle_ui_routes<
         'cmd_w,
         'cmd_s,
         'gen3d_w,
+        'gen_scene_w,
         'world_w,
         'world_s,
         'exit_w,
@@ -3408,6 +3305,7 @@ fn handle_genfloor_routes<
     'cmd_w,
     'cmd_s,
     'gen3d_w,
+    'gen_scene_w,
     'world_w,
     'world_s,
     'exit_w,
@@ -3419,6 +3317,7 @@ fn handle_genfloor_routes<
         'cmd_w,
         'cmd_s,
         'gen3d_w,
+        'gen_scene_w,
         'world_w,
         'world_s,
         'exit_w,
@@ -3787,11 +3686,12 @@ fn build_gen3d_preview_debug_payload<'w, 's>(
     }))
 }
 
-fn handle_request_main_thread<
+fn handle_gen_scene_routes<
     'a,
     'cmd_w,
     'cmd_s,
     'gen3d_w,
+    'gen_scene_w,
     'world_w,
     'world_s,
     'exit_w,
@@ -3803,6 +3703,212 @@ fn handle_request_main_thread<
         'cmd_w,
         'cmd_s,
         'gen3d_w,
+        'gen_scene_w,
+        'world_w,
+        'world_s,
+        'exit_w,
+        'speech_w,
+        'toast_w,
+    >,
+    msg: &AutomationRequest,
+) -> Option<AutomationReply> {
+    let config = ctx.config;
+    let active_realm_id = ctx.active_realm_id;
+    let active_scene_id = ctx.active_scene_id;
+    let mode = ctx.mode;
+
+    let mut workshop = ctx.gen_scene.workshop.as_deref_mut();
+    let mut job = ctx.gen_scene.job.as_deref_mut();
+    let mut scenes_state = ctx.gen_scene.scenes_panel.as_deref_mut();
+
+    match (msg.method.as_str(), msg.path.as_str()) {
+        ("GET", "/v1/gen_scene/status") => {
+            let Some(workshop) = workshop.as_deref() else {
+                return Some(json_error(
+                    501,
+                    "GenScene is not available in this app mode.",
+                ));
+            };
+            let Some(job) = job.as_deref() else {
+                return Some(json_error(
+                    501,
+                    "GenScene is not available in this app mode.",
+                ));
+            };
+            let status = crate::gen_scene::gen_scene_status(workshop, job);
+            let body = serde_json::json!({ "ok": true, "status": status }).to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/gen_scene/prompt") => {
+            let Some(workshop) = workshop.as_deref_mut() else {
+                return Some(json_error(
+                    501,
+                    "GenScene is not available in this app mode.",
+                ));
+            };
+            let req: GenScenePromptRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+            if let Err(err) = crate::gen3d::validate_gen3d_user_prompt_limits(&req.prompt) {
+                return Some(json_error(400, err));
+            }
+            crate::gen_scene::gen_scene_set_prompt_from_api(workshop, &req.prompt);
+            Some(AutomationReply {
+                status: 200,
+                body: serde_json::json!({ "ok": true }).to_string().into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/gen_scene/build") => {
+            let _req: GenSceneBuildRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+            let Some(workshop) = workshop.as_deref_mut() else {
+                return Some(json_error(
+                    501,
+                    "GenScene is not available in this app mode.",
+                ));
+            };
+            let Some(job) = job.as_deref_mut() else {
+                return Some(json_error(
+                    501,
+                    "GenScene is not available in this app mode.",
+                ));
+            };
+            let Some(scenes_state) = scenes_state.as_deref_mut() else {
+                return Some(json_error(
+                    501,
+                    "GenScene is not available in this app mode.",
+                ));
+            };
+
+            let active = crate::realm::ActiveRealmScene {
+                realm_id: active_realm_id.to_string(),
+                scene_id: active_scene_id.to_string(),
+            };
+            if let Err(err) = crate::gen_scene::gen_scene_request_build(
+                config,
+                mode,
+                &active,
+                workshop,
+                job,
+                scenes_state,
+                ctx.pending_realm_scene_switch,
+                &mut ctx.gen3d.scene_saves,
+            ) {
+                let status = if err.to_lowercase().contains("already running") {
+                    409
+                } else {
+                    400
+                };
+                return Some(json_error(status, err));
+            }
+            let body = serde_json::json!({ "ok": true, "run_id": job.run_id.clone() }).to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/gen_scene/stop") => {
+            let _req: GenSceneStopRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+            let Some(workshop) = workshop.as_deref_mut() else {
+                return Some(json_error(
+                    501,
+                    "GenScene is not available in this app mode.",
+                ));
+            };
+            let Some(job) = job.as_deref_mut() else {
+                return Some(json_error(
+                    501,
+                    "GenScene is not available in this app mode.",
+                ));
+            };
+            let Some(gen3d_queue) = ctx.gen3d.task_queue.as_deref_mut() else {
+                return Some(json_error(
+                    501,
+                    "GenScene is not available in this app mode.",
+                ));
+            };
+            let Some(gen3d_workshop) = ctx.gen3d.workshop.as_deref_mut() else {
+                return Some(json_error(
+                    501,
+                    "GenScene is not available in this app mode.",
+                ));
+            };
+            let Some(gen3d_job) = ctx.gen3d.job.as_deref_mut() else {
+                return Some(json_error(
+                    501,
+                    "GenScene is not available in this app mode.",
+                ));
+            };
+            let Some(gen3d_draft) = ctx.gen3d.draft.as_deref_mut() else {
+                return Some(json_error(
+                    501,
+                    "GenScene is not available in this app mode.",
+                ));
+            };
+            let Some(genfloor_job) = ctx.gen3d.genfloor_job.as_deref_mut() else {
+                return Some(json_error(
+                    501,
+                    "GenScene is not available in this app mode.",
+                ));
+            };
+
+            let run_id = job.run_id.clone();
+            let canceled = job.running;
+            crate::gen_scene::gen_scene_cancel_job(
+                job,
+                workshop,
+                gen3d_queue,
+                gen3d_workshop,
+                gen3d_job,
+                gen3d_draft,
+                genfloor_job,
+            );
+            let body = serde_json::json!({
+                "ok": true,
+                "canceled": canceled,
+                "run_id": run_id,
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        _ => Some(json_error(404, "Not found")),
+    }
+}
+
+fn handle_request_main_thread<
+    'a,
+    'cmd_w,
+    'cmd_s,
+    'gen3d_w,
+    'gen_scene_w,
+    'world_w,
+    'world_s,
+    'exit_w,
+    'speech_w,
+    'toast_w,
+>(
+    ctx: &mut AutomationContext<
+        'a,
+        'cmd_w,
+        'cmd_s,
+        'gen3d_w,
+        'gen_scene_w,
         'world_w,
         'world_s,
         'exit_w,
@@ -3820,8 +3926,8 @@ fn handle_request_main_thread<
     if msg.path.starts_with("/v1/genfloor/") {
         return handle_genfloor_routes(ctx, msg);
     }
-    if msg.path.starts_with("/v1/scene_build/") {
-        return handle_scene_build_routes(ctx, msg);
+    if msg.path.starts_with("/v1/gen_scene/") {
+        return handle_gen_scene_routes(ctx, msg);
     }
     if msg.path.starts_with("/v1/animation/") {
         return handle_animation_routes(ctx, msg);
@@ -3928,6 +4034,10 @@ fn handle_request_main_thread<
                 serde_json::json!({"method":"POST","path":"/v1/genfloor/prompt"}),
                 serde_json::json!({"method":"POST","path":"/v1/genfloor/build"}),
                 serde_json::json!({"method":"POST","path":"/v1/genfloor/stop"}),
+                serde_json::json!({"method":"GET","path":"/v1/gen_scene/status"}),
+                serde_json::json!({"method":"POST","path":"/v1/gen_scene/prompt"}),
+                serde_json::json!({"method":"POST","path":"/v1/gen_scene/build"}),
+                serde_json::json!({"method":"POST","path":"/v1/gen_scene/stop"}),
                 serde_json::json!({"method":"GET","path":"/v1/scene_sources/signature"}),
                 serde_json::json!({"method":"POST","path":"/v1/scene_sources/patch_apply"}),
             ];
@@ -4128,6 +4238,7 @@ fn handle_request_main_thread<
                         BuildScene::Realm => "realm",
                         BuildScene::Preview => "preview",
                         BuildScene::FloorPreview => "floor_preview",
+                        BuildScene::ScenePreview => "scene_preview",
                     })
                 }
                 _ => None,
@@ -5107,10 +5218,20 @@ fn handle_request_main_thread<
                     next_mode.set(GameMode::Build);
                     next_build_scene.set(BuildScene::FloorPreview);
                 }
+                "gen_scene" | "genscene" | "scene_preview" => {
+                    let Some(next_build_scene) = next_build_scene else {
+                        return Some(json_error(
+                            501,
+                            "Build scene switching is not available in this app mode.",
+                        ));
+                    };
+                    next_mode.set(GameMode::Build);
+                    next_build_scene.set(BuildScene::ScenePreview);
+                }
                 _ => {
                     return Some(json_error(
                         400,
-                        "Invalid mode (expected build/play; legacy: gen3d/genfloor).",
+                        "Invalid mode (expected build/play; legacy: gen3d/genfloor/gen_scene).",
                     ));
                 }
             }

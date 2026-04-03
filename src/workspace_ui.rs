@@ -5,9 +5,10 @@ use crate::types::{BuildScene, EmojiAtlas, GameMode, UiFonts};
 use crate::workspace_scenes_ui::{
     AddSceneAddButton, AddSceneCancelButton, AddSceneErrorText, AddSceneNameField,
     AddSceneNameFieldText, AddScenePanelRoot, ScenesAddSceneButton, ScenesAddSceneButtonText,
-    ScenesDeleteButton, ScenesExportButton, ScenesImportButton, ScenesList, ScenesListScrollPanel,
-    ScenesManageButton, ScenesManageButtonText, ScenesManageOnlyAction, ScenesScrollbarThumb,
-    ScenesScrollbarTrack, ScenesSelectAllButton, ScenesSelectNoneButton, SCENES_PANEL_WIDTH_PX,
+    ScenesDeleteButton, ScenesExportButton, ScenesGenerateButton, ScenesGenerateButtonText,
+    ScenesImportButton, ScenesList, ScenesListScrollPanel, ScenesManageButton,
+    ScenesManageButtonText, ScenesManageOnlyAction, ScenesScrollbarThumb, ScenesScrollbarTrack,
+    ScenesSelectAllButton, ScenesSelectNoneButton, SCENES_PANEL_WIDTH_PX,
 };
 
 const WORKSPACE_UI_Z_INDEX: i32 = 960;
@@ -19,15 +20,12 @@ const LIST_SCROLLBAR_WIDTH_PX: f32 = 14.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WorkspaceTab {
     ObjectPreview,
-    #[allow(dead_code)]
-    SceneBuild,
 }
 
 impl WorkspaceTab {
     pub(crate) fn label(self) -> &'static str {
         match self {
             WorkspaceTab::ObjectPreview => "Object Preview",
-            WorkspaceTab::SceneBuild => "Scene Build",
         }
     }
 }
@@ -105,14 +103,12 @@ impl Default for WorkspaceCameraSnapshot {
 #[derive(Resource, Debug)]
 pub(crate) struct WorkspaceCameraState {
     object_preview: WorkspaceCameraSnapshot,
-    scene_build: WorkspaceCameraSnapshot,
 }
 
 impl Default for WorkspaceCameraState {
     fn default() -> Self {
         Self {
             object_preview: WorkspaceCameraSnapshot::default(),
-            scene_build: WorkspaceCameraSnapshot::default(),
         }
     }
 }
@@ -121,14 +117,12 @@ impl WorkspaceCameraState {
     pub(crate) fn get(&self, tab: WorkspaceTab) -> WorkspaceCameraSnapshot {
         match tab {
             WorkspaceTab::ObjectPreview => self.object_preview,
-            WorkspaceTab::SceneBuild => self.scene_build,
         }
     }
 
     pub(crate) fn set(&mut self, tab: WorkspaceTab, snapshot: WorkspaceCameraSnapshot) {
         match tab {
             WorkspaceTab::ObjectPreview => self.object_preview = snapshot,
-            WorkspaceTab::SceneBuild => self.scene_build = snapshot,
         }
     }
 }
@@ -458,6 +452,29 @@ pub(crate) fn setup_workspace_ui(
                             ..default()
                         },
                         TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                    ));
+                });
+
+                row.spawn((
+                    Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.05, 0.05, 0.06, 0.75)),
+                    BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
+                    ScenesGenerateButton,
+                ))
+                .with_children(|b| {
+                    b.spawn((
+                        Text::new("Generate"),
+                        TextFont {
+                            font_size: 14.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                        ScenesGenerateButtonText,
                     ));
                 });
 

@@ -104,6 +104,22 @@ pub(crate) fn gen3d_generate_text_simple(
     user_text: &str,
     cancel: Option<Arc<AtomicBool>>,
 ) -> Result<Gen3dSimpleTextResponse, String> {
+    gen3d_generate_text_simple_with_prefix(
+        config,
+        system_instructions,
+        user_text,
+        cancel,
+        "genfloor",
+    )
+}
+
+pub(crate) fn gen3d_generate_text_simple_with_prefix(
+    config: &AppConfig,
+    system_instructions: &str,
+    user_text: &str,
+    cancel: Option<Arc<AtomicBool>>,
+    artifact_prefix: &str,
+) -> Result<Gen3dSimpleTextResponse, String> {
     let ai = orchestration::resolve_gen3d_ai_service_config(config)?;
     let progress = Arc::new(Mutex::new(Gen3dAiProgress::default()));
     let session = Gen3dAiSessionState::default();
@@ -122,7 +138,7 @@ pub(crate) fn gen3d_generate_text_simple(
         user_text,
         &[],
         None,
-        "genfloor",
+        artifact_prefix,
     )?;
 
     Ok(Gen3dSimpleTextResponse {
