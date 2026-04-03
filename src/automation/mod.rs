@@ -3712,7 +3712,6 @@ fn handle_gen_scene_routes<
     >,
     msg: &AutomationRequest,
 ) -> Option<AutomationReply> {
-    let config = ctx.config;
     let active_realm_id = ctx.active_realm_id;
     let active_scene_id = ctx.active_scene_id;
     let mode = ctx.mode;
@@ -3793,7 +3792,6 @@ fn handle_gen_scene_routes<
                 scene_id: active_scene_id.to_string(),
             };
             if let Err(err) = crate::gen_scene::gen_scene_request_build(
-                config,
                 mode,
                 &active,
                 workshop,

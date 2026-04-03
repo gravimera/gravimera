@@ -25,10 +25,19 @@ pub(crate) enum ScenesUiField {
     AddSceneName,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SceneNamePanelMode {
+    None,
+    Add,
+    Rename,
+}
+
 #[derive(Resource, Debug)]
 pub(crate) struct ScenesPanelUiState {
     pub(crate) scenes_dirty: bool,
-    pub(crate) add_open: bool,
+    pub(crate) name_panel_open: bool,
+    pub(crate) name_panel_mode: SceneNamePanelMode,
+    pub(crate) name_panel_scene_id: Option<String>,
     pub(crate) multi_select_mode: bool,
     pub(crate) focused_field: ScenesUiField,
     pub(crate) name: String,
@@ -101,7 +110,9 @@ impl Default for ScenesPanelUiState {
     fn default() -> Self {
         Self {
             scenes_dirty: true,
-            add_open: false,
+            name_panel_open: false,
+            name_panel_mode: SceneNamePanelMode::None,
+            name_panel_scene_id: None,
             multi_select_mode: false,
             focused_field: ScenesUiField::None,
             name: String::new(),
@@ -129,6 +140,12 @@ pub(crate) struct ScenesAddSceneButton;
 
 #[derive(Component)]
 pub(crate) struct ScenesAddSceneButtonText;
+
+#[derive(Component)]
+pub(crate) struct ScenesRenameButton;
+
+#[derive(Component)]
+pub(crate) struct ScenesRenameButtonText;
 
 #[derive(Component)]
 pub(crate) struct ScenesManageButton;
@@ -196,6 +213,9 @@ pub(crate) struct AddSceneAddButton;
 pub(crate) struct AddSceneCancelButton;
 
 #[derive(Component)]
+pub(crate) struct SceneNameConfirmButtonText;
+
+#[derive(Component)]
 pub(crate) struct AddSceneErrorText;
 
 #[derive(Debug, Clone, Copy)]
@@ -221,8 +241,10 @@ pub(crate) fn scenes_panel_sync_active_realm(
     mut state: ResMut<ScenesPanelUiState>,
 ) {
     let open = scenes_panel_open(&mode, &build_scene, &top);
-    if !open && state.add_open {
-        state.add_open = false;
+    if !open && state.name_panel_open {
+        state.name_panel_open = false;
+        state.name_panel_mode = SceneNamePanelMode::None;
+        state.name_panel_scene_id = None;
         state.focused_field = ScenesUiField::None;
         state.error = None;
     }
@@ -244,6 +266,13 @@ pub(crate) fn scenes_panel_sync_active_realm(
     if scene_changed {
         state.last_scene_id = Some(active.scene_id.clone());
         state.scenes_dirty = true;
+        if state.name_panel_open && state.name_panel_mode == SceneNamePanelMode::Rename {
+            state.name_panel_open = false;
+            state.name_panel_mode = SceneNamePanelMode::None;
+            state.name_panel_scene_id = None;
+            state.focused_field = ScenesUiField::None;
+            state.error = None;
+        }
     }
 
     if open && !state.last_panel_open {
@@ -251,7 +280,9 @@ pub(crate) fn scenes_panel_sync_active_realm(
     }
 
     if state.multi_select_mode {
-        state.add_open = false;
+        state.name_panel_open = false;
+        state.name_panel_mode = SceneNamePanelMode::None;
+        state.name_panel_scene_id = None;
         state.focused_field = ScenesUiField::None;
     }
 
@@ -265,7 +296,7 @@ pub(crate) fn scenes_panel_set_add_panel_visibility(
     let Ok(mut node) = panels.single_mut() else {
         return;
     };
-    node.display = if state.add_open {
+    node.display = if state.name_panel_open {
         Display::Flex
     } else {
         Display::None
@@ -290,6 +321,7 @@ pub(crate) fn scenes_panel_update_action_visibility(
     state: Res<ScenesPanelUiState>,
     mut params: ParamSet<(
         Query<&mut Node, With<ScenesAddSceneButton>>,
+        Query<&mut Node, With<ScenesRenameButton>>,
         Query<&mut Node, With<ScenesManageButton>>,
         Query<&mut Node, With<ScenesManageOnlyAction>>,
     )>,
@@ -302,9 +334,16 @@ pub(crate) fn scenes_panel_update_action_visibility(
         };
     }
     if let Ok(mut node) = params.p1().single_mut() {
+        node.display = if state.multi_select_mode {
+            Display::None
+        } else {
+            Display::Flex
+        };
+    }
+    if let Ok(mut node) = params.p2().single_mut() {
         node.display = Display::Flex;
     }
-    for mut node in &mut params.p2() {
+    for mut node in &mut params.p3() {
         node.display = if state.multi_select_mode {
             Display::Flex
         } else {
@@ -370,10 +409,12 @@ pub(crate) fn scenes_panel_rebuild_list_ui(
 
     commands.entity(list_entity).with_children(|list| {
         for (scene_id, _created_at_ms) in scenes {
+            let display_name =
+                crate::realm::scene_display_name_or_id(&active.realm_id, &scene_id);
             let label = if scene_id == active.scene_id {
-                format!("{scene_id} (Current)")
+                format!("{display_name} (Current)")
             } else {
-                scene_id.clone()
+                display_name
             };
             list.spawn((
                 Button,
@@ -429,12 +470,45 @@ pub(crate) fn scenes_panel_add_scene_button_actions(
         if state.multi_select_mode {
             continue;
         }
-        if state.add_open {
+        if state.name_panel_open {
             continue;
         }
-        state.add_open = true;
+        state.name_panel_open = true;
+        state.name_panel_mode = SceneNamePanelMode::Add;
+        state.name_panel_scene_id = None;
         state.focused_field = ScenesUiField::AddSceneName;
         state.name.clear();
+        state.error = None;
+    }
+}
+
+pub(crate) fn scenes_panel_rename_button_interactions(
+    mode: Res<State<GameMode>>,
+    build_scene: Res<State<BuildScene>>,
+    top: Res<TopPanelUiState>,
+    active: Res<ActiveRealmScene>,
+    mut state: ResMut<ScenesPanelUiState>,
+    mut buttons: Query<&Interaction, (Changed<Interaction>, With<ScenesRenameButton>)>,
+) {
+    if !scenes_panel_open(&mode, &build_scene, &top) {
+        return;
+    }
+
+    for interaction in &mut buttons {
+        if !matches!(*interaction, Interaction::Pressed) {
+            continue;
+        }
+        if state.multi_select_mode {
+            continue;
+        }
+        if state.name_panel_open {
+            continue;
+        }
+        state.name_panel_open = true;
+        state.name_panel_mode = SceneNamePanelMode::Rename;
+        state.name_panel_scene_id = Some(active.scene_id.clone());
+        state.focused_field = ScenesUiField::AddSceneName;
+        state.name = crate::realm::scene_display_name_or_id(&active.realm_id, &active.scene_id);
         state.error = None;
     }
 }
@@ -455,7 +529,9 @@ pub(crate) fn scenes_panel_manage_button_interactions(
             continue;
         }
         state.multi_select_mode = !state.multi_select_mode;
-        state.add_open = false;
+        state.name_panel_open = false;
+        state.name_panel_mode = SceneNamePanelMode::None;
+        state.name_panel_scene_id = None;
         state.focused_field = ScenesUiField::None;
         state.error = None;
         if !state.multi_select_mode {
@@ -562,7 +638,9 @@ pub(crate) fn scenes_panel_generate_button_interactions(
                 *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.12, 0.92));
                 *border = BorderColor::all(Color::srgba(0.45, 0.45, 0.55, 0.85));
 
-                state.add_open = false;
+                state.name_panel_open = false;
+                state.name_panel_mode = SceneNamePanelMode::None;
+                state.name_panel_scene_id = None;
                 state.focused_field = ScenesUiField::None;
                 state.error = None;
                 next_build_scene.set(BuildScene::ScenePreview);
@@ -845,7 +923,9 @@ pub(crate) fn scenes_panel_scene_select_button_actions(
         });
         saves.write(SceneSaveRequest::new("switch scene"));
         state.error = None;
-        state.add_open = false;
+        state.name_panel_open = false;
+        state.name_panel_mode = SceneNamePanelMode::None;
+        state.name_panel_scene_id = None;
         state.focused_field = ScenesUiField::None;
     }
 }
@@ -870,7 +950,10 @@ pub(crate) fn scenes_panel_add_panel_buttons(
         ),
     >,
 ) {
-    if !scenes_panel_open(&mode, &build_scene, &top) || !state.add_open || state.multi_select_mode {
+    if !scenes_panel_open(&mode, &build_scene, &top)
+        || !state.name_panel_open
+        || state.multi_select_mode
+    {
         return;
     }
 
@@ -880,7 +963,9 @@ pub(crate) fn scenes_panel_add_panel_buttons(
         }
 
         if cancel.is_some() {
-            state.add_open = false;
+            state.name_panel_open = false;
+            state.name_panel_mode = SceneNamePanelMode::None;
+            state.name_panel_scene_id = None;
             state.focused_field = ScenesUiField::None;
             state.name.clear();
             state.error = None;
@@ -891,7 +976,7 @@ pub(crate) fn scenes_panel_add_panel_buttons(
             continue;
         }
 
-        let validated = match validate_scene_dir_name(&state.name) {
+        let display_name = match validate_scene_display_name(&state.name) {
             Ok(v) => v,
             Err(err) => {
                 state.error = Some(err);
@@ -899,35 +984,74 @@ pub(crate) fn scenes_panel_add_panel_buttons(
             }
         };
 
-        let scene_dir = crate::paths::scene_dir(&active.realm_id, &validated);
-        if scene_dir.exists() {
-            state.error = Some("Scene already exists.".to_string());
-            continue;
+        match state.name_panel_mode {
+            SceneNamePanelMode::Add => {
+                let scene_id = match crate::realm::allocate_scene_id(&active.realm_id) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        state.error = Some(err);
+                        continue;
+                    }
+                };
+
+                if let Err(err) =
+                    crate::realm::ensure_realm_scene_scaffold(&active.realm_id, &scene_id)
+                {
+                    state.error = Some(err);
+                    continue;
+                }
+
+                if let Err(err) =
+                    crate::scene_store::ensure_default_scene_dat_exists(&active.realm_id, &scene_id)
+                {
+                    state.error = Some(err);
+                    continue;
+                }
+
+                if let Err(err) =
+                    crate::realm::set_scene_display_name(&active.realm_id, &scene_id, &display_name)
+                {
+                    state.error = Some(err);
+                    continue;
+                }
+
+                state.name_panel_open = false;
+                state.name_panel_mode = SceneNamePanelMode::None;
+                state.name_panel_scene_id = None;
+                state.focused_field = ScenesUiField::None;
+                state.name.clear();
+                state.error = None;
+                state.scenes_dirty = true;
+
+                pending.target = Some(ActiveRealmScene {
+                    realm_id: active.realm_id.clone(),
+                    scene_id,
+                });
+                saves.write(SceneSaveRequest::new("add scene"));
+            }
+            SceneNamePanelMode::Rename => {
+                let Some(target_scene_id) = state.name_panel_scene_id.clone() else {
+                    state.error = Some("No scene selected to rename.".to_string());
+                    continue;
+                };
+                if let Err(err) = crate::realm::set_scene_display_name(
+                    &active.realm_id,
+                    &target_scene_id,
+                    &display_name,
+                ) {
+                    state.error = Some(err);
+                    continue;
+                }
+                state.name_panel_open = false;
+                state.name_panel_mode = SceneNamePanelMode::None;
+                state.name_panel_scene_id = None;
+                state.focused_field = ScenesUiField::None;
+                state.name.clear();
+                state.error = None;
+                state.scenes_dirty = true;
+            }
+            SceneNamePanelMode::None => {}
         }
-
-        if let Err(err) = crate::realm::ensure_realm_scene_scaffold(&active.realm_id, &validated) {
-            state.error = Some(err);
-            continue;
-        }
-
-        if let Err(err) =
-            crate::scene_store::ensure_default_scene_dat_exists(&active.realm_id, &validated)
-        {
-            state.error = Some(err);
-            continue;
-        }
-
-        state.add_open = false;
-        state.focused_field = ScenesUiField::None;
-        state.name.clear();
-        state.error = None;
-        state.scenes_dirty = true;
-
-        pending.target = Some(ActiveRealmScene {
-            realm_id: active.realm_id.clone(),
-            scene_id: validated,
-        });
-        saves.write(SceneSaveRequest::new("add scene"));
     }
 }
 
@@ -1292,7 +1416,7 @@ pub(crate) fn scenes_panel_name_field_focus(
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut fields: Query<&Interaction, (Changed<Interaction>, With<AddSceneNameField>)>,
 ) {
-    if !scenes_panel_open(&mode, &build_scene, &top) || !state.add_open {
+    if !scenes_panel_open(&mode, &build_scene, &top) || !state.name_panel_open {
         return;
     }
 
@@ -1324,7 +1448,7 @@ pub(crate) fn scenes_panel_update_ime_position(
         Option<&Visibility>,
     )>,
 ) {
-    if !scenes_panel_open(&mode, &build_scene, &top) || !state.add_open {
+    if !scenes_panel_open(&mode, &build_scene, &top) || !state.name_panel_open {
         return;
     }
     if state.focused_field != ScenesUiField::AddSceneName {
@@ -1358,7 +1482,7 @@ pub(crate) fn scenes_panel_text_input(
     mut ime_events: bevy::ecs::message::MessageReader<Ime>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
-    if !scenes_panel_open(&mode, &build_scene, &top) || !state.add_open {
+    if !scenes_panel_open(&mode, &build_scene, &top) || !state.name_panel_open {
         keyboard.clear();
         ime_events.clear();
         return;
@@ -1451,7 +1575,7 @@ pub(crate) fn scenes_panel_clear_keyboard_state_when_captured(
     mut keys: Option<ResMut<ButtonInput<KeyCode>>>,
 ) {
     if !scenes_panel_open(&mode, &build_scene, &top)
-        || !state.add_open
+        || !state.name_panel_open
         || state.focused_field == ScenesUiField::None
     {
         return;
@@ -1698,20 +1822,27 @@ pub(crate) fn scenes_panel_update_texts(
             &mut Text,
             Option<&AddSceneNameFieldText>,
             Option<&AddSceneErrorText>,
+            Option<&SceneNameConfirmButtonText>,
             Option<&ScenesManageButtonText>,
         ),
         Or<(
             With<AddSceneNameFieldText>,
             With<AddSceneErrorText>,
+            With<SceneNameConfirmButtonText>,
             With<ScenesManageButtonText>,
         )>,
     >,
     name_field: Query<Entity, With<AddSceneNameFieldText>>,
     mut last_name: Local<Option<String>>,
 ) {
-    for (mut text, _name, error, manage) in &mut texts {
+    for (mut text, _name, error, confirm, manage) in &mut texts {
         if error.is_some() {
             *text = Text::new(state.error.clone().unwrap_or_default());
+        } else if confirm.is_some() {
+            *text = Text::new(match state.name_panel_mode {
+                SceneNamePanelMode::Rename => "Save",
+                _ => "Add",
+            });
         } else if manage.is_some() {
             *text = Text::new(if state.multi_select_mode {
                 "Done"
@@ -1748,7 +1879,16 @@ pub(crate) fn scenes_panel_update_styles(
     state: Res<ScenesPanelUiState>,
     active: Res<ActiveRealmScene>,
     mut params: ParamSet<(
-        Query<(&Interaction, &mut BackgroundColor, &mut BorderColor), With<ScenesAddSceneButton>>,
+        Query<
+            (
+                &Interaction,
+                Option<&ScenesAddSceneButton>,
+                Option<&ScenesRenameButton>,
+                &mut BackgroundColor,
+                &mut BorderColor,
+            ),
+            Or<(With<ScenesAddSceneButton>, With<ScenesRenameButton>)>,
+        >,
         Query<(
             &Interaction,
             &SceneSelectButton,
@@ -1792,9 +1932,14 @@ pub(crate) fn scenes_panel_update_styles(
     )>,
 ) {
     {
-        let mut add_button = params.p0();
-        if let Ok((interaction, mut bg, mut border)) = add_button.single_mut() {
-            let (mut bg_color, mut border_color) = if state.add_open {
+        let mut add_buttons = params.p0();
+        for (interaction, add, rename, mut bg, mut border) in &mut add_buttons {
+            let selected = match state.name_panel_mode {
+                SceneNamePanelMode::Add => add.is_some(),
+                SceneNamePanelMode::Rename => rename.is_some(),
+                SceneNamePanelMode::None => false,
+            };
+            let (mut bg_color, mut border_color) = if selected && state.name_panel_open {
                 (
                     Color::srgba(0.07, 0.07, 0.09, 0.84),
                     Color::srgba(0.35, 0.35, 0.42, 0.75),
@@ -1836,7 +1981,8 @@ pub(crate) fn scenes_panel_update_styles(
     {
         let mut name_field = params.p2();
         if let Ok((interaction, mut bg, mut border)) = name_field.single_mut() {
-            let focused = state.focused_field == ScenesUiField::AddSceneName && state.add_open;
+            let focused =
+                state.focused_field == ScenesUiField::AddSceneName && state.name_panel_open;
             let (mut bg_color, border_color) = if focused {
                 (
                     Color::srgba(0.03, 0.03, 0.04, 0.78),
@@ -1974,61 +2120,19 @@ fn apply_option_style(
     *border = BorderColor::all(border_color);
 }
 
-fn validate_scene_dir_name(raw: &str) -> Result<String, String> {
+fn validate_scene_display_name(raw: &str) -> Result<String, String> {
     let name = raw.trim();
     if name.is_empty() {
         return Err("Name cannot be empty.".to_string());
     }
-    if name == "." || name == ".." {
-        return Err("Name cannot be '.' or '..'.".to_string());
+    if name.chars().any(|c| c.is_control()) {
+        return Err("Name contains invalid characters.".to_string());
     }
-    if name.ends_with('.') {
-        return Err("Name cannot end with '.'.".to_string());
-    }
-    if name.chars().any(|c| c == '/' || c == '\\') {
-        return Err("Name cannot contain path separators.".to_string());
-    }
-    if let Some(ch) = name
-        .chars()
-        .find(|c| c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*' | '\0'))
-    {
-        return Err(format!("Name contains invalid character: '{ch}'"));
-    }
-    if is_windows_reserved_name(name) {
-        return Err("Name is reserved on Windows.".to_string());
+    if name.chars().count() > SCENE_NAME_MAX_CHARS {
+        return Err(format!(
+            "Name cannot exceed {} characters.",
+            SCENE_NAME_MAX_CHARS
+        ));
     }
     Ok(name.to_string())
-}
-
-fn is_windows_reserved_name(name: &str) -> bool {
-    let upper = name.trim().to_ascii_uppercase();
-    if upper.is_empty() {
-        return false;
-    }
-    let base = upper.split('.').next().unwrap_or("");
-    matches!(
-        base,
-        "CON"
-            | "PRN"
-            | "AUX"
-            | "NUL"
-            | "COM1"
-            | "COM2"
-            | "COM3"
-            | "COM4"
-            | "COM5"
-            | "COM6"
-            | "COM7"
-            | "COM8"
-            | "COM9"
-            | "LPT1"
-            | "LPT2"
-            | "LPT3"
-            | "LPT4"
-            | "LPT5"
-            | "LPT6"
-            | "LPT7"
-            | "LPT8"
-            | "LPT9"
-    )
 }

@@ -197,6 +197,7 @@ impl Plugin for RenderedUiPlugin {
                 crate::workspace_scenes_ui::scenes_panel_set_add_panel_visibility
                     .after(crate::workspace_scenes_ui::scenes_panel_update_action_visibility)
                     .after(crate::workspace_scenes_ui::scenes_panel_add_scene_button_actions)
+                    .after(crate::workspace_scenes_ui::scenes_panel_rename_button_interactions)
                     .after(crate::workspace_scenes_ui::scenes_panel_manage_button_interactions)
                     .after(crate::workspace_scenes_ui::scenes_panel_add_panel_buttons),
                 crate::workspace_scenes_ui::scenes_panel_rebuild_list_ui
@@ -548,8 +549,12 @@ impl Plugin for RenderedUiPlugin {
                 crate::workspace_scenes_ui::scenes_panel_add_scene_button_actions
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
-                crate::workspace_scenes_ui::scenes_panel_manage_button_interactions
+                crate::workspace_scenes_ui::scenes_panel_rename_button_interactions
                     .after(crate::workspace_scenes_ui::scenes_panel_add_scene_button_actions)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::workspace_scenes_ui::scenes_panel_manage_button_interactions
+                    .after(crate::workspace_scenes_ui::scenes_panel_rename_button_interactions)
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::workspace_scenes_ui::scenes_panel_import_button_interactions

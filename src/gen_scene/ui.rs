@@ -3,7 +3,6 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::window::{Ime, PrimaryWindow};
 
-use crate::config::AppConfig;
 use crate::gen3d::{Gen3dAiJob, Gen3dDraft, Gen3dTaskQueue, Gen3dTaskState, Gen3dWorkshop};
 use crate::genfloor::GenFloorAiJob;
 use crate::rich_text::set_rich_text_line;
@@ -1891,7 +1890,6 @@ pub(crate) fn gen_scene_update_side_tab_ui(
 
 pub(crate) fn gen_scene_build_button(
     build_scene: Res<State<BuildScene>>,
-    config: Res<AppConfig>,
     mode: Res<State<GameMode>>,
     active: Res<crate::realm::ActiveRealmScene>,
     mut workshop: ResMut<GenSceneWorkshop>,
@@ -1946,7 +1944,6 @@ pub(crate) fn gen_scene_build_button(
                 }
 
                 match gen_scene_request_build(
-                    &config,
                     Some(&mode),
                     &active,
                     &mut workshop,

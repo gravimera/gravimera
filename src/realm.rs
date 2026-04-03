@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
 use crate::scene_sources::SceneSourcesV1;
 
@@ -198,6 +199,56 @@ pub(crate) fn save_scene_description(src_dir: &Path, description: &str) -> Resul
         .write_to_dir(src_dir)
         .map_err(|err| err.to_string())?;
     Ok(())
+}
+
+pub(crate) fn load_scene_display_name(src_dir: &Path) -> Result<String, String> {
+    let sources = SceneSourcesV1::load_from_dir(src_dir).map_err(|err| err.to_string())?;
+    Ok(sources
+        .meta_json
+        .get("label")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string())
+}
+
+pub(crate) fn save_scene_display_name(src_dir: &Path, display_name: &str) -> Result<(), String> {
+    let mut sources = SceneSourcesV1::load_from_dir(src_dir).map_err(|err| err.to_string())?;
+    sources.meta_json["label"] = Value::from(display_name);
+    sources
+        .write_to_dir(src_dir)
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+pub(crate) fn scene_display_name_or_id(realm_id: &str, scene_id: &str) -> String {
+    let src_dir = crate::paths::scene_src_dir(realm_id, scene_id);
+    match load_scene_display_name(&src_dir) {
+        Ok(label) if !label.trim().is_empty() => label.trim().to_string(),
+        _ => scene_id.to_string(),
+    }
+}
+
+pub(crate) fn set_scene_display_name(
+    realm_id: &str,
+    scene_id: &str,
+    display_name: &str,
+) -> Result<(), String> {
+    let src_dir = crate::paths::scene_src_dir(realm_id, scene_id);
+    save_scene_display_name(&src_dir, display_name)
+}
+
+pub(crate) fn allocate_scene_id(realm_id: &str) -> Result<String, String> {
+    for _ in 0..200 {
+        let candidate = Uuid::new_v4().to_string();
+        if sanitize_id(&candidate).is_none() {
+            continue;
+        }
+        let dir = crate::paths::scene_dir(realm_id, &candidate);
+        if !dir.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err("Failed to allocate a unique scene id.".to_string())
 }
 
 fn ensure_scene_dirs(realm_id: &str, scene_id: &str) -> Result<(), String> {

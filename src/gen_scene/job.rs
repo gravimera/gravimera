@@ -111,7 +111,6 @@ pub(crate) fn gen_scene_set_prompt_from_api(workshop: &mut GenSceneWorkshop, pro
 }
 
 pub(crate) fn gen_scene_request_build(
-    config: &AppConfig,
     mode: Option<&State<GameMode>>,
     active: &ActiveRealmScene,
     workshop: &mut GenSceneWorkshop,
@@ -136,9 +135,11 @@ pub(crate) fn gen_scene_request_build(
     }
     crate::gen3d::validate_gen3d_user_prompt_limits(prompt)?;
 
-    let scene_id = allocate_scene_id(config, &active.realm_id, prompt)?;
+    let scene_id = crate::realm::allocate_scene_id(&active.realm_id)?;
     crate::realm::ensure_realm_scene_scaffold(&active.realm_id, &scene_id)?;
     crate::scene_store::ensure_default_scene_dat_exists(&active.realm_id, &scene_id)?;
+    let display_name = derive_scene_display_name(prompt);
+    crate::realm::set_scene_display_name(&active.realm_id, &scene_id, &display_name)?;
 
     scenes_state.scenes_dirty = true;
 
@@ -1220,115 +1221,57 @@ fn gen_scene_run_dir(realm_id: &str, scene_id: &str, run_id: &str) -> Result<Pat
     Ok(dir)
 }
 
-fn allocate_scene_id(config: &AppConfig, realm_id: &str, prompt: &str) -> Result<String, String> {
-    let base = scene_base_id_from_prompt(config, prompt);
-    let base = crate::realm::sanitize_id(&base).unwrap_or_else(|| "scene".to_string());
+fn derive_scene_display_name(prompt: &str) -> String {
+    const GENERATED_SCENE_NAME_MAX_CHARS: usize = 40;
 
-    for idx in 0..100 {
-        let candidate = if idx == 0 {
-            base.clone()
-        } else {
-            format!("{base}_{}", idx + 1)
-        };
-        if crate::realm::sanitize_id(&candidate).is_none() {
-            continue;
-        }
-        let dir = crate::paths::scene_dir(realm_id, &candidate);
-        if !dir.exists() {
-            return Ok(candidate);
-        }
-    }
-
-    for _ in 0..50 {
-        let short = uuid::Uuid::new_v4().to_string();
-        let candidate = format!("{base}_{short}");
-        if crate::realm::sanitize_id(&candidate).is_none() {
-            continue;
-        }
-        let dir = crate::paths::scene_dir(realm_id, &candidate);
-        if !dir.exists() {
-            return Ok(candidate);
-        }
-    }
-
-    Err("Failed to allocate a unique scene id.".to_string())
-}
-
-fn scene_base_id_from_prompt(config: &AppConfig, prompt: &str) -> String {
-    let slug = slugify_prompt(prompt, 3, 24);
-    if slug.is_empty() {
-        if let Some(translated) = translate_prompt_to_english_slug(config, prompt) {
-            translated
-        } else {
-            "untitled".to_string()
-        }
-    } else {
-        slug
-    }
-}
-
-fn translate_prompt_to_english_slug(config: &AppConfig, prompt: &str) -> Option<String> {
-    let system = "You are a naming assistant. Return a short English scene name (2-4 words). \
-Return plain text only; no quotes, punctuation, or numbering. Use ASCII letters only.";
-    let user = format!(
-        "Prompt:\n{prompt}\n\nReturn a short English scene name (2-4 words)."
-    );
-    let response = gen3d_generate_text_simple_with_prefix(
-        config,
-        system,
-        &user,
-        None,
-        "gen_scene_name",
-    )
-    .ok()?;
-    let raw = response.text.trim();
-    let slug = slugify_prompt(raw, 3, 24);
-    if slug.is_empty() {
-        None
-    } else {
-        Some(slug)
-    }
-}
-
-fn slugify_prompt(prompt: &str, max_words: usize, max_len: usize) -> String {
-    let mut words: Vec<String> = Vec::new();
-    let mut current = String::new();
-    for ch in prompt.chars() {
-        if ch.is_ascii_alphanumeric() {
-            current.push(ch.to_ascii_lowercase());
-        } else if !current.is_empty() {
-            words.push(current.clone());
-            current.clear();
-        }
-    }
-    if !current.is_empty() {
-        words.push(current);
-    }
-
-    let mut unique = Vec::new();
-    for word in words {
-        if word.len() < 2 {
-            continue;
-        }
-        if unique.contains(&word) {
-            continue;
-        }
-        unique.push(word);
-        if unique.len() >= max_words {
+    let mut candidate = "";
+    for line in prompt.lines() {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() {
+            candidate = trimmed;
             break;
         }
     }
-
-    if unique.is_empty() {
-        return String::new();
+    if candidate.is_empty() {
+        return "Untitled Scene".to_string();
     }
 
-    let mut slug = unique.join("_");
-    if slug.len() > max_len {
-        slug.truncate(max_len);
-        slug = slug.trim_matches('_').to_string();
+    let mut collapsed = String::new();
+    let mut last_was_space = false;
+    for ch in candidate.chars() {
+        if ch.is_whitespace() {
+            if !last_was_space {
+                collapsed.push(' ');
+                last_was_space = true;
+            }
+        } else {
+            collapsed.push(ch);
+            last_was_space = false;
+        }
     }
-    slug
+
+    let trimmed = collapsed.trim();
+    if trimmed.is_empty() {
+        return "Untitled Scene".to_string();
+    }
+
+    let mut out = String::new();
+    let mut count = 0usize;
+    let mut truncated = false;
+    for ch in trimmed.chars() {
+        if count >= GENERATED_SCENE_NAME_MAX_CHARS {
+            truncated = true;
+            break;
+        }
+        out.push(ch);
+        count += 1;
+    }
+
+    if truncated {
+        out.push_str("...");
+    }
+
+    out
 }
 
 fn cancel_gen3d_tasks(

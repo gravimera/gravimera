@@ -17,6 +17,9 @@ The GenScene panel opens in **Scene Preview** and mirrors the Gen3D layout.
 2. Click **Build**.
 3. GenScene creates a new scene, switches to it, and begins planning and generation.
 
+Scene directories are named by scene_id; the visible scene name in the list is derived from the
+prompt and can be renamed later without changing the directory.
+
 While a build is running, the panel cannot be closed. Click **Stop** to cancel; once the build
 finishes or is stopped, the panel can close normally.
 
