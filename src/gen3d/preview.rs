@@ -7,7 +7,9 @@ use bevy::window::PrimaryWindow;
 
 use crate::assets::SceneAssets;
 use crate::object::registry::{ColliderProfile, ObjectDef, ObjectLibrary, ObjectPartKind};
-use crate::object::visuals::{MaterialCache, VisualObjectRefRoot, VisualSpawnSettings};
+use crate::object::visuals::{
+    MaterialCache, VisualObjectRefRoot, VisualPartId, VisualSpawnSettings,
+};
 use crate::types::{
     ActionClock, AnimationChannelsActive, AttackClock, BuildScene, ForcedAnimationChannel,
     LocomotionClock, ObjectPrefabId,
@@ -44,7 +46,16 @@ pub(crate) fn gen3d_update_preview_camera_render_layers(
 #[derive(SystemParam)]
 pub(crate) struct Gen3dPreviewOrbitUi<'w, 's> {
     windows: Query<'w, 's, &'static mut Window, With<bevy::window::PrimaryWindow>>,
-    panel: Query<'w, 's, &'static Interaction, With<Gen3dPreviewPanel>>,
+    panel: Query<
+        'w,
+        's,
+        (
+            &'static Interaction,
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+        ),
+        With<Gen3dPreviewPanel>,
+    >,
     anim_dropdown_button: Query<
         'w,
         's,
@@ -105,6 +116,11 @@ pub(crate) struct Gen3dPreviewOrbitUi<'w, 's> {
         ),
         With<Gen3dSidePanelToggleButton>,
     >,
+}
+
+#[derive(Default)]
+pub(crate) struct Gen3dPreviewOrbitDragState {
+    lmb_started_on_ffd_handle: bool,
 }
 
 #[derive(SystemParam)]
@@ -1138,9 +1154,13 @@ pub(crate) fn gen3d_preview_orbit_controls(
     tweak: Res<Gen3dManualTweakState>,
     mut orbit_ui: Gen3dPreviewOrbitUi,
     mut mouse_wheel: bevy::ecs::message::MessageReader<bevy::input::mouse::MouseWheel>,
+    draft: Res<Gen3dDraft>,
+    parts: Query<(&GlobalTransform, &VisualPartId)>,
     focus_world: Gen3dPreviewFocusWorld,
     mut preview: ResMut<Gen3dPreview>,
+    preview_camera_meta: Query<(&Camera, &GlobalTransform), With<Gen3dPreviewCamera>>,
     mut cameras: Query<&mut Transform, With<Gen3dPreviewCamera>>,
+    mut drag_state: Local<Gen3dPreviewOrbitDragState>,
 ) {
     if !super::gen3d_ui_scene(build_scene.get()) {
         return;
@@ -1151,7 +1171,7 @@ pub(crate) fn gen3d_preview_orbit_controls(
     let mut hovered = orbit_ui
         .panel
         .iter()
-        .any(|i| matches!(*i, Interaction::Hovered | Interaction::Pressed));
+        .any(|(i, ..)| matches!(*i, Interaction::Hovered | Interaction::Pressed));
 
     let cursor_physical = window.physical_cursor_position();
     if hovered {
@@ -1218,6 +1238,66 @@ pub(crate) fn gen3d_preview_orbit_controls(
         }
     }
 
+    if mouse_buttons.just_released(MouseButton::Left) {
+        drag_state.lmb_started_on_ffd_handle = false;
+    }
+    if mouse_buttons.just_pressed(MouseButton::Left) {
+        drag_state.lmb_started_on_ffd_handle = false;
+
+        if hovered && tweak.enabled && tweak.deform_mode {
+            let picked_handle = cursor_physical.and_then(|cursor_physical| {
+                let Some(part_id) = tweak.selected_part_id else {
+                    return None;
+                };
+                let Some((_component, _before_transform, primitive)) =
+                    super::manual_tweak::find_selected_primitive_part(&draft, part_id)
+                else {
+                    return None;
+                };
+
+                let part_transform = parts
+                    .iter()
+                    .find(|(_t, id)| id.0 == part_id)
+                    .map(|(t, _id)| t.to_matrix());
+                let Some(part_from_local) = part_transform else {
+                    return None;
+                };
+                let inv_local_from_part = part_from_local.inverse();
+
+                let Ok((_interaction, panel_node, panel_transform)) = orbit_ui.panel.single()
+                else {
+                    return None;
+                };
+                let Some(layout) = preview_image_layout(panel_node, *panel_transform) else {
+                    return None;
+                };
+                let Some(cursor_target) =
+                    preview_cursor_to_target(cursor_physical, layout.image_bounds_physical)
+                else {
+                    return None;
+                };
+                let Ok((camera, camera_transform)) = preview_camera_meta.single() else {
+                    return None;
+                };
+                let Ok(ray) = camera.viewport_to_world(camera_transform, cursor_target) else {
+                    return None;
+                };
+
+                let ray_origin_local = inv_local_from_part.transform_point3(ray.origin);
+                let ray_dir_local = inv_local_from_part.transform_vector3(ray.direction.into());
+                super::manual_tweak::gen3d_ffd_pick_control_point_index_for_primitive(
+                    &primitive,
+                    ray_origin_local,
+                    ray_dir_local,
+                )
+            });
+
+            if picked_handle.is_some() {
+                drag_state.lmb_started_on_ffd_handle = true;
+            }
+        }
+    }
+
     if hovered && mouse_buttons.just_pressed(MouseButton::Left) && workshop.prompt_focused {
         workshop.prompt_focused = false;
         window.ime_enabled = false;
@@ -1242,9 +1322,8 @@ pub(crate) fn gen3d_preview_orbit_controls(
         for _ in mouse_wheel.read() {}
     }
 
-    let dragging = hovered
-        && mouse_buttons.pressed(MouseButton::Left)
-        && !(tweak.enabled && tweak.deform_mode);
+    let orbit_blocked = tweak.enabled && tweak.deform_mode && drag_state.lmb_started_on_ffd_handle;
+    let dragging = hovered && mouse_buttons.pressed(MouseButton::Left) && !orbit_blocked;
     if dragging {
         if let (Some(prev), Some(cur)) = (preview.last_cursor, cursor) {
             let delta = cur - prev;

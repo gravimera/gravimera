@@ -714,7 +714,7 @@ fn push_undo_entry(
     tweak.undo.push(entry);
 }
 
-fn find_selected_primitive_part(
+pub(crate) fn find_selected_primitive_part(
     draft: &Gen3dDraft,
     part_id: u128,
 ) -> Option<(
@@ -736,6 +736,31 @@ fn find_selected_primitive_part(
         }
     }
     None
+}
+
+pub(crate) fn gen3d_ffd_pick_control_point_index_for_primitive(
+    primitive: &crate::object::registry::PrimitiveVisualDef,
+    ray_origin_local: Vec3,
+    ray_dir_local: Vec3,
+) -> Option<usize> {
+    let Some((base_min, base_max)) = primitive_base_aabb_for_ffd(primitive) else {
+        return None;
+    };
+    let Some((grid, offsets)) = primitive_ffd_grid_and_offsets(primitive) else {
+        return None;
+    };
+
+    let base_size = (base_max - base_min).abs().max(Vec3::splat(0.01));
+    let radius_local = (base_size.length() * 0.04).clamp(0.015, 0.10);
+    pick_control_point_index(
+        ray_origin_local,
+        ray_dir_local,
+        base_min,
+        base_max,
+        grid,
+        offsets.as_slice(),
+        radius_local,
+    )
 }
 
 pub(crate) fn gen3d_manual_tweak_hotkeys(
