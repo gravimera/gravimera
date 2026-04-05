@@ -411,6 +411,20 @@ def get_prefab_catalog(http: LocalHttp) -> dict[str, dict[str, Any]]:
     return out
 
 
+def reload_realm_prefabs(http: LocalHttp) -> dict[str, Any]:
+    """
+    Ensure realm-prefab packages saved on disk are loaded into the running world.
+
+    This is important after restarting the game or switching realm/scene, because the in-memory
+    prefab library can reset to builtins. Scene-sources patch validation requires prefabs to be
+    present in the library.
+    """
+    resp = http.json("POST", "/v1/prefabs/reload_realm", {})
+    if not resp.get("ok"):
+        raise RuntimeError(f"prefabs/reload_realm failed: {resp}")
+    return resp
+
+
 def enqueue_gen3d_task(
     http: LocalHttp,
     *,
@@ -599,7 +613,13 @@ def build_layout_layers(
     """
     def pid(key: str) -> str | None:
         v = assets.get(key)
-        return str(v).strip() if v else None
+        pid = str(v).strip() if v else ""
+        if not pid:
+            return None
+        # Never reference unknown prefabs in patches; it will fail `scene_sources` validation.
+        if pid not in prefab_catalog:
+            return None
+        return pid
 
     road = pid("road_tile")
     sidewalk = pid("sidewalk_tile")
@@ -1539,6 +1559,23 @@ def main() -> int:
 
         _save_manifest()
 
+        # Ensure realm prefabs from prior runs are loaded into the in-memory library, so patches
+        # can place them immediately after a restart.
+        try:
+            reload_realm_prefabs(http)
+        except Exception as err:
+            print(f"warn: prefabs/reload_realm failed (continuing): {err}")
+
+        # If the manifest references prefabs that aren't present in the running library, clear
+        # them so we regenerate instead of being stuck forever with an unplaceable prefab id.
+        prefab_catalog_boot = get_prefab_catalog(http)
+        for key, prefab_id_uuid in list(assets.items()):
+            pid = str(prefab_id_uuid or "").strip()
+            if pid and pid not in prefab_catalog_boot:
+                print(f"warn: manifest prefab not in library; will regenerate: {key} -> {pid[:8]}")
+                assets.pop(key, None)
+        _save_manifest()
+
         # Layout patches as durable run steps. We re-apply as assets complete so the scene is
         # decorated incrementally while Gen3D continues running.
         status = scene_run_status(http, run_id)
@@ -1553,6 +1590,10 @@ def main() -> int:
 
         def _apply_layout_and_shot(tag: str) -> None:
             nonlocal next_step, shots_taken, last_layout_asset_count, last_layout_time
+            try:
+                reload_realm_prefabs(http)
+            except Exception as err:
+                print(f"warn: prefabs/reload_realm failed before layout apply: {err}")
             prefab_catalog = get_prefab_catalog(http)
             layers = build_layout_layers(
                 prefab_catalog=prefab_catalog,
@@ -1568,7 +1609,28 @@ def main() -> int:
             result = resp.get("result") or {}
             applied = bool(result.get("applied"))
             if not applied:
-                raise RuntimeError(f"run_apply_patch step failed: {resp}")
+                # Common recovery: after restart, prefabs may exist on disk but not in memory.
+                # Reload and retry once before surfacing an error.
+                try:
+                    reload_realm_prefabs(http)
+                    prefab_catalog = get_prefab_catalog(http)
+                    layers = build_layout_layers(
+                        prefab_catalog=prefab_catalog,
+                        assets=assets,
+                        layout_extent_m=layout_extent_m,
+                        plaza_extent_m=plaza_extent_m,
+                    )
+                    patch_ops = [
+                        {"kind": "upsert_layer", "layer_id": layer_id, "doc": layers[layer_id]}
+                        for layer_id in sorted(layers.keys())
+                    ]
+                    resp = apply_run_step(http, run_id=run_id, step_no=next_step, patch_ops=patch_ops)
+                    result = resp.get("result") or {}
+                    applied = bool(result.get("applied"))
+                except Exception:
+                    applied = False
+                if not applied:
+                    raise RuntimeError(f"run_apply_patch step failed: {resp}")
             print(f"layout applied (step={next_step}) tag={tag}")
             next_step += 1
             last_layout_asset_count = _asset_ready_count()

@@ -4274,6 +4274,7 @@ fn handle_request_main_thread<
                 serde_json::json!({"method":"GET","path":"/v1/camera"}),
                 serde_json::json!({"method":"POST","path":"/v1/camera"}),
                 serde_json::json!({"method":"GET","path":"/v1/prefabs"}),
+                serde_json::json!({"method":"POST","path":"/v1/prefabs/reload_realm"}),
                 serde_json::json!({"method":"POST","path":"/v1/prefabs/duplicate"}),
                 serde_json::json!({"method":"POST","path":"/v1/prefabs/export_glb"}),
                 serde_json::json!({"method":"POST","path":"/v1/prefabs/export_gltf_glb"}),
@@ -4406,6 +4407,65 @@ fn handle_request_main_thread<
                 "ok": true,
                 "src_prefab_id_uuid": uuid::Uuid::from_u128(src_prefab_id).to_string(),
                 "new_prefab_id_uuid": uuid::Uuid::from_u128(new_prefab_id).to_string(),
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/prefabs/reload_realm") => {
+            let realm_id = ctx.active_realm_id;
+            let ids = match crate::realm_prefab_packages::list_realm_prefab_packages(realm_id) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(409, err)),
+            };
+
+            let mut loaded_packages = 0usize;
+            let mut loaded_defs = 0usize;
+            let mut failed_packages: Vec<serde_json::Value> = Vec::new();
+
+            for root_prefab_id in ids.iter().copied() {
+                match crate::realm_prefab_packages::load_realm_prefab_package_defs_into_library(
+                    realm_id,
+                    root_prefab_id,
+                    library,
+                ) {
+                    Ok(count) => {
+                        loaded_packages += 1;
+                        loaded_defs += count;
+                    }
+                    Err(err) => {
+                        failed_packages.push(serde_json::json!({
+                            "root_prefab_id_uuid": uuid::Uuid::from_u128(root_prefab_id).to_string(),
+                            "error": err,
+                        }));
+                    }
+                }
+            }
+
+            // Best-effort: refresh prefab descriptors so `/v1/prefabs` can show labels/tags/roles
+            // for newly loaded realm prefabs without requiring the Model Library UI to open.
+            let realm_prefabs_dir = crate::realm_prefab_packages::realm_prefabs_root_dir(realm_id);
+            let (loaded_descriptors, descriptor_error) =
+                match crate::prefab_descriptors::load_prefab_descriptors_from_dir(
+                    &realm_prefabs_dir,
+                    ctx.prefab_descriptors,
+                ) {
+                    Ok(count) => (count, None),
+                    Err(err) => (0usize, Some(err)),
+                };
+
+            let body = serde_json::json!({
+                "ok": true,
+                "realm_id": realm_id,
+                "found_packages": ids.len(),
+                "loaded_packages": loaded_packages,
+                "loaded_defs": loaded_defs,
+                "loaded_descriptors": loaded_descriptors,
+                "descriptor_error": descriptor_error,
+                "failed_packages": failed_packages,
             })
             .to_string();
             Some(AutomationReply {

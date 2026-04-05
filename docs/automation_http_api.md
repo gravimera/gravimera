@@ -232,6 +232,44 @@ Notes:
 
 - `ground_origin_y` is the prefab’s “ground contact” offset (in meters) used to ground instances onto terrain when authoring scene sources. Multiply by the instance Y scale.
 
+### `POST /v1/prefabs/reload_realm`
+
+Load all **realm prefab packages** from disk into the running world’s prefab library (builtins + realm prefabs).
+
+This is useful when you:
+
+- restart the game (realm prefabs exist on disk, but may not be loaded yet)
+- switch realm/scene (the in-memory prefab library resets to builtins)
+- want `scene_sources` patch validation to recognize Gen3D-saved prefabs
+
+Request:
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/prefabs/reload_realm \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "realm_id": "default",
+  "found_packages": 12,
+  "loaded_packages": 12,
+  "loaded_defs": 36,
+  "loaded_descriptors": 12,
+  "descriptor_error": null,
+  "failed_packages": []
+}
+```
+
+Notes:
+
+- The endpoint is idempotent; it can be called repeatedly.
+- `loaded_defs` is the total number of object defs loaded across all realm prefab packages.
+
 ### `POST /v1/prefabs/duplicate`
 
 Duplicate a **realm prefab package** into a new prefab id (new package folder) in the active realm.
