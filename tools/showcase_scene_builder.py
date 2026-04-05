@@ -59,6 +59,47 @@ def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def gravimera_default_home_dir() -> Path:
+    # This builder intentionally targets the user's default Gravimera home so the generated
+    # scene is usable later without copying any repo-local artifacts.
+    return Path("~/.gravimera").expanduser()
+
+
+def read_terrain_size_m(
+    *,
+    gravimera_home: Path,
+    realm_id: str,
+    terrain_id_uuid: str,
+) -> tuple[float, float] | None:
+    """
+    Best-effort read of terrain size from the realm terrain store on disk.
+    Returns (size_x_m, size_z_m) or None if unknown.
+    """
+    path = (
+        gravimera_home
+        / "realm"
+        / str(realm_id)
+        / "terrain"
+        / str(terrain_id_uuid)
+        / "terrain_def_v1.json"
+    )
+    if not path.exists():
+        return None
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        mesh = doc.get("mesh") or {}
+        size = mesh.get("size_m") or []
+        if not (isinstance(size, list) and len(size) == 2):
+            return None
+        sx = float(size[0])
+        sz = float(size[1])
+        if not (sx > 0.0 and sz > 0.0):
+            return None
+        return (sx, sz)
+    except Exception:
+        return None
+
+
 def _clamp(v: float, lo: float, hi: float) -> float:
     if v < lo:
         return lo
@@ -550,6 +591,8 @@ def build_layout_layers(
     *,
     prefab_catalog: dict[str, dict[str, Any]],
     assets: dict[str, str],
+    layout_extent_m: float,
+    plaza_extent_m: float,
 ) -> dict[str, dict[str, Any]]:
     """
     Returns {layer_id: layer_doc}.
@@ -658,11 +701,31 @@ def build_layout_layers(
     population_fly: list[dict[str, Any]] = []
 
     spacing = 10.0
+    extent = max(spacing, float(layout_extent_m))
+    plaza_extent = max(spacing, min(float(plaza_extent_m), extent - spacing))
+
+    def snap(v: float) -> float:
+        return round(v / spacing) * spacing
 
     # --- Streets: a grid of boulevards ---
     if road:
-        extent = 140.0
-        road_lines = [-60.0, -30.0, 0.0, 30.0, 60.0]
+        if extent >= 120.0:
+            fracs = [-0.45, -0.22, 0.0, 0.22, 0.45]
+        elif extent >= 80.0:
+            fracs = [-0.4, -0.2, 0.0, 0.2, 0.4]
+        elif extent >= 55.0:
+            fracs = [-0.3, 0.0, 0.3]
+        else:
+            fracs = [0.0]
+
+        road_lines: list[float] = []
+        for f in fracs:
+            v = snap(float(f) * extent)
+            if abs(v) <= extent - spacing + 1e-3:
+                road_lines.append(v)
+        if 0.0 not in road_lines:
+            road_lines.append(0.0)
+        road_lines = sorted(set(road_lines))
         line_set = {int(round(v)) for v in road_lines}
 
         i = 0
@@ -710,7 +773,6 @@ def build_layout_layers(
 
     # --- Central plaza ---
     if plaza:
-        plaza_extent = 55.0
         ix = 0
         x = -plaza_extent
         while x <= plaza_extent + 1e-3:
@@ -736,16 +798,18 @@ def build_layout_layers(
 
     # --- Crosswalks near the center ---
     if crosswalk:
+        cross_line = snap(min(extent - spacing, max(spacing, extent * 0.22)))
+        cross_x = spacing
         for idx, (x, z, yaw) in enumerate(
             [
-                (-10.0, -30.0, 0.0),
-                (10.0, -30.0, 0.0),
-                (-10.0, 30.0, 0.0),
-                (10.0, 30.0, 0.0),
-                (-30.0, -10.0, 90.0),
-                (-30.0, 10.0, 90.0),
-                (30.0, -10.0, 90.0),
-                (30.0, 10.0, 90.0),
+                (-cross_x, -cross_line, 0.0),
+                (cross_x, -cross_line, 0.0),
+                (-cross_x, cross_line, 0.0),
+                (cross_x, cross_line, 0.0),
+                (-cross_line, -cross_x, 90.0),
+                (-cross_line, cross_x, 90.0),
+                (cross_line, -cross_x, 90.0),
+                (cross_line, cross_x, 90.0),
             ]
         ):
             cy = grounded_y(prefab_catalog, crosswalk, scale=1.0)
@@ -777,13 +841,15 @@ def build_layout_layers(
         )
     if statue:
         sy = grounded_y(prefab_catalog, statue, scale=1.1)
+        statue_dx = max(3.0, plaza_extent * 0.15)
+        statue_dz = max(2.0, plaza_extent * 0.11)
         deco.append(
             make_instance(
                 local_id="statue_center",
                 prefab_id_uuid=statue,
-                x=8.0,
+                x=statue_dx,
                 y=sy,
-                z=-6.0,
+                z=-statue_dz,
                 yaw_deg=35.0,
                 scale=1.1,
             )
@@ -791,58 +857,94 @@ def build_layout_layers(
 
     # --- Street furniture (modern core + old district) ---
     if light_neon:
-        for k, pos in enumerate(range(-120, 121, 20)):
+        lane = spacing * 1.2
+        step_m = spacing * 2.0
+        span = max(spacing * 4.0, extent - spacing * 2.0)
+        k = 0
+        pos = -span
+        while pos <= span + 1e-3:
             ly = grounded_y(prefab_catalog, light_neon, scale=1.0)
             deco.append(
-                make_instance(local_id=f"light_neon_n_{k:03}", prefab_id_uuid=light_neon, x=float(pos), y=ly, z=-12.0, yaw_deg=0.0, scale=1.0)
+                make_instance(local_id=f"light_neon_n_{k:03}", prefab_id_uuid=light_neon, x=float(pos), y=ly, z=-lane, yaw_deg=0.0, scale=1.0)
             )
             deco.append(
-                make_instance(local_id=f"light_neon_p_{k:03}", prefab_id_uuid=light_neon, x=float(pos), y=ly, z=12.0, yaw_deg=180.0, scale=1.0)
+                make_instance(local_id=f"light_neon_p_{k:03}", prefab_id_uuid=light_neon, x=float(pos), y=ly, z=lane, yaw_deg=180.0, scale=1.0)
             )
+            pos += step_m
+            k += 1
 
     if light_old:
         # Old district lamps (SE quadrant)
-        for k, pos in enumerate(range(70, 131, 15)):
+        old_base = snap(max(plaza_extent + spacing * 2.0, extent * 0.58))
+        old_end = snap(min(extent - spacing * 2.0, old_base + extent * 0.32))
+        step_m = max(12.0, spacing * 1.5)
+        k = 0
+        pos = old_base
+        while pos <= old_end + 1e-3:
             ly = grounded_y(prefab_catalog, light_old, scale=1.0)
             deco.append(
-                make_instance(local_id=f"light_old_x_{k:03}", prefab_id_uuid=light_old, x=float(pos), y=ly, z=70.0, yaw_deg=0.0, scale=1.0)
+                make_instance(local_id=f"light_old_x_{k:03}", prefab_id_uuid=light_old, x=float(pos), y=ly, z=old_base, yaw_deg=0.0, scale=1.0)
             )
             deco.append(
-                make_instance(local_id=f"light_old_z_{k:03}", prefab_id_uuid=light_old, x=70.0, y=ly, z=float(pos), yaw_deg=90.0, scale=1.0)
+                make_instance(local_id=f"light_old_z_{k:03}", prefab_id_uuid=light_old, x=old_base, y=ly, z=float(pos), yaw_deg=90.0, scale=1.0)
             )
+            pos += step_m
+            k += 1
 
     if bench_modern:
         by = grounded_y(prefab_catalog, bench_modern, scale=1.0)
-        for k, pos in enumerate(range(-40, 41, 10)):
+        bench_span = snap(plaza_extent * 0.73)
+        bench_z = plaza_extent - spacing * 0.7
+        k = 0
+        pos = -bench_span
+        while pos <= bench_span + 1e-3:
             deco.append(
-                make_instance(local_id=f"bench_m_{k:03}", prefab_id_uuid=bench_modern, x=float(pos), y=by, z=-48.0, yaw_deg=0.0, scale=1.0)
+                make_instance(local_id=f"bench_m_{k:03}", prefab_id_uuid=bench_modern, x=float(pos), y=by, z=-bench_z, yaw_deg=0.0, scale=1.0)
             )
             deco.append(
-                make_instance(local_id=f"bench_m2_{k:03}", prefab_id_uuid=bench_modern, x=float(pos), y=by, z=48.0, yaw_deg=180.0, scale=1.0)
+                make_instance(local_id=f"bench_m2_{k:03}", prefab_id_uuid=bench_modern, x=float(pos), y=by, z=bench_z, yaw_deg=180.0, scale=1.0)
             )
+            pos += spacing
+            k += 1
 
     if bench_old:
         by = grounded_y(prefab_catalog, bench_old, scale=1.0)
-        for k, pos in enumerate(range(78, 131, 13)):
+        old_base = snap(max(plaza_extent + spacing * 2.0, extent * 0.58))
+        old_end = snap(min(extent - spacing * 2.0, old_base + extent * 0.32))
+        step_m = max(11.0, spacing * 1.3)
+        old_bench_z = old_base + spacing * 1.6
+        k = 0
+        pos = old_base + spacing * 0.8
+        while pos <= old_end + 1e-3:
             deco.append(
-                make_instance(local_id=f"bench_o_{k:03}", prefab_id_uuid=bench_old, x=float(pos), y=by, z=96.0, yaw_deg=90.0, scale=1.0)
+                make_instance(local_id=f"bench_o_{k:03}", prefab_id_uuid=bench_old, x=float(pos), y=by, z=old_bench_z, yaw_deg=90.0, scale=1.0)
             )
+            pos += step_m
+            k += 1
 
     if billboard:
         hy = grounded_y(prefab_catalog, billboard, scale=1.0)
-        for k, pos in enumerate(range(-120, 121, 30)):
+        billboard_z = plaza_extent * 0.5 + spacing * 0.3
+        step_m = spacing * 3.0
+        span = max(step_m, extent - spacing * 2.0)
+        k = 0
+        pos = -span
+        while pos <= span + 1e-3:
             deco.append(
-                make_instance(local_id=f"billboard_{k:03}", prefab_id_uuid=billboard, x=float(pos), y=hy, z=28.0, yaw_deg=180.0, scale=1.0)
+                make_instance(local_id=f"billboard_{k:03}", prefab_id_uuid=billboard, x=float(pos), y=hy, z=billboard_z, yaw_deg=180.0, scale=1.0)
             )
+            pos += step_m
+            k += 1
 
     if holo_pillar:
         hy = grounded_y(prefab_catalog, holo_pillar, scale=1.0)
+        holo_r = plaza_extent + 3.0
         for k, (x, z, yaw) in enumerate(
             [
-                (0.0, -58.0, 0.0),
-                (0.0, 58.0, 180.0),
-                (-58.0, 0.0, 90.0),
-                (58.0, 0.0, -90.0),
+                (0.0, -holo_r, 0.0),
+                (0.0, holo_r, 180.0),
+                (-holo_r, 0.0, 90.0),
+                (holo_r, 0.0, -90.0),
             ]
         ):
             deco.append(
@@ -851,59 +953,87 @@ def build_layout_layers(
 
     if planter_tree:
         py = grounded_y(prefab_catalog, planter_tree, scale=1.0)
+        tree_r = plaza_extent + 3.0
         for k in range(0, 18):
             ang = (k / 18.0) * 2.0 * 3.141592653589793
-            x = 58.0 * math_cos(ang)
-            z = 58.0 * math_sin(ang)
+            x = tree_r * math_cos(ang)
+            z = tree_r * math_sin(ang)
             deco.append(make_instance(local_id=f"tree_{k:03}", prefab_id_uuid=planter_tree, x=x, y=py, z=z, yaw_deg=(k * 20.0), scale=1.0))
 
     if planter_flowers:
         py = grounded_y(prefab_catalog, planter_flowers, scale=1.0)
+        flowers_r = max(spacing * 2.0, plaza_extent * 0.8)
         for k in range(0, 24):
             ang = (k / 24.0) * 2.0 * 3.141592653589793
-            x = 44.0 * math_cos(ang)
-            z = 44.0 * math_sin(ang)
+            x = flowers_r * math_cos(ang)
+            z = flowers_r * math_sin(ang)
             deco.append(make_instance(local_id=f"flowers_{k:03}", prefab_id_uuid=planter_flowers, x=x, y=py, z=z, yaw_deg=(k * 15.0), scale=1.0))
 
     if kiosk:
         ky = grounded_y(prefab_catalog, kiosk, scale=1.0)
+        edge = plaza_extent - 1.0
+        inset = plaza_extent * 0.4
         for k, (x, z, yaw) in enumerate(
             [
-                (-22.0, -54.0, 0.0),
-                (22.0, -54.0, 0.0),
-                (-54.0, -22.0, 90.0),
-                (-54.0, 22.0, 90.0),
-                (54.0, -22.0, -90.0),
-                (54.0, 22.0, -90.0),
+                (-inset, -edge, 0.0),
+                (inset, -edge, 0.0),
+                (-edge, -inset, 90.0),
+                (-edge, inset, 90.0),
+                (edge, -inset, -90.0),
+                (edge, inset, -90.0),
             ]
         ):
             deco.append(make_instance(local_id=f"kiosk_{k:02}", prefab_id_uuid=kiosk, x=x, y=ky, z=z, yaw_deg=yaw, scale=1.0))
 
     if vendor:
         vy = grounded_y(prefab_catalog, vendor, scale=1.0)
-        for k, x in enumerate(range(-40, 41, 10)):
-            deco.append(make_instance(local_id=f"vendor_n_{k:02}", prefab_id_uuid=vendor, x=float(x), y=vy, z=-62.0, yaw_deg=0.0, scale=1.0))
-            deco.append(make_instance(local_id=f"vendor_s_{k:02}", prefab_id_uuid=vendor, x=float(x), y=vy, z=62.0, yaw_deg=180.0, scale=1.0))
+        vendor_span = snap(plaza_extent * 0.73)
+        vendor_z = plaza_extent + spacing * 0.7
+        k = 0
+        x = -vendor_span
+        while x <= vendor_span + 1e-3:
+            deco.append(make_instance(local_id=f"vendor_n_{k:02}", prefab_id_uuid=vendor, x=float(x), y=vy, z=-vendor_z, yaw_deg=0.0, scale=1.0))
+            deco.append(make_instance(local_id=f"vendor_s_{k:02}", prefab_id_uuid=vendor, x=float(x), y=vy, z=vendor_z, yaw_deg=180.0, scale=1.0))
+            x += spacing
+            k += 1
 
     if trash_bin:
         ty = grounded_y(prefab_catalog, trash_bin, scale=1.0)
-        for k, (x, z) in enumerate([(-30.0, -44.0), (30.0, -44.0), (-30.0, 44.0), (30.0, 44.0), (92.0, 92.0), (106.0, 92.0)]):
+        tx = plaza_extent * 0.55
+        tz = plaza_extent * 0.8
+        old_base = snap(max(plaza_extent + spacing * 2.0, extent * 0.58))
+        old_z = old_base + spacing * 1.2
+        for k, (x, z) in enumerate(
+            [
+                (-tx, -tz),
+                (tx, -tz),
+                (-tx, tz),
+                (tx, tz),
+                (old_base + spacing * 1.2, old_z),
+                (old_base + spacing * 2.6, old_z),
+            ]
+        ):
             deco.append(make_instance(local_id=f"trash_{k:02}", prefab_id_uuid=trash_bin, x=x, y=ty, z=z, yaw_deg=0.0, scale=1.0))
 
     if bollard:
         by = grounded_y(prefab_catalog, bollard, scale=1.0)
+        bollard_r = plaza_extent + 11.0
         for k in range(0, 32):
             ang = (k / 32.0) * 2.0 * 3.141592653589793
-            x = 66.0 * math_cos(ang)
-            z = 66.0 * math_sin(ang)
+            x = bollard_r * math_cos(ang)
+            z = bollard_r * math_sin(ang)
             deco.append(make_instance(local_id=f"bollard_{k:03}", prefab_id_uuid=bollard, x=x, y=by, z=z, yaw_deg=(k * 11.25), scale=1.0))
 
     # --- Modern buildings: ring around plaza ---
     if modern_buildings:
+        ring_base = max(plaza_extent + spacing * 1.5, min(extent - spacing * 2.0, extent * 0.66))
+        ring2 = min(extent - spacing * 1.2, ring_base + spacing)
+        ring3 = min(extent - spacing * 0.8, ring_base + spacing * 2.0)
+        radii = [(ring_base, -0.045), (ring2, 0.0), (ring3, 0.045)]
         n = float(len(modern_buildings))
         for i, b in enumerate(modern_buildings):
             base = (i / n) * 2.0 * 3.141592653589793
-            for j, (r, d_ang) in enumerate([(92.0, -0.045), (102.0, 0.0), (112.0, 0.045)]):
+            for j, (r, d_ang) in enumerate(radii):
                 ang = base + d_ang
                 x = r * math_cos(ang)
                 z = r * math_sin(ang)
@@ -926,7 +1056,15 @@ def build_layout_layers(
     if skybridge:
         sb_scale = 1.2
         sb_y = grounded_y(prefab_catalog, skybridge, scale=sb_scale) + 14.0
-        for idx, (x, z, yaw) in enumerate([(0.0, -96.0, 0.0), (-96.0, 0.0, 90.0), (0.0, 96.0, 0.0), (96.0, 0.0, 90.0)]):
+        sb_pos = max(plaza_extent + spacing * 2.0, min(extent - spacing * 2.0, extent * 0.68))
+        for idx, (x, z, yaw) in enumerate(
+            [
+                (0.0, -sb_pos, 0.0),
+                (-sb_pos, 0.0, 90.0),
+                (0.0, sb_pos, 0.0),
+                (sb_pos, 0.0, 90.0),
+            ]
+        ):
             buildings_modern.append(
                 make_instance(local_id=f"skybridge_{idx:02}", prefab_id_uuid=skybridge, x=x, y=sb_y, z=z, yaw_deg=yaw, scale=sb_scale)
             )
@@ -934,60 +1072,113 @@ def build_layout_layers(
     # --- Old district buildings: SE quadrant ---
     if old_buildings:
         rng = random.Random(777)
+        old_base = snap(max(plaza_extent + spacing * 2.0, extent * 0.58))
+        grid_step = spacing * 1.8
         for i, b in enumerate(old_buildings):
             for j in range(0, 6):
-                cx = 82.0 + (j % 3) * 18.0 + rng.uniform(-1.5, 1.5)
-                cz = 82.0 + (j // 3) * 18.0 + rng.uniform(-1.5, 1.5)
+                cx = old_base + (j % 3) * grid_step + rng.uniform(-1.5, 1.5)
+                cz = old_base + (j // 3) * grid_step + rng.uniform(-1.5, 1.5)
                 yaw = 90.0 if (j % 2 == 0) else 0.0
                 scale = 1.0 + rng.uniform(-0.08, 0.08)
                 y = grounded_y(prefab_catalog, b, scale=scale)
-                buildings_old.append(make_instance(local_id=f"old_{i:02}_{j:02}", prefab_id_uuid=b, x=cx + i * 2.0, y=y, z=cz + i * 1.0, yaw_deg=yaw, scale=scale))
+                buildings_old.append(
+                    make_instance(
+                        local_id=f"old_{i:02}_{j:02}",
+                        prefab_id_uuid=b,
+                        x=cx + i * (spacing * 0.2),
+                        y=y,
+                        z=cz + i * (spacing * 0.1),
+                        yaw_deg=yaw,
+                        scale=scale,
+                    )
+                )
 
     # --- Spaceport corner (NW quadrant) ---
+    sp_base = snap(-extent * 0.8)
     if dome_terminal:
         scale = 1.15
         y = grounded_y(prefab_catalog, dome_terminal, scale=scale)
-        district_spaceport.append(make_instance(local_id="terminal_dome", prefab_id_uuid=dome_terminal, x=-110.0, y=y, z=-92.0, yaw_deg=30.0, scale=scale))
+        district_spaceport.append(
+            make_instance(
+                local_id="terminal_dome",
+                prefab_id_uuid=dome_terminal,
+                x=sp_base,
+                y=y,
+                z=sp_base + spacing * 1.8,
+                yaw_deg=30.0,
+                scale=scale,
+            )
+        )
     if hangar:
         scale = 1.2
         y = grounded_y(prefab_catalog, hangar, scale=scale)
-        district_spaceport.append(make_instance(local_id="hangar_main", prefab_id_uuid=hangar, x=-122.0, y=y, z=-122.0, yaw_deg=45.0, scale=scale))
+        district_spaceport.append(
+            make_instance(
+                local_id="hangar_main",
+                prefab_id_uuid=hangar,
+                x=sp_base - spacing * 1.2,
+                y=y,
+                z=sp_base - spacing * 1.2,
+                yaw_deg=45.0,
+                scale=scale,
+            )
+        )
     if ship:
         scale = 1.05
         y = grounded_y(prefab_catalog, ship, scale=scale) + 0.2
-        district_spaceport.append(make_instance(local_id="ship_lander", prefab_id_uuid=ship, x=-96.0, y=y, z=-116.0, yaw_deg=-10.0, scale=scale))
+        district_spaceport.append(
+            make_instance(
+                local_id="ship_lander",
+                prefab_id_uuid=ship,
+                x=sp_base + spacing * 1.4,
+                y=y,
+                z=sp_base - spacing * 0.6,
+                yaw_deg=-10.0,
+                scale=scale,
+            )
+        )
 
     # --- Vehicles ---
     if ground_vehicles:
         rng = random.Random(123)
+        lane = spacing * 0.26
+        x_start = -extent * 0.93
+        x_end = extent * 0.93
+        x_step = (x_end - x_start) / max(1, (44 - 1))
+        old_base = snap(max(plaza_extent + spacing * 2.0, extent * 0.58))
         for idx in range(0, 44):
             pid_choice = ground_vehicles[idx % len(ground_vehicles)]
-            lane = -2.6 if (idx % 2 == 0) else 2.6
-            x = -130.0 + idx * 6.0
-            z = lane
+            lane_z = -lane if (idx % 2 == 0) else lane
+            x = x_start + idx * x_step
+            z = lane_z
             if idx % 11 == 0:
                 # A few vehicles in the old district streets.
-                x = 70.0 + rng.uniform(0.0, 55.0)
-                z = 70.0 + rng.uniform(0.0, 55.0)
+                x = old_base + rng.uniform(0.0, extent * 0.32)
+                z = old_base + rng.uniform(0.0, extent * 0.32)
             y = grounded_y(prefab_catalog, pid_choice, scale=0.95)
             vehicles_ground.append(make_instance(local_id=f"veh_g_{idx:03}", prefab_id_uuid=pid_choice, x=x, y=y, z=z, yaw_deg=0.0, scale=0.95))
 
     if air_vehicles:
         rng = random.Random(456)
+        z_start = -extent * 0.85
+        z_end = extent * 0.85
+        z_step = (z_end - z_start) / max(1, (22 - 1))
+        air_x = -(plaza_extent * 0.33)
         for idx in range(0, 22):
             pid_choice = air_vehicles[idx % len(air_vehicles)]
-            z = -120.0 + idx * 12.0
-            x = -18.0 + rng.uniform(-2.0, 2.0)
+            z = z_start + idx * z_step
+            x = air_x + rng.uniform(-2.0, 2.0)
             base = grounded_y(prefab_catalog, pid_choice, scale=1.0)
             vehicles_air.append(make_instance(local_id=f"veh_a_{idx:03}", prefab_id_uuid=pid_choice, x=x, y=base + 16.0, z=z, yaw_deg=90.0, scale=1.0))
 
     # --- Population ---
     if units:
         rng = random.Random(42)
+        pop_range = min(plaza_extent * 0.82, extent * 0.35)
         for idx in range(0, 160):
             pid_choice = units[idx % len(units)]
-            px = rng.uniform(-45.0, 45.0)
-            pz = rng.uniform(-45.0, 45.0)
+            px = rng.uniform(-pop_range, pop_range)
+            pz = rng.uniform(-pop_range, pop_range)
             scale = 1.0 + rng.uniform(-0.07, 0.07)
             uy = grounded_y(prefab_catalog, pid_choice, scale=scale)
             tint = None
@@ -1010,10 +1201,11 @@ def build_layout_layers(
 
     if drones:
         rng = random.Random(9001)
+        drone_range = plaza_extent * 1.0
         for idx in range(0, 36):
             pid_choice = drones[idx % len(drones)]
-            px = rng.uniform(-55.0, 55.0)
-            pz = rng.uniform(-55.0, 55.0)
+            px = rng.uniform(-drone_range, drone_range)
+            pz = rng.uniform(-drone_range, drone_range)
             scale = 1.0
             uy = grounded_y(prefab_catalog, pid_choice, scale=scale) + rng.uniform(6.0, 14.0)
             population_fly.append(
@@ -1069,9 +1261,16 @@ def main() -> int:
         "--floor-prompt",
         default=(
             "A perfectly flat utopian chrome plaza ground for a futuristic spaceport city. "
+            "Very large continuous ground plane: at least 320m x 320m. "
             "Subtle hexagonal micro-pattern, clean white/silver materials, faint blue neon seams, "
             "gentle wear but pristine overall. No bumps, no hills."
         ),
+    )
+    ap.add_argument(
+        "--min-terrain-size-m",
+        type=float,
+        default=260.0,
+        help="If the selected terrain is smaller than this (min axis), rebuild via GenFloor.",
     )
     args = ap.parse_args()
 
@@ -1170,17 +1369,49 @@ def main() -> int:
             dt_secs=args.dt_secs,
         )
 
-        # Terrain
+        # Terrain (GenFloor). We try to ensure a sufficiently large ground plane so the city layout
+        # doesn't spill into the void.
+        grav_home = gravimera_default_home_dir()
+        min_terrain_m = float(args.min_terrain_size_m)
         floor_id = str(manifest.get("floor_id_uuid") or "").strip()
-        if not floor_id:
-            print("Generating GenFloor terrain…")
-            floor_id = build_genfloor_flat_chrome(http, dt_secs=args.dt_secs, prompt=str(args.floor_prompt))
+
+        def _terrain_ok(terrain_id: str) -> bool:
+            size = read_terrain_size_m(gravimera_home=grav_home, realm_id=realm_id, terrain_id_uuid=terrain_id)
+            return bool(size and min(size[0], size[1]) >= min_terrain_m)
+
+        if floor_id and not _terrain_ok(floor_id):
+            size = read_terrain_size_m(gravimera_home=grav_home, realm_id=realm_id, terrain_id_uuid=floor_id)
+            print(f"warn: existing terrain too small size_m={size}; rebuilding via GenFloor")
+            floor_id = ""
+
+        attempts = 0
+        while not floor_id or not _terrain_ok(floor_id):
+            if interrupted:
+                return 130
+            attempts += 1
+            print(f"Generating GenFloor terrain… (attempt {attempts})")
+            prompt = f"{str(args.floor_prompt).strip()} Size requirement: at least {min_terrain_m:.0f}m x {min_terrain_m:.0f}m."
+            floor_id = build_genfloor_flat_chrome(http, dt_secs=args.dt_secs, prompt=prompt)
             manifest["floor_id_uuid"] = floor_id
             _write_json(manifest_path, manifest)
+            size = read_terrain_size_m(gravimera_home=grav_home, realm_id=realm_id, terrain_id_uuid=floor_id)
+            if size:
+                print(f"terrain size_m={size[0]:.1f} x {size[1]:.1f}")
+            if attempts >= 3:
+                break
 
         # Back to realm build and apply terrain selection.
         set_mode(http, "build", dt_secs=args.dt_secs)
         select_scene_terrain(http, floor_id, dt_secs=args.dt_secs)
+
+        # Layout scale derived from the terrain we ended up with.
+        terrain_size = read_terrain_size_m(gravimera_home=grav_home, realm_id=realm_id, terrain_id_uuid=floor_id)
+        if terrain_size:
+            half = 0.5 * min(float(terrain_size[0]), float(terrain_size[1]))
+            layout_extent_m = max(18.0, min(half - 8.0, 180.0))
+        else:
+            layout_extent_m = 140.0
+        plaza_extent_m = max(20.0, min(55.0, layout_extent_m * 0.45))
 
         # Import scene sources (required for run_apply_patch).
         dirs = get_active_scene_dirs(http)
@@ -1309,7 +1540,12 @@ def main() -> int:
         def _apply_layout_and_shot(tag: str) -> None:
             nonlocal next_step, shots_taken, last_layout_asset_count, last_layout_time
             prefab_catalog = get_prefab_catalog(http)
-            layers = build_layout_layers(prefab_catalog=prefab_catalog, assets=assets)
+            layers = build_layout_layers(
+                prefab_catalog=prefab_catalog,
+                assets=assets,
+                layout_extent_m=layout_extent_m,
+                plaza_extent_m=plaza_extent_m,
+            )
             patch_ops = []
             for layer_id in sorted(layers.keys()):
                 patch_ops.append({"kind": "upsert_layer", "layer_id": layer_id, "doc": layers[layer_id]})
@@ -1329,14 +1565,15 @@ def main() -> int:
             safe = re.sub(r"[^A-Za-z0-9_-]+", "_", tag).strip("_") or "shot"
             shots_taken += 1
             out_path = shots_dir / f"{shots_taken:03d}_{safe}.png"
+            overview_y = max(12.0, layout_extent_m * 0.11)
             set_camera_and_shot(
                 http,
                 x=0.0,
-                y=14.0,
+                y=overview_y,
                 z=0.0,
                 yaw=0.75,
                 pitch=-0.38,
-                zoom_t=0.9,
+                zoom_t=0.92,
                 out_path=out_path,
                 dt_secs=args.dt_secs,
             )
@@ -1467,10 +1704,11 @@ def main() -> int:
             )
             _save_manifest()
 
-        _shot(label="overview_final", x=0.0, y=16.0, z=0.0, yaw=0.75, pitch=-0.38, zoom_t=0.92)
-        _shot(label="street_plaza", x=0.0, y=2.6, z=-18.0, yaw=1.95, pitch=-0.14, zoom_t=0.05)
-        _shot(label="old_district", x=98.0, y=2.6, z=92.0, yaw=-2.35, pitch=-0.18, zoom_t=0.0)
-        _shot(label="spaceport", x=-110.0, y=5.2, z=-112.0, yaw=0.65, pitch=-0.22, zoom_t=0.15)
+        overview_y = max(14.0, layout_extent_m * 0.12)
+        _shot(label="overview_final", x=0.0, y=overview_y, z=0.0, yaw=0.75, pitch=-0.38, zoom_t=0.92)
+        _shot(label="street_plaza", x=0.0, y=2.6, z=-(plaza_extent_m * 0.33), yaw=1.95, pitch=-0.14, zoom_t=0.05)
+        _shot(label="old_district", x=(layout_extent_m * 0.7), y=2.6, z=(layout_extent_m * 0.66), yaw=-2.35, pitch=-0.18, zoom_t=0.0)
+        _shot(label="spaceport", x=-(layout_extent_m * 0.8), y=5.2, z=-(layout_extent_m * 0.8), yaw=0.65, pitch=-0.22, zoom_t=0.15)
 
         # Let brains attach in Play mode (existing engine behavior).
         set_mode(http, "play", dt_secs=args.dt_secs)
