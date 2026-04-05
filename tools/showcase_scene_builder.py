@@ -1057,6 +1057,15 @@ def main() -> int:
     )
     ap.add_argument("--dt-secs", type=float, default=1.0 / 60.0)
     ap.add_argument(
+        "--startup-timeout-secs",
+        type=float,
+        default=900.0,
+        help=(
+            "Seconds to wait for the game to compile/start and print the Automation API base URL. "
+            "First-time --release builds can take several minutes."
+        ),
+    )
+    ap.add_argument(
         "--floor-prompt",
         default=(
             "A perfectly flat utopian chrome plaza ground for a futuristic spaceport city. "
@@ -1127,7 +1136,7 @@ def main() -> int:
     api_base = ""
     http: LocalHttp | None = None
     try:
-        api_base = discover_base_url_from_log(stdout_path, timeout_secs=120.0)
+        api_base = discover_base_url_from_log(stdout_path, timeout_secs=float(args.startup_timeout_secs))
         http = LocalHttp(api_base, token=token)
         wait_health(http)
 
