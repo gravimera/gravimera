@@ -1509,27 +1509,27 @@ def build_layout_layers_wasteland(
 
     road_step = spacing * 0.7
     road_width_m = spacing * 0.5
-    road_sink_m = 0.04
+    road_sink_m = 0.08
     if road:
         info = prefab_catalog.get(road) or {}
         size = info.get("size") or []
         if isinstance(size, list) and len(size) == 3:
             road_step = _clamp(max(float(size[0]), float(size[2])), 2.5, 7.6)
             road_width_m = _clamp(min(float(size[0]), float(size[2])), 2.0, 5.0)
-            road_sink_m = _clamp(float(size[1]) * 0.35, 0.03, 0.08)
+            road_sink_m = _clamp(float(size[1]) - 0.08, 0.06, 0.14)
 
     shoulder_step = road_step
     shoulder_width_m = road_width_m * 0.9
-    shoulder_sink_m = 0.08
+    shoulder_sink_m = 0.2
     if shoulder:
         info = prefab_catalog.get(shoulder) or {}
         size = info.get("size") or []
         if isinstance(size, list) and len(size) == 3:
             shoulder_step = _clamp(max(float(size[0]), float(size[2])), 2.5, 7.5)
             shoulder_width_m = _clamp(min(float(size[0]), float(size[2])), 2.4, 4.2)
-            shoulder_sink_m = _clamp(float(size[1]) * 0.3, 0.06, 0.14)
+            shoulder_sink_m = _clamp(float(size[1]) - 0.1, 0.16, 0.32)
 
-    crosswalk_sink_m = min(road_sink_m, 0.05)
+    crosswalk_sink_m = min(road_sink_m, 0.06)
     road_lines = [0.0]
 
     palette: list[dict[str, float]] = [
@@ -1604,16 +1604,14 @@ def build_layout_layers_wasteland(
 
     if shoulder:
         shoulder_pad_positions = [
-            (snap(-extent * 0.72), market_line_z - spacing * 0.9, 0.0, 1.0),
-            (snap(-extent * 0.34), market_line_z - spacing * 0.9, 0.0, 1.0),
-            (snap(extent * 0.04), market_line_z - spacing * 0.9, 0.0, 1.0),
-            (snap(extent * 0.42), market_line_z - spacing * 0.9, 0.0, 1.0),
-            (snap(-extent * 0.7), garage_line_z + spacing * 0.75, 0.0, 1.0),
-            (snap(-extent * 0.32), garage_line_z + spacing * 0.75, 0.0, 1.0),
-            (snap(extent * 0.26), housing_line_z + spacing * 0.7, 0.0, 1.0),
-            (snap(extent * 0.62), housing_line_z + spacing * 0.7, 0.0, 1.0),
-            (utility_line_x - shoulder_width_m * 0.8, snap(extent * 0.56), 90.0, 1.0),
-            (utility_line_x - shoulder_width_m * 0.8, snap(extent * 0.88), 90.0, 1.0),
+            (snap(-extent * 0.72), market_line_z - spacing * 0.58, 0.0, 0.84),
+            (snap(-extent * 0.22), market_line_z - spacing * 0.58, 0.0, 0.84),
+            (snap(extent * 0.34), market_line_z - spacing * 0.58, 0.0, 0.84),
+            (snap(-extent * 0.72), garage_line_z + spacing * 0.58, 0.0, 0.84),
+            (snap(-extent * 0.32), garage_line_z + spacing * 0.58, 0.0, 0.84),
+            (snap(extent * 0.26), housing_line_z + spacing * 0.58, 0.0, 0.84),
+            (snap(extent * 0.7), housing_line_z + spacing * 0.58, 0.0, 0.84),
+            (utility_line_x - shoulder_width_m * 0.58, snap(extent * 0.72), 90.0, 0.84),
         ]
         for idx, (x, z, yaw_deg, scale) in enumerate(shoulder_pad_positions):
             y = grounded_y(prefab_catalog, shoulder, scale=scale) - shoulder_sink_m
@@ -1661,15 +1659,14 @@ def build_layout_layers_wasteland(
         lamp_positions: list[tuple[float, float, float]] = []
         axis_points = [
             snap(-extent * 0.78),
-            snap(-extent * 0.3),
             0.0,
-            snap(extent * 0.3),
             snap(extent * 0.78),
         ]
         for x in axis_points:
             lamp_positions.append((x, street_edge, 180.0))
             lamp_positions.append((x, -street_edge, 0.0))
-        for z in axis_points:
+        side_points = [snap(-extent * 0.56), snap(extent * 0.56)]
+        for z in side_points:
             if abs(z) <= (road_step * 1.05):
                 continue
             lamp_positions.append((street_edge, z, -90.0))

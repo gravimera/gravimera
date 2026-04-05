@@ -18,6 +18,7 @@ The scene is intentionally different from the existing utopian chrome city. It s
 - [x] (2026-04-05 19:35 CST) Refactor `tools/showcase_scene_builder.py` into a profile-driven builder so the chrome scene remains reproducible and the new wasteland town can be generated without copying the resumable runtime code.
 - [x] (2026-04-05 19:35 CST) Add the wasteland asset program and layout logic: new terrain prompt, new prefab prompts, compact crossroads layout, colorful tint pass, and frequent incremental scene patches plus screenshots.
 - [x] (2026-04-05 19:35 CST) Run the required rendered smoke test in an isolated home; the rendered game started and exited cleanly after the two-second limit.
+- [x] (2026-04-05 22:08 CST) Review the resumed live screenshots and tighten the wasteland placement rules again: sink the shoulder pads much deeper, shrink and reduce their count, and cut back the streetlamp ring so the two-street layout reads more clearly while the rest of the asset queue continues.
 - [ ] (2026-04-05 19:44 CST) Run the real rendered UI build against `~/.gravimera`, capture screenshots under `test/run_1/...`, review the result, and iterate if needed. Completed so far: started the rendered build in `test/run_1/showcase_scene_wasteland_run_01`, created scene `showcase_scene_wasteland_20260405_v1`, generated terrain `5e10e11e-62cb-4004-b353-b5d1ca145910`, and saved the first prefab `road_cracked_tile` as `c26d6753-9cea-4823-b85a-fe8c53f7bab2`. Remaining: let the queue continue until enough infrastructure exists for the first layout patch and screenshots, then continue through the rest of the asset set.
 
 ## Surprises & Discoveries
@@ -43,6 +44,9 @@ The scene is intentionally different from the existing utopian chrome city. It s
 - Observation: the initial wasteland layout overused road-adjacent tiles, which made the town read as a raised tiled grid instead of two streets with lots.
   Evidence: the first live run loaded at least 175 objects and the visible result showed continuous shoulder slabs across much of the default-sized scene. After tightening the layout rules and resuming the same run, the live API reported `12` road tiles and `10` shoulder pads with `109` total objects before later asset waves refill the scene.
 
+- Observation: even after the first layout fix, the shoulder pads still read too tall and the lamp count still over-framed the compact scene.
+  Evidence: review shots taken at `test/run_1/showcase_scene_wasteland_run_01/review_shots/overview.png`, `.../crossroads.png`, and `.../market_lane.png` on 2026-04-05 showed the thicker shoulder prefab remaining visually dominant and the crossroads reading as a sparse checkerboard under tall lamps.
+
 ## Decision Log
 
 - Decision: implement the wasteland town as a **new builder profile**, not a one-off fork.
@@ -67,6 +71,10 @@ The scene is intentionally different from the existing utopian chrome city. It s
 
 - Decision: in the wasteland profile, treat shoulder tiles as occasional pads and forecourts, not continuous street bands.
   Rationale: the generated shoulder prefab is visually thicker than a road marking and works better as a deliberate lot surface than as a full-scene strip. Reducing road rows to a single crossing line also makes the town layout more legible.
+  Date/Author: 2026-04-05 / Codex.
+
+- Decision: lower and shrink the shoulder pads aggressively, and reduce the streetlamp ring for the compact wasteland scene.
+  Rationale: this is the direct response to the live visual issue. The generated shoulder tile is too thick to sit proudly above grade in a 60m-class town, so the builder now sinks it much deeper, scales it down, and places fewer pads in straighter district-aligned rows while keeping enough structure for shops and forecourts.
   Date/Author: 2026-04-05 / Codex.
 
 ## Outcomes & Retrospective
@@ -232,3 +240,4 @@ Revision note: created this new ExecPlan on 2026-04-05 to capture the pivot from
 Revision note: updated on 2026-04-05 after implementing the new builder profile and running the required rendered smoke test, so the plan reflects the current code and the remaining step is the real scene-generation run.
 Revision note: updated again on 2026-04-05 after starting the real rendered build, so the plan records the live scene id, terrain id, first generated prefab, and the fact that the queue is still running.
 Revision note: updated again on 2026-04-05 after tightening the wasteland street layout, rerunning the rendered smoke test, and resuming the live build so the plan captures the layout correction and its API-visible effect.
+Revision note: updated again on 2026-04-05 after a second live screenshot review showed the shoulder pads still too tall, so the plan now records the deeper shoulder sinking, smaller pad footprint, and reduced lamp count refinement.
