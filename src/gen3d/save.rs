@@ -134,7 +134,11 @@ fn saved_root_interaction(collider: ColliderProfile, collision_enabled: bool) ->
             movement_block: collision_enabled.then_some(MovementBlockRule::UpperBodyFraction(
                 CROSS_BLOCK_BLOCKING_HEIGHT_FRACTION,
             )),
-            supports_standing: false,
+            // Scene physics/navigation already support standing on build objects when
+            // `supports_standing` is enabled. Gen3D outputs frequently include floor tiles,
+            // platforms, and roof-walkable structures, so enable standing whenever collision is
+            // enabled (and therefore a movement-blocking rule is present).
+            supports_standing: collision_enabled,
         },
     }
 }
