@@ -219,6 +219,7 @@ Response (shape):
       "label": "Human",
       "mobility": true,
       "size": [1.0, 2.0, 1.0],
+      "ground_origin_y": 0.0,
       "tags": [],
       "roles": [],
       "provenance_source": "gen3d"
@@ -226,6 +227,10 @@ Response (shape):
   ]
 }
 ```
+
+Notes:
+
+- `ground_origin_y` is the prefab’s “ground contact” offset (in meters) used to ground instances onto terrain when authoring scene sources. Multiply by the instance Y scale.
 
 ### `POST /v1/prefabs/duplicate`
 
@@ -500,6 +505,41 @@ Response:
 ```json
 { "ok": true }
 ```
+
+### `POST /v1/scene/terrain/select`
+
+Persist and immediately apply a terrain selection for the **active** realm+scene.
+
+This is useful for tooling that generates a floor via GenFloor and then wants the scene to use that floor
+as its active terrain (so spawns, screenshots, and later loads match).
+
+Request body:
+
+- `floor_id_uuid`:
+  - UUID string: select that floor id (must exist in the active realm floor library)
+  - `null` (or empty string): clear the scene’s terrain selection
+
+```bash
+curl -s -X POST http://127.0.0.1:8791/v1/scene/terrain/select \
+  -H 'Content-Type: application/json' \
+  -d '{"floor_id_uuid":"..."}'
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "realm_id": "default",
+  "scene_id": "default",
+  "floor_id_uuid": "..."
+}
+```
+
+Notes:
+
+- Requires rendered mode (returns `501` in headless mode).
+- Validates that the floor id exists on disk in the active realm (`404` if not found).
 
 ### `POST /v1/despawn`
 
@@ -1033,6 +1073,49 @@ Notes:
 - `frames` is clamped to `1..=1200`.
 - `dt_secs` defaults to `1/60` and is clamped to `0.001..=0.1`.
 - The game stays paused after stepping; call `/v1/resume` to run in real time.
+
+### `GET /v1/camera`
+
+Fetch a small set of camera parameters useful for reproducible screenshots.
+
+```bash
+curl -s http://127.0.0.1:8791/v1/camera
+```
+
+Response (shape):
+
+```json
+{
+  "ok": true,
+  "focus": [0.0, 2.0, 0.0],
+  "focus_initialized": true,
+  "yaw": 1.2,
+  "yaw_initialized": true,
+  "pitch": -0.2,
+  "zoom_t": 0.0
+}
+```
+
+Notes:
+
+- Requires rendered mode (returns `501` in headless mode).
+
+### `POST /v1/camera`
+
+Set camera parameters for a predictable viewpoint (useful before `/v1/screenshot`).
+
+All fields are optional; omitted fields are unchanged.
+
+Request body (shape):
+
+```json
+{ "focus": [0.0, 2.0, 0.0], "yaw": 1.2, "pitch": -0.2, "zoom_t": 0.0 }
+```
+
+Notes:
+
+- Requires rendered mode (returns `501` in headless mode).
+- `pitch` and `zoom_t` are clamped to the app’s allowed ranges.
 
 ### `POST /v1/screenshot`
 

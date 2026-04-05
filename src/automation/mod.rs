@@ -19,6 +19,7 @@ use serde::Deserialize;
 use crate::assets::SceneAssets;
 use crate::config::AppConfig;
 use crate::constants::*;
+use crate::floor_library_ui::FloorLibraryUiState;
 use crate::genfloor::{
     apply_floor_sink, floor_half_size, floor_half_size_min, sample_floor_footprint,
     ActiveWorldFloor, FloorFootprint,
@@ -402,7 +403,6 @@ struct AutomationWorld<'w, 's> {
             Option<&'static crate::gen3d::Gen3dPreviewAppliedExplodeOffset>,
         ),
     >,
-    active_floor: Res<'w, ActiveWorldFloor>,
     players: Query<'w, 's, (), With<Player>>,
     player_q: Query<'w, 's, (&'static Transform, &'static Collider), With<Player>>,
     status_contents: Query<'w, 's, &'static ObjectStatusBarContent>,
@@ -521,6 +521,12 @@ struct AutomationContext<
     gen3d: &'a mut AutomationGen3d<'gen3d_w>,
     gen_scene: &'a mut AutomationGenScene<'gen_scene_w>,
     world: &'a AutomationWorld<'world_w, 'world_s>,
+    active_floor: Option<&'a mut ActiveWorldFloor>,
+    floor_library: Option<&'a mut FloorLibraryUiState>,
+    camera_zoom: Option<&'a mut CameraZoom>,
+    camera_yaw: Option<&'a mut CameraYaw>,
+    camera_pitch: Option<&'a mut CameraPitch>,
+    camera_focus: Option<&'a mut CameraFocus>,
     mode: Option<&'a State<GameMode>>,
     next_mode: Option<&'a mut NextState<GameMode>>,
     build_scene: Option<&'a State<BuildScene>>,
@@ -545,6 +551,22 @@ struct AutomationUi<'w> {
 }
 
 #[derive(SystemParam)]
+struct AutomationCameraTerrain<'w> {
+    active_floor: Option<ResMut<'w, ActiveWorldFloor>>,
+    floor_library: Option<ResMut<'w, FloorLibraryUiState>>,
+    camera_zoom: Option<ResMut<'w, CameraZoom>>,
+    camera_yaw: Option<ResMut<'w, CameraYaw>>,
+    camera_pitch: Option<ResMut<'w, CameraPitch>>,
+    camera_focus: Option<ResMut<'w, CameraFocus>>,
+}
+
+#[derive(SystemParam)]
+struct AutomationLibraries<'w> {
+    library: ResMut<'w, ObjectLibrary>,
+    prefab_descriptors: ResMut<'w, PrefabDescriptorLibrary>,
+}
+
+#[derive(SystemParam)]
 struct AutomationMonitorIo<'w> {
     exit: MessageWriter<'w, AppExit>,
     speech_events: MessageWriter<'w, ModelSpeechBubbleCommand>,
@@ -566,10 +588,10 @@ fn automation_process_requests(
     mut next_build_scene: Option<ResMut<NextState<BuildScene>>>,
     mut io: AutomationMonitorIo,
     mut ui: AutomationUi,
-    mut library: ResMut<ObjectLibrary>,
-    mut prefab_descriptors: ResMut<PrefabDescriptorLibrary>,
+    mut libs: AutomationLibraries,
     mut gen3d: AutomationGen3d,
     mut gen_scene: AutomationGenScene,
+    mut camera_and_terrain: AutomationCameraTerrain,
     world: AutomationWorld,
 ) {
     if !runtime.enabled || !config.automation_enabled {
@@ -621,12 +643,18 @@ fn automation_process_requests(
             config: &config,
             active_realm_id,
             active_scene_id,
-            library: &mut library,
-            prefab_descriptors: &mut prefab_descriptors,
+            library: &mut libs.library,
+            prefab_descriptors: &mut libs.prefab_descriptors,
             meta_speak: &io.meta_speak,
             gen3d: &mut gen3d,
             gen_scene: &mut gen_scene,
             world: &world,
+            active_floor: camera_and_terrain.active_floor.as_deref_mut(),
+            floor_library: camera_and_terrain.floor_library.as_deref_mut(),
+            camera_zoom: camera_and_terrain.camera_zoom.as_deref_mut(),
+            camera_yaw: camera_and_terrain.camera_yaw.as_deref_mut(),
+            camera_pitch: camera_and_terrain.camera_pitch.as_deref_mut(),
+            camera_focus: camera_and_terrain.camera_focus.as_deref_mut(),
             mode: mode.as_deref(),
             next_mode: next_mode.as_deref_mut(),
             build_scene: build_scene.as_deref(),
@@ -3889,6 +3917,247 @@ fn handle_gen_scene_routes<
     }
 }
 
+#[derive(Deserialize)]
+struct CameraSetRequest {
+    #[serde(default)]
+    focus: Option<[f32; 3]>,
+    #[serde(default)]
+    yaw: Option<f32>,
+    #[serde(default)]
+    pitch: Option<f32>,
+    #[serde(default)]
+    zoom_t: Option<f32>,
+}
+
+fn handle_camera_routes<
+    'a,
+    'cmd_w,
+    'cmd_s,
+    'gen3d_w,
+    'gen_scene_w,
+    'world_w,
+    'world_s,
+    'exit_w,
+    'speech_w,
+    'toast_w,
+>(
+    ctx: &mut AutomationContext<
+        'a,
+        'cmd_w,
+        'cmd_s,
+        'gen3d_w,
+        'gen_scene_w,
+        'world_w,
+        'world_s,
+        'exit_w,
+        'speech_w,
+        'toast_w,
+    >,
+    msg: &AutomationRequest,
+) -> Option<AutomationReply> {
+    match (msg.method.as_str(), msg.path.as_str()) {
+        ("GET", "/v1/camera") => {
+            let Some(zoom) = ctx.camera_zoom.as_deref() else {
+                return Some(json_error(501, "Camera is not available in this app mode."));
+            };
+            let Some(yaw) = ctx.camera_yaw.as_deref() else {
+                return Some(json_error(501, "Camera is not available in this app mode."));
+            };
+            let Some(pitch) = ctx.camera_pitch.as_deref() else {
+                return Some(json_error(501, "Camera is not available in this app mode."));
+            };
+            let Some(focus) = ctx.camera_focus.as_deref() else {
+                return Some(json_error(501, "Camera is not available in this app mode."));
+            };
+
+            let body = serde_json::json!({
+                "ok": true,
+                "focus": [focus.position.x, focus.position.y, focus.position.z],
+                "focus_initialized": focus.initialized,
+                "yaw": yaw.yaw,
+                "yaw_initialized": yaw.initialized,
+                "pitch": pitch.pitch,
+                "zoom_t": zoom.t,
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        ("POST", "/v1/camera") => {
+            let Some(zoom) = ctx.camera_zoom.as_deref_mut() else {
+                return Some(json_error(501, "Camera is not available in this app mode."));
+            };
+            let Some(yaw) = ctx.camera_yaw.as_deref_mut() else {
+                return Some(json_error(501, "Camera is not available in this app mode."));
+            };
+            let Some(pitch) = ctx.camera_pitch.as_deref_mut() else {
+                return Some(json_error(501, "Camera is not available in this app mode."));
+            };
+            let Some(focus) = ctx.camera_focus.as_deref_mut() else {
+                return Some(json_error(501, "Camera is not available in this app mode."));
+            };
+
+            let req: CameraSetRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+
+            if let Some([x, y, z]) = req.focus {
+                if !x.is_finite() || !y.is_finite() || !z.is_finite() {
+                    return Some(json_error(400, "`focus` must contain finite numbers."));
+                }
+                focus.position = Vec3::new(x, y, z);
+                focus.initialized = true;
+            }
+            if let Some(next) = req.yaw {
+                if !next.is_finite() {
+                    return Some(json_error(400, "`yaw` must be a finite number."));
+                }
+                yaw.yaw = next;
+                yaw.initialized = true;
+            }
+            if let Some(next) = req.pitch {
+                if !next.is_finite() {
+                    return Some(json_error(400, "`pitch` must be a finite number."));
+                }
+                pitch.pitch = next.clamp(CAMERA_PITCH_DELTA_MIN_RADS, CAMERA_PITCH_DELTA_MAX_RADS);
+            }
+            if let Some(next) = req.zoom_t {
+                if !next.is_finite() {
+                    return Some(json_error(400, "`zoom_t` must be a finite number."));
+                }
+                zoom.t = next.clamp(CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX);
+            }
+
+            let body = serde_json::json!({
+                "ok": true,
+                "focus": [focus.position.x, focus.position.y, focus.position.z],
+                "focus_initialized": focus.initialized,
+                "yaw": yaw.yaw,
+                "yaw_initialized": yaw.initialized,
+                "pitch": pitch.pitch,
+                "zoom_t": zoom.t,
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        _ => Some(json_error(404, "Not found")),
+    }
+}
+
+#[derive(Deserialize)]
+struct SceneTerrainSelectRequest {
+    #[serde(default)]
+    floor_id_uuid: Option<String>,
+}
+
+fn handle_scene_terrain_routes<
+    'a,
+    'cmd_w,
+    'cmd_s,
+    'gen3d_w,
+    'gen_scene_w,
+    'world_w,
+    'world_s,
+    'exit_w,
+    'speech_w,
+    'toast_w,
+>(
+    ctx: &mut AutomationContext<
+        'a,
+        'cmd_w,
+        'cmd_s,
+        'gen3d_w,
+        'gen_scene_w,
+        'world_w,
+        'world_s,
+        'exit_w,
+        'speech_w,
+        'toast_w,
+    >,
+    msg: &AutomationRequest,
+) -> Option<AutomationReply> {
+    match (msg.method.as_str(), msg.path.as_str()) {
+        ("POST", "/v1/scene/terrain/select") => {
+            let Some(active_floor) = ctx.active_floor.as_deref_mut() else {
+                return Some(json_error(
+                    501,
+                    "Scene terrain selection requires rendered mode.",
+                ));
+            };
+            let Some(floor_library) = ctx.floor_library.as_deref_mut() else {
+                return Some(json_error(
+                    501,
+                    "Scene terrain selection requires rendered mode.",
+                ));
+            };
+
+            let req: SceneTerrainSelectRequest = match serde_json::from_slice(&msg.body) {
+                Ok(v) => v,
+                Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+
+            let realm_id = ctx.active_realm_id;
+            let scene_id = ctx.active_scene_id;
+            let mut selected: Option<u128> = None;
+
+            if let Some(id_str) = req.floor_id_uuid.as_deref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+                let uuid = match uuid::Uuid::parse_str(id_str) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        return Some(json_error(
+                            400,
+                            format!("Invalid floor_id_uuid UUID: {err}"),
+                        ))
+                    }
+                };
+                let floor_id = uuid.as_u128();
+                let _def = match crate::realm_floor_packages::load_realm_floor_def(realm_id, floor_id) {
+                    Ok(def) => def,
+                    Err(err) => return Some(json_error(404, err)),
+                };
+
+                if let Err(err) =
+                    crate::scene_floor_selection::save_scene_floor_selection(realm_id, scene_id, Some(floor_id))
+                {
+                    return Some(json_error(409, err));
+                }
+                selected = Some(floor_id);
+            } else {
+                if let Err(err) = crate::scene_floor_selection::save_scene_floor_selection(
+                    realm_id, scene_id, None,
+                ) {
+                    return Some(json_error(409, err));
+                }
+            }
+
+            // Apply immediately so subsequent `/v1/spawn` and screenshots reflect the chosen terrain.
+            crate::scene_store::apply_scene_floor_selection(realm_id, scene_id, active_floor, floor_library);
+
+            let body = serde_json::json!({
+                "ok": true,
+                "realm_id": realm_id,
+                "scene_id": scene_id,
+                "floor_id_uuid": selected.map(|id| uuid::Uuid::from_u128(id).to_string()),
+            })
+            .to_string();
+            Some(AutomationReply {
+                status: 200,
+                body: body.into_bytes(),
+                content_type: "application/json",
+            })
+        }
+        _ => Some(json_error(404, "Not found")),
+    }
+}
+
 fn handle_request_main_thread<
     'a,
     'cmd_w,
@@ -3936,6 +4205,12 @@ fn handle_request_main_thread<
     if msg.path.starts_with("/v1/ui/") {
         return handle_ui_routes(ctx, msg);
     }
+    if msg.path.starts_with("/v1/camera") {
+        return handle_camera_routes(ctx, msg);
+    }
+    if msg.path.starts_with("/v1/scene/terrain/") {
+        return handle_scene_terrain_routes(ctx, msg);
+    }
 
     let commands = &mut *ctx.commands;
     let library = &mut *ctx.library;
@@ -3948,7 +4223,7 @@ fn handle_request_main_thread<
     let scene_saves = &mut ctx.gen3d.scene_saves;
 
     let windows = &ctx.world.windows;
-    let active_floor = &ctx.world.active_floor;
+    let active_floor = ctx.active_floor.as_deref();
     let players = &ctx.world.players;
     let player_q = &ctx.world.player_q;
     let commandables = &ctx.world.commandables;
@@ -3996,6 +4271,8 @@ fn handle_request_main_thread<
                 serde_json::json!({"method":"GET","path":"/v1/health"}),
                 serde_json::json!({"method":"GET","path":"/v1/discovery"}),
                 serde_json::json!({"method":"GET","path":"/v1/state"}),
+                serde_json::json!({"method":"GET","path":"/v1/camera"}),
+                serde_json::json!({"method":"POST","path":"/v1/camera"}),
                 serde_json::json!({"method":"GET","path":"/v1/prefabs"}),
                 serde_json::json!({"method":"POST","path":"/v1/prefabs/duplicate"}),
                 serde_json::json!({"method":"POST","path":"/v1/prefabs/export_glb"}),
@@ -4010,6 +4287,7 @@ fn handle_request_main_thread<
                 serde_json::json!({"method":"POST","path":"/v1/ui/object_status_bar"}),
                 serde_json::json!({"method":"GET","path":"/v1/ui/object_status_bar/{instance_id_uuid}"}),
                 serde_json::json!({"method":"POST","path":"/v1/speak"}),
+                serde_json::json!({"method":"POST","path":"/v1/scene/terrain/select"}),
                 serde_json::json!({"method":"POST","path":"/v1/scene/save"}),
                 serde_json::json!({"method":"POST","path":"/v1/step"}),
                 serde_json::json!({"method":"POST","path":"/v1/shutdown"}),
@@ -4082,6 +4360,7 @@ fn handle_request_main_thread<
                     "label": descriptor.and_then(|d| d.label.clone()).unwrap_or(label.clone()),
                     "mobility": mobility,
                     "size": [def.size.x, def.size.y, def.size.z],
+                    "ground_origin_y": library.ground_origin_y_or_default(*prefab_id),
                     "tags": tags,
                     "roles": roles,
                     "provenance_source": provenance_source,
@@ -4507,6 +4786,12 @@ fn handle_request_main_thread<
                     "Meta Gen3D Copy requires mesh cache (rendered mode).",
                 ));
             };
+            let Some(active_floor) = active_floor else {
+                return Some(json_error(
+                    501,
+                    "Meta Gen3D Copy requires active terrain (rendered mode).",
+                ));
+            };
 
             let req: MetaGen3dActionRequest = if msg.body.is_empty() {
                 MetaGen3dActionRequest {
@@ -4798,6 +5083,12 @@ fn handle_request_main_thread<
                     "Spawning requires mesh cache (rendered mode).",
                 ));
             };
+            let Some(active_floor) = active_floor else {
+                return Some(json_error(
+                    501,
+                    "Spawning requires active terrain (rendered mode).",
+                ));
+            };
 
             let req: SpawnRequest = match serde_json::from_slice(&msg.body) {
                 Ok(v) => v,
@@ -4983,6 +5274,12 @@ fn handle_request_main_thread<
             let req: MoveRequest = match serde_json::from_slice(&msg.body) {
                 Ok(v) => v,
                 Err(err) => return Some(json_error(400, format!("Invalid JSON: {err}"))),
+            };
+            let Some(active_floor) = active_floor else {
+                return Some(json_error(
+                    501,
+                    "Move requires active terrain (rendered mode).",
+                ));
             };
             let goal = Vec2::new(req.x, req.z);
 
