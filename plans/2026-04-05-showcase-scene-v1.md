@@ -28,6 +28,7 @@ This plan also produces a resumable automation driver and a small set of new Aut
 ## Surprises & Discoveries
 
 - GenFloor may generate a small terrain by default (observed 60m x 60m), which can cause large city layouts to spill into the void; the builder should enforce a minimum terrain size and/or scale placements to the chosen terrain.
+- Gen3D “tile” prefabs (roads/sidewalks) can have small physical sizes; scene layout should derive tiling steps from prefab `size` metadata to avoid large gaps and “floating islands”.
 
 ## Decision Log
 

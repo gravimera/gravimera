@@ -700,12 +700,28 @@ def build_layout_layers(
     population_walk: list[dict[str, Any]] = []
     population_fly: list[dict[str, Any]] = []
 
+    # "City scale" placement unit for non-tile objects (benches, lights, buildings, vehicles).
+    # Tile spacing for roads/plaza is derived from prefab sizes below.
     spacing = 10.0
     extent = max(spacing, float(layout_extent_m))
     plaza_extent = max(spacing, min(float(plaza_extent_m), extent - spacing))
 
     def snap(v: float) -> float:
         return round(v / spacing) * spacing
+
+    road_step = spacing
+    if road:
+        info = prefab_catalog.get(road) or {}
+        size = info.get("size") or []
+        if isinstance(size, list) and len(size) == 3:
+            road_step = _clamp(float(size[0]), 2.0, 12.0)
+
+    plaza_step = spacing
+    if plaza:
+        info = prefab_catalog.get(plaza) or {}
+        size = info.get("size") or []
+        if isinstance(size, list) and len(size) == 3:
+            plaza_step = _clamp(float(size[0]), 0.8, 6.0)
 
     # --- Streets: a grid of boulevards ---
     if road:
@@ -726,8 +742,6 @@ def build_layout_layers(
         if 0.0 not in road_lines:
             road_lines.append(0.0)
         road_lines = sorted(set(road_lines))
-        line_set = {int(round(v)) for v in road_lines}
-
         i = 0
         for z_line in road_lines:
             x = -extent
@@ -744,7 +758,7 @@ def build_layout_layers(
                         scale=1.0,
                     )
                 )
-                x += spacing
+                x += road_step
                 i += 1
 
         i = 0
@@ -752,8 +766,8 @@ def build_layout_layers(
             z = -extent
             while z <= extent + 1e-3:
                 # Skip intersections (already covered by X roads) to reduce z-fighting.
-                if int(round(z)) in line_set:
-                    z += spacing
+                if any(abs(z - zl) < (road_step * 0.5) for zl in road_lines):
+                    z += road_step
                     i += 1
                     continue
                 y = grounded_y(prefab_catalog, road, scale=1.0)
@@ -768,7 +782,7 @@ def build_layout_layers(
                         scale=1.0,
                     )
                 )
-                z += spacing
+                z += road_step
                 i += 1
 
     # --- Central plaza ---
@@ -791,9 +805,9 @@ def build_layout_layers(
                         scale=1.0,
                     )
                 )
-                z += spacing
+                z += plaza_step
                 iz += 1
-            x += spacing
+            x += plaza_step
             ix += 1
 
     # --- Crosswalks near the center ---
