@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Build a "utopian chrome" showcase scene in the user's default Gravimera home (~/.gravimera)
+Build showcase scenes in the user's default Gravimera home (~/.gravimera)
 by driving the rendered game via the local Automation HTTP API.
 
 This tool is designed to be resumable across interruptions:
@@ -36,6 +36,19 @@ from typing import Any
 
 
 MANIFEST_VERSION = 1
+
+
+@dataclass(frozen=True)
+class SceneProfile:
+    profile_id: str
+    scene_prefix: str
+    run_dir_prefix: str
+    label_prefix: str
+    description: str
+    floor_prompt: str
+    min_terrain_size_m: float
+    layout_kind: str
+    asset_plan: list[tuple[str, str]]
 
 
 def _now_tag() -> str:
@@ -303,9 +316,9 @@ def list_scenes(http: LocalHttp, *, realm_id: str) -> set[str]:
     return set()
 
 
-def pick_versioned_scene_id(existing: set[str]) -> str:
+def pick_versioned_scene_id(existing: set[str], *, prefix: str) -> str:
     date = _today_yyyymmdd()
-    base = f"showcase_scene_{date}"
+    base = f"{prefix}_{date}"
     for v in range(1, 100):
         candidate = f"{base}_v{v}"
         if candidate not in existing:
@@ -357,12 +370,12 @@ def import_scene_sources(http: LocalHttp, src_dir: str, *, dt_secs: float) -> No
     step(http, 2, dt_secs=dt_secs)
 
 
-def ensure_run_id(manifest: dict[str, Any]) -> str:
+def ensure_run_id(manifest: dict[str, Any], *, profile_id: str) -> str:
     run_id = str(manifest.get("scene_run_id") or "").strip()
     if run_id:
         return run_id
     # Keep it stable for this run dir.
-    run_id = f"showcase_build_{_now_tag()}"
+    run_id = f"{profile_id}_build_{_now_tag()}"
     manifest["scene_run_id"] = run_id
     return run_id
 
@@ -491,7 +504,7 @@ def poll_gen3d_task(
         time.sleep(0.05)
 
 
-def build_genfloor_flat_chrome(http: LocalHttp, *, dt_secs: float, prompt: str) -> str:
+def build_genfloor_flat(http: LocalHttp, *, dt_secs: float, prompt: str) -> str:
     set_mode(http, "floor_preview", dt_secs=dt_secs)
     http.json("POST", "/v1/genfloor/new", {})
     http.json("POST", "/v1/genfloor/prompt", {"prompt": prompt})
@@ -601,7 +614,7 @@ def grounded_y(prefab_catalog: dict[str, dict[str, Any]], prefab_id_uuid: str, *
     return base * float(scale)
 
 
-def build_layout_layers(
+def build_layout_layers_chrome(
     *,
     prefab_catalog: dict[str, dict[str, Any]],
     assets: dict[str, str],
@@ -1380,8 +1393,1277 @@ def build_layout_layers(
     return layers
 
 
+def build_layout_layers_wasteland(
+    *,
+    prefab_catalog: dict[str, dict[str, Any]],
+    assets: dict[str, str],
+    layout_extent_m: float,
+    plaza_extent_m: float,
+) -> dict[str, dict[str, Any]]:
+    def pid(key: str) -> str | None:
+        value = assets.get(key)
+        prefab_id = str(value).strip() if value else ""
+        if not prefab_id:
+            return None
+        if prefab_id not in prefab_catalog:
+            return None
+        return prefab_id
+
+    road = pid("road_cracked_tile")
+    shoulder = pid("shoulder_scrap_tile") or road
+    crosswalk = pid("crosswalk_faded_tile")
+
+    streetlamp = pid("streetlamp_patchwork")
+    string_lights = pid("string_lights")
+    bench = pid("bench_scrap")
+    sign_neon = pid("shop_sign_neon")
+    sign_totem = pid("shop_totem")
+    market_stall = pid("market_stall")
+    food_cart = pid("food_cart")
+    awning = pid("awning_patchwork")
+    barrel_cluster = pid("barrel_cluster")
+    crate_stack = pid("crate_stack")
+    scrap_heap = pid("scrap_heap")
+    solar_canopy = pid("solar_canopy")
+    water_tank_small = pid("water_tank_small")
+    antenna_pole = pid("antenna_pole")
+    generator_box = pid("generator_box")
+    planter_drum = pid("planter_drum")
+    junk_fence = pid("junk_fence")
+    sat_dish = pid("sat_dish")
+
+    garage_bay = pid("garage_bay")
+    repair_shed = pid("repair_shed")
+    container_shop = pid("container_shop")
+    stacked_home = pid("stacked_home")
+    market_hall = pid("market_hall")
+    clinic_shop = pid("clinic_shop")
+    diner_bar = pid("diner_bar")
+    recycler_tower = pid("recycler_tower")
+    water_tower = pid("water_tower")
+    drone_pad = pid("drone_pad")
+    watch_post = pid("watch_post")
+    motel_block = pid("motel_block")
+
+    ground_vehicle_keys = [
+        "vehicle_buggy",
+        "vehicle_cargo_trike",
+        "vehicle_salvage_truck",
+        "vehicle_hover_sled",
+        "vehicle_market_van",
+        "vehicle_scout_bike",
+    ]
+    air_vehicle_keys = [
+        "vehicle_sky_skiff",
+        "vehicle_courier_drone",
+        "vehicle_patrol_drone",
+        "vehicle_cargo_quad",
+    ]
+    citizen_keys = [
+        "unit_robot_mechanic",
+        "unit_robot_vendor",
+        "unit_robot_sweeper",
+        "unit_robot_guard",
+        "unit_human_scavenger",
+        "unit_human_shopkeeper",
+        "unit_human_child",
+        "unit_android_clerk",
+        "unit_alien_trader",
+        "unit_alien_farmer",
+    ]
+    animal_keys = [
+        "unit_wasteland_dog",
+        "unit_pack_lizard",
+        "unit_desert_bird",
+        "unit_moss_goat",
+    ]
+    drone_keys = ["unit_drone_helper", "unit_drone_observer"]
+
+    ground_vehicles: list[str] = [value for key in ground_vehicle_keys if (value := pid(key))]
+    air_vehicles: list[str] = [value for key in air_vehicle_keys if (value := pid(key))]
+    citizens: list[str] = [value for key in citizen_keys if (value := pid(key))]
+    animals: list[str] = [value for key in animal_keys if (value := pid(key))]
+    drone_units: list[str] = [value for key in drone_keys if (value := pid(key))]
+
+    layers: dict[str, dict[str, Any]] = {}
+
+    infra_roads: list[dict[str, Any]] = []
+    infra_shoulders: list[dict[str, Any]] = []
+    district_market: list[dict[str, Any]] = []
+    district_garage: list[dict[str, Any]] = []
+    district_housing: list[dict[str, Any]] = []
+    district_utility: list[dict[str, Any]] = []
+    props: list[dict[str, Any]] = []
+    vehicles_ground: list[dict[str, Any]] = []
+    vehicles_air: list[dict[str, Any]] = []
+    population_walk: list[dict[str, Any]] = []
+    population_fly: list[dict[str, Any]] = []
+    animal_life: list[dict[str, Any]] = []
+
+    spacing = 8.0
+    extent = max(spacing * 2.0, float(layout_extent_m))
+    hub_extent = max(spacing, min(float(plaza_extent_m), extent - (spacing * 0.5)))
+
+    def snap(v: float) -> float:
+        return round(v / spacing) * spacing
+
+    road_step = spacing * 0.7
+    if road:
+        info = prefab_catalog.get(road) or {}
+        size = info.get("size") or []
+        if isinstance(size, list) and len(size) == 3:
+            road_step = _clamp(float(size[0]), 2.5, 7.0)
+
+    shoulder_step = road_step
+    if shoulder:
+        info = prefab_catalog.get(shoulder) or {}
+        size = info.get("size") or []
+        if isinstance(size, list) and len(size) == 3:
+            shoulder_step = _clamp(float(size[0]), 2.5, 7.5)
+
+    road_lines = [-road_step, 0.0, road_step]
+    shoulder_lines = [-(road_step * 2.0), road_step * 2.0]
+
+    palette: list[dict[str, float]] = [
+        {"r": 0.91, "g": 0.44, "b": 0.21, "a": 1.0},
+        {"r": 0.16, "g": 0.83, "b": 0.79, "a": 1.0},
+        {"r": 0.97, "g": 0.79, "b": 0.20, "a": 1.0},
+        {"r": 0.89, "g": 0.30, "b": 0.61, "a": 1.0},
+        {"r": 0.62, "g": 0.90, "b": 0.31, "a": 1.0},
+        {"r": 0.35, "g": 0.63, "b": 0.98, "a": 1.0},
+    ]
+
+    def palette_pick(seed: int) -> dict[str, float]:
+        return dict(palette[seed % len(palette)])
+
+    def palette_pick_muted(seed: int, *, mix: float = 0.4) -> dict[str, float]:
+        base = palette_pick(seed)
+        return {
+            "r": base["r"] * (1.0 - mix) + 0.42 * mix,
+            "g": base["g"] * (1.0 - mix) + 0.37 * mix,
+            "b": base["b"] * (1.0 - mix) + 0.32 * mix,
+            "a": 1.0,
+        }
+
+    if road:
+        for z_line in road_lines:
+            x = -extent
+            idx = 0
+            while x <= extent + 1e-3:
+                y = grounded_y(prefab_catalog, road, scale=1.0)
+                infra_roads.append(
+                    make_instance(
+                        local_id=f"road_x_{idx:03}_{int((z_line + 20.0) * 100):04}",
+                        prefab_id_uuid=road,
+                        x=x,
+                        y=y,
+                        z=z_line,
+                        yaw_deg=0.0,
+                        scale=1.0,
+                    )
+                )
+                x += road_step
+                idx += 1
+
+        for x_line in road_lines:
+            z = -extent
+            idx = 0
+            while z <= extent + 1e-3:
+                if abs(z) <= (road_step * 1.02):
+                    z += road_step
+                    idx += 1
+                    continue
+                y = grounded_y(prefab_catalog, road, scale=1.0)
+                infra_roads.append(
+                    make_instance(
+                        local_id=f"road_z_{idx:03}_{int((x_line + 20.0) * 100):04}",
+                        prefab_id_uuid=road,
+                        x=x_line,
+                        y=y,
+                        z=z,
+                        yaw_deg=90.0,
+                        scale=1.0,
+                    )
+                )
+                z += road_step
+                idx += 1
+
+    if shoulder:
+        for z_line in shoulder_lines:
+            x = -extent
+            idx = 0
+            while x <= extent + 1e-3:
+                y = grounded_y(prefab_catalog, shoulder, scale=1.0)
+                infra_shoulders.append(
+                    make_instance(
+                        local_id=f"shoulder_x_{idx:03}_{int((z_line + 20.0) * 100):04}",
+                        prefab_id_uuid=shoulder,
+                        x=x,
+                        y=y,
+                        z=z_line,
+                        yaw_deg=0.0,
+                        scale=1.0,
+                        tint_rgba=palette_pick_muted(idx, mix=0.72) if idx % 6 == 0 else None,
+                    )
+                )
+                x += shoulder_step
+                idx += 1
+
+        for x_line in shoulder_lines:
+            z = -extent
+            idx = 0
+            while z <= extent + 1e-3:
+                if abs(z) <= (shoulder_step * 0.8):
+                    z += shoulder_step
+                    idx += 1
+                    continue
+                y = grounded_y(prefab_catalog, shoulder, scale=1.0)
+                infra_shoulders.append(
+                    make_instance(
+                        local_id=f"shoulder_z_{idx:03}_{int((x_line + 20.0) * 100):04}",
+                        prefab_id_uuid=shoulder,
+                        x=x_line,
+                        y=y,
+                        z=z,
+                        yaw_deg=90.0,
+                        scale=1.0,
+                        tint_rgba=palette_pick_muted(idx + 3, mix=0.72) if idx % 7 == 0 else None,
+                    )
+                )
+                z += shoulder_step
+                idx += 1
+
+    if crosswalk:
+        cross_line = max(road_step * 1.6, hub_extent * 0.65)
+        cross_span = max(road_step * 0.85, 3.0)
+        cross_positions = [
+            (0.0, cross_line, 0.0),
+            (0.0, -cross_line, 0.0),
+            (-cross_line, 0.0, 90.0),
+            (cross_line, 0.0, 90.0),
+            (-cross_span, cross_line, 0.0),
+            (cross_span, cross_line, 0.0),
+            (-cross_span, -cross_line, 0.0),
+            (cross_span, -cross_line, 0.0),
+        ]
+        for idx, (x, z, yaw_deg) in enumerate(cross_positions):
+            y = grounded_y(prefab_catalog, crosswalk, scale=1.0)
+            props.append(
+                make_instance(
+                    local_id=f"crosswalk_{idx:02}",
+                    prefab_id_uuid=crosswalk,
+                    x=x,
+                    y=y,
+                    z=z,
+                    yaw_deg=yaw_deg,
+                    scale=1.0,
+                )
+            )
+
+    street_edge = road_step * 2.35
+    market_line_z = snap(max(street_edge + spacing * 1.0, hub_extent + spacing * 0.25))
+    housing_line_z = -market_line_z
+    garage_line_z = snap(-max(street_edge + spacing * 1.2, hub_extent + spacing * 0.55))
+    utility_line_x = snap(-max(street_edge + spacing * 1.1, hub_extent + spacing * 0.6))
+
+    if streetlamp:
+        lamp_positions: list[tuple[float, float, float]] = []
+        axis_points = [
+            snap(-extent * 0.82),
+            snap(-extent * 0.42),
+            0.0,
+            snap(extent * 0.42),
+            snap(extent * 0.82),
+        ]
+        for x in axis_points:
+            lamp_positions.append((x, street_edge, 180.0))
+            lamp_positions.append((x, -street_edge, 0.0))
+        for z in axis_points:
+            if abs(z) <= (road_step * 1.05):
+                continue
+            lamp_positions.append((street_edge, z, -90.0))
+            lamp_positions.append((-street_edge, z, 90.0))
+        for idx, (x, z, yaw_deg) in enumerate(lamp_positions):
+            y = grounded_y(prefab_catalog, streetlamp, scale=1.0)
+            props.append(
+                make_instance(
+                    local_id=f"streetlamp_{idx:02}",
+                    prefab_id_uuid=streetlamp,
+                    x=x,
+                    y=y,
+                    z=z,
+                    yaw_deg=yaw_deg,
+                    scale=1.0,
+                    tint_rgba=palette_pick_muted(idx + 1, mix=0.52) if idx % 3 == 0 else None,
+                )
+            )
+
+    if string_lights:
+        rig_xs = [snap(-extent * 0.45), 0.0, snap(extent * 0.42)]
+        for idx, x in enumerate(rig_xs):
+            scale = 1.0 + (0.08 * idx)
+            y = grounded_y(prefab_catalog, string_lights, scale=scale) + 7.5
+            props.append(
+                make_instance(
+                    local_id=f"string_lights_{idx:02}",
+                    prefab_id_uuid=string_lights,
+                    x=x,
+                    y=y,
+                    z=road_step * 0.3,
+                    yaw_deg=90.0,
+                    scale=scale,
+                    tint_rgba=palette_pick(idx + 2),
+                )
+            )
+
+    market_building_prefabs = [
+        prefab_id
+        for prefab_id in [market_hall, container_shop, diner_bar, container_shop, stacked_home, motel_block]
+        if prefab_id
+    ]
+    market_xs = [
+        snap(-extent * 0.72),
+        snap(-extent * 0.38),
+        snap(-extent * 0.05),
+        snap(extent * 0.28),
+        snap(extent * 0.62),
+    ]
+    for idx, x in enumerate(market_xs):
+        if not market_building_prefabs:
+            break
+        prefab_id = market_building_prefabs[idx % len(market_building_prefabs)]
+        scale = 0.96 + ((idx % 3) * 0.08)
+        y = grounded_y(prefab_catalog, prefab_id, scale=scale)
+        district_market.append(
+            make_instance(
+                local_id=f"market_building_{idx:02}",
+                prefab_id_uuid=prefab_id,
+                x=x,
+                y=y,
+                z=market_line_z,
+                yaw_deg=180.0,
+                scale=scale,
+                tint_rgba=palette_pick_muted(idx, mix=0.55) if idx % 2 == 0 else None,
+            )
+        )
+
+    if market_stall:
+        stall_xs = [
+            snap(-extent * 0.78),
+            snap(-extent * 0.54),
+            snap(-extent * 0.24),
+            snap(extent * 0.04),
+            snap(extent * 0.34),
+            snap(extent * 0.64),
+        ]
+        for idx, x in enumerate(stall_xs):
+            scale = 0.9 + ((idx % 2) * 0.06)
+            y = grounded_y(prefab_catalog, market_stall, scale=scale)
+            district_market.append(
+                make_instance(
+                    local_id=f"market_stall_{idx:02}",
+                    prefab_id_uuid=market_stall,
+                    x=x,
+                    y=y,
+                    z=market_line_z - spacing * 0.72,
+                    yaw_deg=180.0,
+                    scale=scale,
+                    tint_rgba=palette_pick(idx + 1),
+                )
+            )
+
+    if food_cart:
+        cart_xs = [snap(-extent * 0.46), snap(-extent * 0.08), snap(extent * 0.24), snap(extent * 0.56)]
+        for idx, x in enumerate(cart_xs):
+            scale = 0.88
+            y = grounded_y(prefab_catalog, food_cart, scale=scale)
+            district_market.append(
+                make_instance(
+                    local_id=f"food_cart_{idx:02}",
+                    prefab_id_uuid=food_cart,
+                    x=x,
+                    y=y,
+                    z=market_line_z - spacing * 1.42,
+                    yaw_deg=180.0,
+                    scale=scale,
+                    tint_rgba=palette_pick(idx + 3),
+                )
+            )
+
+    if awning:
+        awning_xs = [snap(-extent * 0.72), snap(-extent * 0.38), snap(-extent * 0.05), snap(extent * 0.28), snap(extent * 0.62)]
+        for idx, x in enumerate(awning_xs):
+            scale = 0.94
+            y = grounded_y(prefab_catalog, awning, scale=scale)
+            props.append(
+                make_instance(
+                    local_id=f"awning_{idx:02}",
+                    prefab_id_uuid=awning,
+                    x=x,
+                    y=y,
+                    z=market_line_z - spacing * 0.22,
+                    yaw_deg=180.0,
+                    scale=scale,
+                    tint_rgba=palette_pick(idx + 4),
+                )
+            )
+
+    if sign_neon:
+        sign_xs = [snap(-extent * 0.78), snap(-extent * 0.24), snap(extent * 0.18), snap(extent * 0.62)]
+        for idx, x in enumerate(sign_xs):
+            scale = 0.82
+            y = grounded_y(prefab_catalog, sign_neon, scale=scale)
+            props.append(
+                make_instance(
+                    local_id=f"sign_neon_{idx:02}",
+                    prefab_id_uuid=sign_neon,
+                    x=x,
+                    y=y,
+                    z=market_line_z - spacing * 0.32,
+                    yaw_deg=180.0,
+                    scale=scale,
+                    tint_rgba=palette_pick(idx),
+                )
+            )
+
+    if sign_totem:
+        sign_positions = [
+            (snap(-extent * 0.88), market_line_z - spacing * 0.55, 180.0),
+            (snap(extent * 0.86), market_line_z - spacing * 0.55, 180.0),
+            (snap(extent * 0.42), housing_line_z + spacing * 0.4, 0.0),
+            (snap(-extent * 0.84), garage_line_z + spacing * 0.45, 35.0),
+        ]
+        for idx, (x, z, yaw_deg) in enumerate(sign_positions):
+            scale = 0.95
+            y = grounded_y(prefab_catalog, sign_totem, scale=scale)
+            props.append(
+                make_instance(
+                    local_id=f"sign_totem_{idx:02}",
+                    prefab_id_uuid=sign_totem,
+                    x=x,
+                    y=y,
+                    z=z,
+                    yaw_deg=yaw_deg,
+                    scale=scale,
+                    tint_rgba=palette_pick(idx + 2),
+                )
+            )
+
+    garage_prefabs = [prefab_id for prefab_id in [garage_bay, repair_shed, recycler_tower] if prefab_id]
+    garage_positions = [
+        (snap(-extent * 0.72), garage_line_z, 25.0, 1.08),
+        (snap(-extent * 0.46), garage_line_z + spacing * 0.18, 8.0, 0.96),
+        (snap(-extent * 0.18), garage_line_z - spacing * 0.12, -12.0, 1.02),
+    ]
+    for idx, (x, z, yaw_deg, scale) in enumerate(garage_positions):
+        if not garage_prefabs:
+            break
+        prefab_id = garage_prefabs[idx % len(garage_prefabs)]
+        y = grounded_y(prefab_catalog, prefab_id, scale=scale)
+        district_garage.append(
+            make_instance(
+                local_id=f"garage_building_{idx:02}",
+                prefab_id_uuid=prefab_id,
+                x=x,
+                y=y,
+                z=z,
+                yaw_deg=yaw_deg,
+                scale=scale,
+                tint_rgba=palette_pick_muted(idx + 1, mix=0.6) if idx == 1 else None,
+            )
+        )
+
+    housing_prefabs = [prefab_id for prefab_id in [stacked_home, container_shop, diner_bar, motel_block, stacked_home] if prefab_id]
+    housing_positions = [
+        (snap(extent * 0.24), housing_line_z, 0.0, 0.98),
+        (snap(extent * 0.52), housing_line_z + spacing * 0.1, 0.0, 1.08),
+        (snap(extent * 0.78), housing_line_z - spacing * 0.08, 0.0, 1.02),
+        (snap(extent * 0.44), housing_line_z - spacing * 0.88, -18.0, 0.92),
+    ]
+    for idx, (x, z, yaw_deg, scale) in enumerate(housing_positions):
+        if not housing_prefabs:
+            break
+        prefab_id = housing_prefabs[idx % len(housing_prefabs)]
+        y = grounded_y(prefab_catalog, prefab_id, scale=scale)
+        district_housing.append(
+            make_instance(
+                local_id=f"housing_building_{idx:02}",
+                prefab_id_uuid=prefab_id,
+                x=x,
+                y=y,
+                z=z,
+                yaw_deg=yaw_deg,
+                scale=scale,
+                tint_rgba=palette_pick_muted(idx + 4, mix=0.62) if idx % 2 == 0 else None,
+            )
+        )
+
+    utility_prefabs = [prefab_id for prefab_id in [water_tower, clinic_shop, drone_pad, watch_post] if prefab_id]
+    utility_positions = [
+        (utility_line_x, snap(extent * 0.72), 15.0, 1.08),
+        (utility_line_x + spacing * 0.62, snap(extent * 0.48), 90.0, 0.92),
+        (utility_line_x + spacing * 1.12, snap(extent * 0.84), 0.0, 0.88),
+        (utility_line_x + spacing * 1.42, snap(extent * 0.58), 32.0, 0.82),
+    ]
+    for idx, (x, z, yaw_deg, scale) in enumerate(utility_positions):
+        if not utility_prefabs:
+            break
+        prefab_id = utility_prefabs[idx % len(utility_prefabs)]
+        y = grounded_y(prefab_catalog, prefab_id, scale=scale)
+        district_utility.append(
+            make_instance(
+                local_id=f"utility_building_{idx:02}",
+                prefab_id_uuid=prefab_id,
+                x=x,
+                y=y,
+                z=z,
+                yaw_deg=yaw_deg,
+                scale=scale,
+                tint_rgba=palette_pick_muted(idx + 2, mix=0.58) if idx == 1 else None,
+            )
+        )
+
+    if water_tank_small:
+        tank_positions = [
+            (utility_line_x + spacing * 1.15, snap(extent * 0.36)),
+            (utility_line_x + spacing * 1.62, snap(extent * 0.92)),
+        ]
+        for idx, (x, z) in enumerate(tank_positions):
+            scale = 0.9
+            y = grounded_y(prefab_catalog, water_tank_small, scale=scale)
+            district_utility.append(
+                make_instance(
+                    local_id=f"water_tank_{idx:02}",
+                    prefab_id_uuid=water_tank_small,
+                    x=x,
+                    y=y,
+                    z=z,
+                    yaw_deg=0.0,
+                    scale=scale,
+                    tint_rgba=palette_pick_muted(idx + 5, mix=0.65) if idx == 1 else None,
+                )
+            )
+
+    if solar_canopy:
+        y = grounded_y(prefab_catalog, solar_canopy, scale=0.94)
+        district_utility.append(
+            make_instance(
+                local_id="solar_canopy_main",
+                prefab_id_uuid=solar_canopy,
+                x=utility_line_x + spacing * 1.55,
+                y=y,
+                z=snap(extent * 0.34),
+                yaw_deg=90.0,
+                scale=0.94,
+                tint_rgba=palette_pick_muted(7, mix=0.38),
+            )
+        )
+
+    if junk_fence:
+        fence_positions = [
+            (utility_line_x + spacing * 0.3, snap(extent * 0.92), 90.0),
+            (utility_line_x + spacing * 0.3, snap(extent * 0.62), 90.0),
+            (utility_line_x + spacing * 0.3, snap(extent * 0.32), 90.0),
+            (utility_line_x + spacing * 1.95, snap(extent * 0.92), 90.0),
+            (utility_line_x + spacing * 1.95, snap(extent * 0.62), 90.0),
+            (utility_line_x + spacing * 1.95, snap(extent * 0.32), 90.0),
+            (utility_line_x + spacing * 1.12, snap(extent * 1.04), 0.0),
+            (utility_line_x + spacing * 1.12, snap(extent * 0.18), 0.0),
+        ]
+        for idx, (x, z, yaw_deg) in enumerate(fence_positions):
+            scale = 0.92
+            y = grounded_y(prefab_catalog, junk_fence, scale=scale)
+            district_utility.append(
+                make_instance(
+                    local_id=f"junk_fence_{idx:02}",
+                    prefab_id_uuid=junk_fence,
+                    x=x,
+                    y=y,
+                    z=z,
+                    yaw_deg=yaw_deg,
+                    scale=scale,
+                )
+            )
+
+    if sat_dish:
+        for idx, (x, z) in enumerate(
+            [
+                (utility_line_x + spacing * 1.58, snap(extent * 0.68)),
+                (snap(extent * 0.78), housing_line_z + spacing * 0.78),
+            ]
+        ):
+            scale = 0.82
+            y = grounded_y(prefab_catalog, sat_dish, scale=scale)
+            props.append(
+                make_instance(
+                    local_id=f"sat_dish_{idx:02}",
+                    prefab_id_uuid=sat_dish,
+                    x=x,
+                    y=y,
+                    z=z,
+                    yaw_deg=-25.0 if idx == 0 else 30.0,
+                    scale=scale,
+                    tint_rgba=palette_pick_muted(idx + 2, mix=0.7) if idx == 1 else None,
+                )
+            )
+
+    if antenna_pole:
+        for idx, (x, z) in enumerate(
+            [
+                (utility_line_x + spacing * 1.76, snap(extent * 0.52)),
+                (snap(-extent * 0.12), garage_line_z + spacing * 0.72),
+            ]
+        ):
+            scale = 0.94
+            y = grounded_y(prefab_catalog, antenna_pole, scale=scale)
+            props.append(
+                make_instance(
+                    local_id=f"antenna_{idx:02}",
+                    prefab_id_uuid=antenna_pole,
+                    x=x,
+                    y=y,
+                    z=z,
+                    yaw_deg=0.0,
+                    scale=scale,
+                )
+            )
+
+    if generator_box:
+        generator_positions = [
+            (snap(-extent * 0.24), garage_line_z + spacing * 0.98),
+            (utility_line_x + spacing * 1.28, snap(extent * 0.22)),
+            (snap(extent * 0.68), housing_line_z + spacing * 0.76),
+        ]
+        for idx, (x, z) in enumerate(generator_positions):
+            scale = 0.86
+            y = grounded_y(prefab_catalog, generator_box, scale=scale)
+            props.append(
+                make_instance(
+                    local_id=f"generator_{idx:02}",
+                    prefab_id_uuid=generator_box,
+                    x=x,
+                    y=y,
+                    z=z,
+                    yaw_deg=90.0 if idx == 0 else 0.0,
+                    scale=scale,
+                    tint_rgba=palette_pick_muted(idx + 3, mix=0.68) if idx == 2 else None,
+                )
+            )
+
+    if barrel_cluster:
+        barrel_positions = [
+            (snap(-extent * 0.58), garage_line_z + spacing * 0.82),
+            (snap(-extent * 0.34), garage_line_z + spacing * 0.56),
+            (snap(-extent * 0.14), garage_line_z + spacing * 1.02),
+            (snap(extent * 0.12), market_line_z - spacing * 0.9),
+            (snap(extent * 0.72), market_line_z - spacing * 0.82),
+        ]
+        for idx, (x, z) in enumerate(barrel_positions):
+            scale = 0.82
+            y = grounded_y(prefab_catalog, barrel_cluster, scale=scale)
+            props.append(
+                make_instance(
+                    local_id=f"barrels_{idx:02}",
+                    prefab_id_uuid=barrel_cluster,
+                    x=x,
+                    y=y,
+                    z=z,
+                    yaw_deg=18.0 * idx,
+                    scale=scale,
+                    tint_rgba=palette_pick(idx + 5) if idx in (3, 4) else None,
+                )
+            )
+
+    if crate_stack:
+        crate_positions = [
+            (snap(-extent * 0.76), garage_line_z + spacing * 0.32),
+            (snap(-extent * 0.44), garage_line_z + spacing * 1.18),
+            (snap(-extent * 0.02), market_line_z - spacing * 1.02),
+            (snap(extent * 0.46), market_line_z - spacing * 1.08),
+            (snap(extent * 0.54), housing_line_z + spacing * 0.54),
+        ]
+        for idx, (x, z) in enumerate(crate_positions):
+            scale = 0.88
+            y = grounded_y(prefab_catalog, crate_stack, scale=scale)
+            props.append(
+                make_instance(
+                    local_id=f"crates_{idx:02}",
+                    prefab_id_uuid=crate_stack,
+                    x=x,
+                    y=y,
+                    z=z,
+                    yaw_deg=-12.0 * idx,
+                    scale=scale,
+                    tint_rgba=palette_pick_muted(idx + 1, mix=0.7) if idx == 2 else None,
+                )
+            )
+
+    if scrap_heap:
+        scrap_positions = [
+            (snap(-extent * 0.82), garage_line_z - spacing * 0.32),
+            (snap(-extent * 0.26), garage_line_z - spacing * 0.24),
+            (snap(extent * 0.82), housing_line_z - spacing * 0.42),
+        ]
+        for idx, (x, z) in enumerate(scrap_positions):
+            scale = 1.0 + (0.1 * idx)
+            y = grounded_y(prefab_catalog, scrap_heap, scale=scale)
+            props.append(
+                make_instance(
+                    local_id=f"scrap_heap_{idx:02}",
+                    prefab_id_uuid=scrap_heap,
+                    x=x,
+                    y=y,
+                    z=z,
+                    yaw_deg=25.0 * idx,
+                    scale=scale,
+                )
+            )
+
+    if bench:
+        bench_positions = [
+            (snap(-extent * 0.44), market_line_z - spacing * 1.74, 180.0),
+            (snap(extent * 0.24), market_line_z - spacing * 1.74, 180.0),
+            (snap(extent * 0.54), housing_line_z + spacing * 1.14, 0.0),
+            (utility_line_x + spacing * 1.04, snap(extent * 0.12), -90.0),
+        ]
+        for idx, (x, z, yaw_deg) in enumerate(bench_positions):
+            scale = 0.88
+            y = grounded_y(prefab_catalog, bench, scale=scale)
+            props.append(
+                make_instance(
+                    local_id=f"bench_{idx:02}",
+                    prefab_id_uuid=bench,
+                    x=x,
+                    y=y,
+                    z=z,
+                    yaw_deg=yaw_deg,
+                    scale=scale,
+                    tint_rgba=palette_pick_muted(idx + 4, mix=0.76) if idx == 2 else None,
+                )
+            )
+
+    if planter_drum:
+        planter_positions = [
+            (snap(extent * 0.26), housing_line_z + spacing * 0.72),
+            (snap(extent * 0.74), housing_line_z + spacing * 0.66),
+            (snap(-extent * 0.12), market_line_z - spacing * 1.58),
+            (snap(extent * 0.86), market_line_z - spacing * 0.54),
+        ]
+        for idx, (x, z) in enumerate(planter_positions):
+            scale = 0.78
+            y = grounded_y(prefab_catalog, planter_drum, scale=scale)
+            props.append(
+                make_instance(
+                    local_id=f"planter_{idx:02}",
+                    prefab_id_uuid=planter_drum,
+                    x=x,
+                    y=y,
+                    z=z,
+                    yaw_deg=0.0,
+                    scale=scale,
+                    tint_rgba=palette_pick(idx + 2),
+                )
+            )
+
+    if ground_vehicles:
+        parking_positions = [
+            (snap(-extent * 0.78), road_step * 2.8, 180.0, 0.92),
+            (snap(-extent * 0.42), road_step * 2.75, 180.0, 0.9),
+            (snap(extent * 0.14), road_step * 2.7, 180.0, 0.95),
+            (snap(extent * 0.58), road_step * 2.78, 180.0, 0.88),
+            (snap(-extent * 0.86), -street_edge + road_step * 0.2, 0.0, 0.96),
+            (snap(-extent * 0.54), -street_edge + road_step * 0.12, 0.0, 0.92),
+            (snap(extent * 0.22), -street_edge + road_step * 0.08, 0.0, 0.84),
+            (snap(extent * 0.74), -street_edge + road_step * 0.14, 0.0, 0.9),
+            (snap(-extent * 0.68), garage_line_z + spacing * 0.86, 18.0, 0.94),
+            (snap(-extent * 0.3), garage_line_z + spacing * 0.88, -22.0, 0.88),
+            (snap(extent * 0.48), housing_line_z + spacing * 1.18, 10.0, 0.9),
+            (utility_line_x + spacing * 0.86, snap(extent * 0.16), 90.0, 0.82),
+        ]
+        for idx, (x, z, yaw_deg, scale) in enumerate(parking_positions):
+            prefab_id = ground_vehicles[idx % len(ground_vehicles)]
+            y = grounded_y(prefab_catalog, prefab_id, scale=scale)
+            vehicles_ground.append(
+                make_instance(
+                    local_id=f"ground_vehicle_{idx:02}",
+                    prefab_id_uuid=prefab_id,
+                    x=x,
+                    y=y,
+                    z=z,
+                    yaw_deg=yaw_deg,
+                    scale=scale,
+                    tint_rgba=palette_pick(idx) if idx % 2 == 0 else None,
+                )
+            )
+
+    if air_vehicles:
+        air_positions = [
+            (0.0, 0.0, 45.0, 1.02, 10.0),
+            (snap(-extent * 0.38), snap(extent * 0.08), 65.0, 0.86, 7.5),
+            (snap(extent * 0.42), snap(-extent * 0.18), -20.0, 0.82, 7.2),
+            (utility_line_x + spacing * 1.2, snap(extent * 0.64), 90.0, 0.88, 8.0),
+            (snap(-extent * 0.56), garage_line_z + spacing * 1.28, 15.0, 0.9, 7.8),
+            (snap(extent * 0.8), market_line_z - spacing * 0.6, 180.0, 0.82, 6.6),
+            (snap(extent * 0.2), market_line_z - spacing * 0.2, 145.0, 0.8, 6.2),
+            (snap(-extent * 0.08), housing_line_z + spacing * 1.26, -70.0, 0.78, 6.8),
+        ]
+        for idx, (x, z, yaw_deg, scale, altitude) in enumerate(air_positions):
+            prefab_id = air_vehicles[idx % len(air_vehicles)]
+            y = grounded_y(prefab_catalog, prefab_id, scale=scale) + altitude
+            vehicles_air.append(
+                make_instance(
+                    local_id=f"air_vehicle_{idx:02}",
+                    prefab_id_uuid=prefab_id,
+                    x=x,
+                    y=y,
+                    z=z,
+                    yaw_deg=yaw_deg,
+                    scale=scale,
+                    tint_rgba=palette_pick_muted(idx + 2, mix=0.34),
+                )
+            )
+
+    if citizens:
+        rng = random.Random(20260405)
+        citizen_spots: list[tuple[float, float, float]] = []
+        for x in [snap(-extent * 0.72), snap(-extent * 0.46), snap(-extent * 0.2), snap(extent * 0.08), snap(extent * 0.36), snap(extent * 0.66)]:
+            citizen_spots.append((x, market_line_z - spacing * 1.55, 180.0))
+        for x in [snap(-extent * 0.18), snap(0.0), snap(extent * 0.22), snap(extent * 0.54)]:
+            citizen_spots.append((x, street_edge - spacing * 0.08, 180.0))
+            citizen_spots.append((x, -street_edge + spacing * 0.08, 0.0))
+        for z in [snap(-extent * 0.68), snap(-extent * 0.32), snap(extent * 0.24), snap(extent * 0.58)]:
+            citizen_spots.append((street_edge - spacing * 0.08, z, -90.0))
+        citizen_spots.extend(
+            [
+                (snap(-extent * 0.58), garage_line_z + spacing * 0.62, 35.0),
+                (snap(-extent * 0.22), garage_line_z + spacing * 0.86, -22.0),
+                (snap(extent * 0.52), housing_line_z + spacing * 0.92, 10.0),
+                (utility_line_x + spacing * 1.08, snap(extent * 0.22), 85.0),
+                (utility_line_x + spacing * 1.48, snap(extent * 0.74), -20.0),
+                (snap(-extent * 0.02), 0.0, 120.0),
+            ]
+        )
+        for idx, (x, z, yaw_deg) in enumerate(citizen_spots):
+            prefab_id = citizens[idx % len(citizens)]
+            scale = 0.96 + rng.uniform(-0.08, 0.07)
+            y = grounded_y(prefab_catalog, prefab_id, scale=scale)
+            tint = None
+            if idx % 9 == 0:
+                tint = palette_pick(idx + 1)
+            elif idx % 7 == 0:
+                tint = palette_pick_muted(idx + 2, mix=0.26)
+            population_walk.append(
+                make_instance(
+                    local_id=f"citizen_{idx:03}",
+                    prefab_id_uuid=prefab_id,
+                    x=x + rng.uniform(-1.0, 1.0),
+                    y=y,
+                    z=z + rng.uniform(-0.8, 0.8),
+                    yaw_deg=yaw_deg + rng.uniform(-40.0, 40.0),
+                    scale=scale,
+                    tint_rgba=tint,
+                )
+            )
+
+    if animals:
+        rng = random.Random(5150)
+        animal_spots = [
+            (utility_line_x + spacing * 1.12, snap(extent * 0.84)),
+            (utility_line_x + spacing * 1.42, snap(extent * 0.56)),
+            (utility_line_x + spacing * 1.64, snap(extent * 0.3)),
+            (snap(extent * 0.64), housing_line_z + spacing * 0.32),
+            (snap(extent * 0.26), housing_line_z + spacing * 0.44),
+            (snap(-extent * 0.24), market_line_z - spacing * 1.22),
+            (snap(extent * 0.08), market_line_z - spacing * 1.08),
+            (snap(-extent * 0.72), garage_line_z + spacing * 0.18),
+        ]
+        for idx, (x, z) in enumerate(animal_spots):
+            prefab_id = animals[idx % len(animals)]
+            scale = 0.9 + rng.uniform(-0.06, 0.14)
+            y = grounded_y(prefab_catalog, prefab_id, scale=scale)
+            animal_life.append(
+                make_instance(
+                    local_id=f"animal_{idx:02}",
+                    prefab_id_uuid=prefab_id,
+                    x=x + rng.uniform(-0.9, 0.9),
+                    y=y,
+                    z=z + rng.uniform(-0.9, 0.9),
+                    yaw_deg=rng.uniform(0.0, 360.0),
+                    scale=scale,
+                    tint_rgba=palette_pick_muted(idx + 4, mix=0.5) if idx in (2, 5) else None,
+                )
+            )
+
+    if drone_units:
+        rng = random.Random(9901)
+        drone_spots = [
+            (snap(-extent * 0.48), street_edge, 8.0),
+            (0.0, 0.0, 10.0),
+            (snap(extent * 0.44), -street_edge, 7.5),
+            (utility_line_x + spacing * 1.28, snap(extent * 0.66), 9.0),
+            (snap(-extent * 0.52), garage_line_z + spacing * 0.78, 6.5),
+            (snap(extent * 0.62), market_line_z - spacing * 0.52, 8.2),
+            (snap(extent * 0.36), housing_line_z + spacing * 0.88, 6.8),
+            (snap(-extent * 0.14), market_line_z - spacing * 1.4, 7.4),
+        ]
+        for idx, (x, z, altitude) in enumerate(drone_spots):
+            prefab_id = drone_units[idx % len(drone_units)]
+            scale = 0.92 + (0.04 * (idx % 2))
+            y = grounded_y(prefab_catalog, prefab_id, scale=scale) + altitude
+            population_fly.append(
+                make_instance(
+                    local_id=f"drone_unit_{idx:02}",
+                    prefab_id_uuid=prefab_id,
+                    x=x + rng.uniform(-0.8, 0.8),
+                    y=y,
+                    z=z + rng.uniform(-0.8, 0.8),
+                    yaw_deg=rng.uniform(0.0, 360.0),
+                    scale=scale,
+                    tint_rgba=palette_pick(idx + 3),
+                )
+            )
+
+    layers["infra_roads"] = layer_doc_explicit("infra_roads", infra_roads)
+    layers["infra_shoulders"] = layer_doc_explicit("infra_shoulders", infra_shoulders)
+    layers["district_market"] = layer_doc_explicit("district_market", district_market)
+    layers["district_garage"] = layer_doc_explicit("district_garage", district_garage)
+    layers["district_housing"] = layer_doc_explicit("district_housing", district_housing)
+    layers["district_utility"] = layer_doc_explicit("district_utility", district_utility)
+    layers["props"] = layer_doc_explicit("props", props)
+    layers["vehicles_ground"] = layer_doc_explicit("vehicles_ground", vehicles_ground)
+    layers["vehicles_air"] = layer_doc_explicit("vehicles_air", vehicles_air)
+    layers["population_walk"] = layer_doc_explicit("population_walk", population_walk)
+    layers["population_fly"] = layer_doc_explicit("population_fly", population_fly)
+    layers["animal_life"] = layer_doc_explicit("animal_life", animal_life)
+    return layers
+
+
+def chrome_asset_plan() -> list[tuple[str, str]]:
+    return [
+        ("road_tile", "A modular futuristic chrome road tile for a utopian city boulevard. Clean white/silver materials, subtle lane markings, embedded blue neon strips. No text, no logos."),
+        ("sidewalk_tile", "A modular futuristic sidewalk tile: chrome + white ceramic, subtle hex micro-pattern, clean utopian design. No text."),
+        ("plaza_tile", "A modular utopian chrome plaza tile: clean white/silver, hex micro pattern, faint blue seams, suitable for a large city plaza. No text."),
+        ("crosswalk_tile", "A modular futuristic crosswalk tile: clean white stripes embedded into chrome road surface, subtle blue edge lights. No text."),
+        ("streetlight_neon", "A slim futuristic neon streetlight: chrome pole, soft blue light, utopian city style. No text."),
+        ("streetlight_old", "An old-style street lamp: classic shape, warm glass, restored and clean, with subtle chrome futuristic additions. No text."),
+        ("bench_modern", "A modern futuristic public bench: chrome frame, white composite seat, minimal utopian design. No text."),
+        ("bench_old", "A vintage public bench: cast iron and wood, clean and maintained, with subtle futuristic chrome reinforcements. No text."),
+        ("billboard_holo", "A futuristic holographic billboard sign: chrome frame, translucent hologram panel, utopian city. No text."),
+        ("holo_sign_pillar", "A holographic information pillar: chrome base, floating UI glow, soft blue/teal light, utopian city. No text."),
+        ("fountain_chrome", "A sculptural utopian chrome fountain: clean white water effect, subtle blue lighting, centerpiece for a plaza. No text."),
+        ("statue_abstract", "An abstract public art statue: chrome and white composite, elegant curves, futuristic utopian sculpture. No text."),
+        ("kiosk_info", "A futuristic public information kiosk: chrome shell, glowing blue screen, minimal design. No text."),
+        ("vendor_stall", "A small futuristic vendor stall / market booth: chrome frame, clean canopy, subtle neon accents. No text."),
+        ("planter_tree", "A large planter with a small clean futuristic tree: chrome planter bowl, healthy greenery, utopian city. No text."),
+        ("planter_flowers", "A planter with colorful flowers: clean chrome base, well-maintained, utopian city decoration. No text."),
+        ("trash_bin", "A futuristic public trash bin: chrome and white, minimal design, clean and maintained. No text."),
+        ("bollard", "A street safety bollard: chrome cylinder with subtle blue glow ring, utopian city. No text."),
+        ("tower_chrome_tall", "A tall utopian chrome skyscraper tower: sleek clean design, subtle blue light seams, large windows, futuristic. No text."),
+        ("tower_chrome_mid", "A mid-rise utopian chrome building with terraces: clean white and silver materials, futuristic. No text."),
+        ("tower_chrome_spire", "A very tall chrome spire tower: needle-like silhouette, glowing accents, futuristic spaceport city. No text."),
+        ("tower_chrome_twist", "A twisting modern skyscraper: chrome and glass, elegant spiral form, utopian futuristic city. No text."),
+        ("tower_glass_arc", "A glass-and-chrome arc-shaped high-rise: clean futuristic architecture, soft blue internal lighting. No text."),
+        ("residential_pods", "A residential building with modular balcony pods: chrome and white panels, clean utopian design, futuristic. No text."),
+        ("hotel_sleek", "A sleek futuristic hotel building: chrome facade, vertical light strips, clean utopian city style. No text."),
+        ("lab_research", "A futuristic research lab building: chrome + white composite, antenna arrays, clean utopian design. No text."),
+        ("mall_plaza", "A low-rise futuristic commercial plaza/mall: clean chrome structure, canopies, open frontage, utopian city. No text."),
+        ("skybridge_module", "An elevated skybridge / pedestrian walkway module: chrome frame, transparent floor panels, soft blue lights. No text."),
+        ("building_old_brick", "An old-style brick and stone building with art-deco ornaments and subtle futuristic chrome additions, clean and maintained. No text."),
+        ("building_old_artdeco", "A restored art-deco building: stone and metal ornaments, clean, with subtle neon chrome signage frames. No text."),
+        ("building_old_clocktower", "A historic clocktower building: stone base, clean and maintained, with futuristic chrome conduits and blue lights. No text."),
+        ("building_old_market", "An old market hall building: brick and iron structure, clean, with futuristic lighting and chrome details. No text."),
+        ("building_old_factory", "A converted old factory building: brick, tall windows, clean, with futuristic chrome additions. No text."),
+        ("building_old_shrine", "A small old shrine/chapel building: stone and wood, respectful, clean, with subtle futuristic lights. No text."),
+        ("building_old_townhouse", "A narrow townhouse building: old brick facade, clean and maintained, subtle chrome future retrofit. No text."),
+        ("dome_terminal", "A dome-shaped transit terminal building: chrome and glass, clean utopian spaceport architecture. No text."),
+        ("hangar_spaceport", "A spaceport hangar building: large doors, chrome structure, clean, subtle blue runway lights. No text."),
+        ("ship_starship_lander", "A small starship lander parked on a plaza: sleek chrome hull, soft blue lights, utopian interstellar era. No text."),
+        ("vehicle_hovercar", "A ground hovercar vehicle: sleek chrome body, blue neon accents, futuristic utopian city car. No text."),
+        ("vehicle_hovercar_taxi", "A futuristic hover taxi: chrome body, soft yellow accent stripe, clean utopian design. No text."),
+        ("vehicle_hoverbike", "A sleek hoverbike: chrome frame, blue neon strip, futuristic utopian city. No text."),
+        ("vehicle_cargo_truck", "A futuristic cargo truck: hover-capable, chrome and white panels, utilitarian but clean, utopian city. No text."),
+        ("vehicle_service_van", "A futuristic service van: chrome, clean, maintenance vehicle for utopian city. No text."),
+        ("vehicle_police_patrol", "A futuristic police patrol vehicle: chrome armor, blue light bar, clean utopian style, non-aggressive. No text."),
+        ("vehicle_skybus", "A flying sky-bus for a utopian spaceport city: clean chrome, large windows, gentle blue lights. No text."),
+        ("vehicle_aerial_taxi", "A small aerial taxi vehicle: compact chrome craft, blue lights, utopian city sky traffic. No text."),
+        ("vehicle_drone_courier", "A courier drone vehicle: small flying cargo drone, chrome shell, soft blue lights. No text."),
+        ("vehicle_shuttle", "A small passenger shuttle: hovering/flying craft, chrome and glass, utopian spaceport city. No text."),
+        ("unit_robot_worker", "A friendly humanoid robot worker unit that can walk: clean chrome and white panels, futuristic utopian city. No text."),
+        ("unit_robot_security", "A security robot unit that can walk: sleek chrome armor, blue visor, non-threatening but capable. No text."),
+        ("unit_robot_medic", "A medical assistant robot unit: white and chrome, soft green/blue lights, friendly, can walk. No text."),
+        ("unit_robot_vendor", "A vendor robot unit: small friendly robot with a tray, chrome body, can walk. No text."),
+        ("unit_alien_diplomat", "A tall elegant alien diplomat unit that can walk: smooth bioluminescent skin, futuristic robes, friendly. No text."),
+        ("unit_alien_merchant", "An alien merchant unit that can walk: short and round body, colorful fabric packs, friendly. No text."),
+        ("unit_alien_scientist", "An alien scientist unit that can walk: calm posture, lab coat-like futuristic clothing, friendly. No text."),
+        ("unit_alien_child", "A small alien child unit that can walk: cute proportions, curious, friendly, futuristic clothing. No text."),
+        ("unit_human_civilian", "A human civilian unit that can walk: futuristic utopian clothing, diverse and friendly. No text."),
+        ("unit_human_pilot", "A human pilot unit that can walk: clean futuristic flight suit, utopian spaceport era. No text."),
+        ("unit_android_artist", "An android artist unit that can walk: chrome body, colorful accent scarf, friendly, utopian city. No text."),
+        ("unit_alien_guardian", "A tall alien guardian unit that can walk: elegant armor, chrome accents, calm and protective. No text."),
+        ("unit_drone_camera", "A small flying camera drone unit: chrome sphere with lenses, soft blue lights, utopian city. No text."),
+        ("unit_drone_security", "A small security drone unit: chrome shell, blue lights, friendly but vigilant, hovering. No text."),
+    ]
+
+
+def wasteland_asset_plan() -> list[tuple[str, str]]:
+    return [
+        ("road_cracked_tile", "A modular cracked wasteland road tile for a compact sci-fi frontier town. Faded lane paint, patched asphalt, dust, salvage repairs, readable from above. No text."),
+        ("shoulder_scrap_tile", "A modular roadside shoulder tile with packed dust, concrete patches, scrap metal edging, and colorful salvage paint accents. No text."),
+        ("crosswalk_faded_tile", "A modular faded crossing tile with worn paint, patchwork metal insets, and frontier-town sci-fi wear. No text."),
+        ("streetlamp_patchwork", "A patchwork street lamp made from salvaged metal and practical sci-fi fixtures, colorful bulbs, readable silhouette. No text."),
+        ("string_lights", "A hanging strand of market lights for a colorful wasteland street, improvised wiring, festive bulbs, frontier sci-fi look. No text."),
+        ("bench_scrap", "A street bench assembled from salvaged metal and wood planks, practical and lived-in. No text."),
+        ("shop_sign_neon", "A small colorful sci-fi shop sign built from salvage metal and neon tubing, no letters, just symbolic shapes. No text."),
+        ("shop_totem", "A vertical roadside shop totem made from patched metal plates, bulbs, and glowing shapes, colorful frontier style. No text."),
+        ("market_stall", "A colorful market stall for a post-apocalyptic sci-fi town, patched tarps, salvaged frame, goods implied, inviting. No text."),
+        ("food_cart", "A small roadside food or tea cart for a wasteland sci-fi town, colorful canopy, salvaged wheels, everyday-life feel. No text."),
+        ("awning_patchwork", "A patchwork storefront awning made from tarps, salvaged sheets, and bright painted panels. No text."),
+        ("barrel_cluster", "A cluster of storage barrels and drums, practical salvage-town clutter, some bright paint stripes. No text."),
+        ("crate_stack", "A stack of shipping crates and supply boxes for a frontier market or garage. No text."),
+        ("scrap_heap", "A sculptural heap of scrap parts, broken panels, and useful salvage for a repair yard. No text."),
+        ("solar_canopy", "A compact solar canopy for a small wasteland town utility yard, salvaged but functional sci-fi technology. No text."),
+        ("water_tank_small", "A small elevated water tank or cistern for a frontier settlement, patched metal, colorful maintenance marks. No text."),
+        ("antenna_pole", "A thin communications antenna mast with salvaged braces, everyday sci-fi frontier utility. No text."),
+        ("generator_box", "A practical generator or battery box for a wasteland town utility corner, patched panels and cables. No text."),
+        ("planter_drum", "A colorful planter made from reused industrial drums with hardy plants, cheerful frontier street decoration. No text."),
+        ("junk_fence", "A fence section built from scrap panels, poles, and salvaged mesh, modular and readable. No text."),
+        ("sat_dish", "A small salvaged satellite dish for a sci-fi frontier roof or yard. No text."),
+        ("garage_bay", "A repair garage building for a sci-fi wasteland town, salvaged metal doors, practical service bay, colorful details. No text."),
+        ("repair_shed", "A compact mechanic shed with tools, patched walls, and lived-in sci-fi salvage-town character. No text."),
+        ("container_shop", "A storefront built from stacked shipping containers and colorful salvage panels, clearly a small shop. No text."),
+        ("stacked_home", "A small stacked home made from salvaged modules and patched walls, warm everyday-life feel, colorful cloth accents. No text."),
+        ("market_hall", "A low market hall building for a colorful frontier town, patched roof, open frontage, sci-fi salvage style. No text."),
+        ("clinic_shop", "A small clinic or supply shop building with practical sci-fi equipment and welcoming colorful accents. No text."),
+        ("diner_bar", "A compact diner or tea bar building for a sci-fi wasteland town, cozy and colorful, mixed salvage and retro-future style. No text."),
+        ("recycler_tower", "A recycling or salvage-processing tower building, functional and slightly improvised, frontier sci-fi town scale. No text."),
+        ("water_tower", "A tall water tower structure for a small settlement, patched steel and colored support braces. No text."),
+        ("drone_pad", "A compact drone landing pad or dispatch shack for a frontier town, practical sci-fi design. No text."),
+        ("watch_post", "A small lookout or security post made from salvage metal and practical sci-fi equipment. No text."),
+        ("motel_block", "A compact lodging block or bunkhouse for a frontier town, patched facade, colorful doors or awnings. No text."),
+        ("vehicle_buggy", "A small wasteland buggy vehicle with exposed suspension, salvage armor, and colorful painted panels. No text."),
+        ("vehicle_cargo_trike", "A three-wheeled cargo vehicle for a frontier market town, practical, colorful, and everyday. No text."),
+        ("vehicle_salvage_truck", "A medium salvage truck with patched body panels, cargo racks, and frontier-town wear. No text."),
+        ("vehicle_hover_sled", "A small hover sled utility vehicle with improvised sci-fi components and bright painted accents. No text."),
+        ("vehicle_market_van", "A compact market delivery van for a frontier town, patched body and colorful canopy accents. No text."),
+        ("vehicle_scout_bike", "A lightweight scout bike for dusty streets, retro-future wasteland aesthetic, colorful details. No text."),
+        ("vehicle_sky_skiff", "A small flying skiff for local frontier travel, compact sci-fi silhouette, colorful maintenance paint. No text."),
+        ("vehicle_courier_drone", "A courier drone craft for deliveries around a sci-fi wasteland town, practical and colorful. No text."),
+        ("vehicle_patrol_drone", "A slightly heavier patrol drone craft for a small settlement, practical and non-militaristic. No text."),
+        ("vehicle_cargo_quad", "A hovering quad-rotor cargo carrier for a frontier settlement, improvised sci-fi style. No text."),
+        ("unit_robot_mechanic", "A mechanic robot unit that can walk, salvage-town friendly, practical tools, colorful work markings. No text."),
+        ("unit_robot_vendor", "A vendor robot unit that can walk, friendly posture, carrying goods tray or packs, colorful market-town accents. No text."),
+        ("unit_robot_sweeper", "A maintenance robot unit that can walk, small and practical, keeping the street tidy, colorful markings. No text."),
+        ("unit_robot_guard", "A frontier-town guard robot unit that can walk, protective but calm, practical scavenged armor and colored lights. No text."),
+        ("unit_human_scavenger", "A human scavenger unit that can walk, layered frontier clothing, everyday-town life, colorful accents. No text."),
+        ("unit_human_shopkeeper", "A human shopkeeper unit that can walk, relaxed and friendly, frontier market clothing with bright details. No text."),
+        ("unit_human_child", "A human child unit that can walk, lively and curious, adapted frontier clothing with bright colors. No text."),
+        ("unit_android_clerk", "An android clerk unit that can walk, tidy and friendly, small-town sci-fi service role, colorful trim. No text."),
+        ("unit_alien_trader", "An alien trader unit that can walk, approachable, carrying goods or packs, colorful frontier-town styling. No text."),
+        ("unit_alien_farmer", "An alien rancher or grower unit that can walk, everyday-life posture, practical frontier gear and colorful cloth. No text."),
+        ("unit_wasteland_dog", "A friendly wasteland dog-like animal unit that can walk, hardy and expressive, everyday-town companion. No text."),
+        ("unit_pack_lizard", "A medium pack-lizard animal unit that can walk, domesticated frontier settlement animal with harness. No text."),
+        ("unit_desert_bird", "A small desert bird animal unit that can walk, lively and colorful enough to read from gameplay view. No text."),
+        ("unit_moss_goat", "A compact goat-like settlement animal unit that can walk, adapted to harsh frontier life, slightly colorful fur or gear. No text."),
+        ("unit_drone_helper", "A small helper drone unit that hovers, friendly, practical town-service robot with colorful lights. No text."),
+        ("unit_drone_observer", "A small observer drone unit that hovers, non-threatening, compact sci-fi frontier utility style. No text."),
+    ]
+
+
+def get_scene_profile(profile_id: str) -> SceneProfile:
+    key = str(profile_id or "").strip().lower()
+    if key == "wasteland_town":
+        return SceneProfile(
+            profile_id="wasteland_town",
+            scene_prefix="showcase_scene_wasteland",
+            run_dir_prefix="showcase_scene_wasteland",
+            label_prefix="Showcase (Wasteland Town)",
+            description=(
+                "A compact post-apocalyptic sci-fi town built around two crossing streets: "
+                "market stalls, repair yards, homes, utility structures, vehicles, robots, drones, "
+                "animals, and everyday life. Generated by automation."
+            ),
+            floor_prompt=(
+                "A mostly flat compact terrain for a colorful post-apocalyptic sci-fi wasteland town. "
+                "Target about 60m x 60m. Packed dust, cracked concrete, scattered salvage patches, "
+                "subtle warm earth tones with a few colorful painted traces. Keep it smooth enough for "
+                "streets, buildings, and vehicles. No hills, no cliffs."
+            ),
+            min_terrain_size_m=56.0,
+            layout_kind="wasteland_town",
+            asset_plan=wasteland_asset_plan(),
+        )
+    if key in ("utopian_chrome", "chrome", "default"):
+        return SceneProfile(
+            profile_id="utopian_chrome",
+            scene_prefix="showcase_scene",
+            run_dir_prefix="showcase_scene",
+            label_prefix="Showcase (Utopian Chrome)",
+            description=(
+                "A future-fiction interstellar city plaza: clean chrome towers, mixed old-style district, "
+                "streets with vehicles, robots and aliens living together. Generated by automation."
+            ),
+            floor_prompt=(
+                "A perfectly flat utopian chrome plaza ground for a futuristic spaceport city. "
+                "Very large continuous ground plane: at least 320m x 320m. "
+                "Subtle hexagonal micro-pattern, clean white/silver materials, faint blue neon seams, "
+                "gentle wear but pristine overall. No bumps, no hills."
+            ),
+            min_terrain_size_m=260.0,
+            layout_kind="utopian_chrome",
+            asset_plan=chrome_asset_plan(),
+        )
+    raise RuntimeError(f"Unknown profile: {profile_id}")
+
+
+def build_layout_layers_for_profile(
+    profile: SceneProfile,
+    *,
+    prefab_catalog: dict[str, dict[str, Any]],
+    assets: dict[str, str],
+    layout_extent_m: float,
+    plaza_extent_m: float,
+) -> dict[str, dict[str, Any]]:
+    if profile.layout_kind == "wasteland_town":
+        return build_layout_layers_wasteland(
+            prefab_catalog=prefab_catalog,
+            assets=assets,
+            layout_extent_m=layout_extent_m,
+            plaza_extent_m=plaza_extent_m,
+        )
+    return build_layout_layers_chrome(
+        prefab_catalog=prefab_catalog,
+        assets=assets,
+        layout_extent_m=layout_extent_m,
+        plaza_extent_m=plaza_extent_m,
+    )
+
+
+def progress_camera_for_profile(
+    profile: SceneProfile,
+    *,
+    layout_extent_m: float,
+    plaza_extent_m: float,
+) -> dict[str, float]:
+    if profile.layout_kind == "wasteland_town":
+        return {
+            "x": 0.0,
+            "y": max(10.0, layout_extent_m * 0.46),
+            "z": 0.0,
+            "yaw": 0.58,
+            "pitch": -0.5,
+            "zoom_t": 0.86,
+        }
+    return {
+        "x": 0.0,
+        "y": max(12.0, layout_extent_m * 0.11),
+        "z": 0.0,
+        "yaw": 0.75,
+        "pitch": -0.38,
+        "zoom_t": 0.92,
+    }
+
+
+def curated_shots_for_profile(
+    profile: SceneProfile,
+    *,
+    layout_extent_m: float,
+    plaza_extent_m: float,
+) -> list[dict[str, float | str]]:
+    if profile.layout_kind == "wasteland_town":
+        return [
+            {
+                "label": "overview_final",
+                "x": 0.0,
+                "y": max(10.5, layout_extent_m * 0.48),
+                "z": 0.0,
+                "yaw": 0.58,
+                "pitch": -0.5,
+                "zoom_t": 0.86,
+            },
+            {
+                "label": "crossroads_life",
+                "x": 0.0,
+                "y": 2.4,
+                "z": -(plaza_extent_m * 0.55),
+                "yaw": 1.86,
+                "pitch": -0.16,
+                "zoom_t": 0.04,
+            },
+            {
+                "label": "market_row",
+                "x": layout_extent_m * 0.12,
+                "y": 2.8,
+                "z": plaza_extent_m * 0.92,
+                "yaw": -2.7,
+                "pitch": -0.18,
+                "zoom_t": 0.03,
+            },
+            {
+                "label": "garage_yard",
+                "x": -(layout_extent_m * 0.52),
+                "y": 2.7,
+                "z": -(layout_extent_m * 0.54),
+                "yaw": 0.78,
+                "pitch": -0.14,
+                "zoom_t": 0.06,
+            },
+            {
+                "label": "utility_corner",
+                "x": -(layout_extent_m * 0.56),
+                "y": 4.0,
+                "z": layout_extent_m * 0.68,
+                "yaw": 0.22,
+                "pitch": -0.2,
+                "zoom_t": 0.1,
+            },
+        ]
+    return [
+        {
+            "label": "overview_final",
+            "x": 0.0,
+            "y": max(14.0, layout_extent_m * 0.12),
+            "z": 0.0,
+            "yaw": 0.75,
+            "pitch": -0.38,
+            "zoom_t": 0.92,
+        },
+        {
+            "label": "street_plaza",
+            "x": 0.0,
+            "y": 2.6,
+            "z": -(plaza_extent_m * 0.33),
+            "yaw": 1.95,
+            "pitch": -0.14,
+            "zoom_t": 0.05,
+        },
+        {
+            "label": "old_district",
+            "x": layout_extent_m * 0.7,
+            "y": 2.6,
+            "z": layout_extent_m * 0.66,
+            "yaw": -2.35,
+            "pitch": -0.18,
+            "zoom_t": 0.0,
+        },
+        {
+            "label": "spaceport",
+            "x": -(layout_extent_m * 0.8),
+            "y": 5.2,
+            "z": -(layout_extent_m * 0.8),
+            "yaw": 0.65,
+            "pitch": -0.22,
+            "zoom_t": 0.15,
+        },
+    ]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--profile",
+        default="utopian_chrome",
+        help="Scene profile to build. Supported: utopian_chrome, wasteland_town.",
+    )
     ap.add_argument(
         "--run-dir",
         default=None,
@@ -1406,26 +2688,24 @@ def main() -> int:
     )
     ap.add_argument(
         "--floor-prompt",
-        default=(
-            "A perfectly flat utopian chrome plaza ground for a futuristic spaceport city. "
-            "Very large continuous ground plane: at least 320m x 320m. "
-            "Subtle hexagonal micro-pattern, clean white/silver materials, faint blue neon seams, "
-            "gentle wear but pristine overall. No bumps, no hills."
-        ),
+        default=None,
+        help="Override the selected profile's GenFloor prompt.",
     )
     ap.add_argument(
         "--min-terrain-size-m",
         type=float,
-        default=260.0,
-        help="If the selected terrain is smaller than this (min axis), rebuild via GenFloor.",
+        default=None,
+        help="Override the selected profile's minimum acceptable terrain size.",
     )
     args = ap.parse_args()
+
+    profile = get_scene_profile(args.profile)
 
     repo_root = Path(__file__).resolve().parents[1]
     run_dir = (
         Path(args.run_dir).expanduser().resolve()
         if args.run_dir
-        else (repo_root / "test" / "run_1" / f"showcase_scene_{_now_tag()}").resolve()
+        else (repo_root / "test" / "run_1" / f"{profile.run_dir_prefix}_{_now_tag()}").resolve()
     )
     run_dir.mkdir(parents=True, exist_ok=True)
     shots_dir = run_dir / "shots"
@@ -1439,6 +2719,7 @@ def main() -> int:
         manifest = {
             "version": MANIFEST_VERSION,
             "created_at": _now_tag(),
+            "profile": profile.profile_id,
             "realm_id": str(args.realm_id),
             "scene_id": None,
             "floor_id_uuid": None,
@@ -1453,6 +2734,16 @@ def main() -> int:
     config_path = Path(args.config).expanduser().resolve()
     if not config_path.exists():
         raise RuntimeError(f"Config not found: {config_path}")
+
+    manifest_profile = str(manifest.get("profile") or "").strip()
+    if manifest_profile:
+        if manifest_profile != profile.profile_id:
+            raise RuntimeError(
+                f"Run dir {run_dir} belongs to profile={manifest_profile}, cannot reuse for profile={profile.profile_id}"
+            )
+    else:
+        manifest["profile"] = profile.profile_id
+        _write_json(manifest_path, manifest)
 
     stdout_path = run_dir / "gravimera_stdout.log"
 
@@ -1497,15 +2788,12 @@ def main() -> int:
                 scene_id = args.scene_id.strip()
             else:
                 existing = list_scenes(http, realm_id=realm_id)
-                scene_id = pick_versioned_scene_id(existing)
+                scene_id = pick_versioned_scene_id(existing, prefix=profile.scene_prefix)
             manifest["scene_id"] = scene_id
             _write_json(manifest_path, manifest)
 
-        label = f"Showcase (Utopian Chrome) {scene_id}"
-        description = (
-            "A future-fiction interstellar city plaza: clean chrome towers, mixed old-style district, "
-            "streets with vehicles, robots and aliens living together. Generated by automation."
-        )
+        label = f"{profile.label_prefix} {scene_id}"
+        description = profile.description
         print(f"scene_id={scene_id}")
         realm_scene_create_and_switch(
             http,
@@ -1519,7 +2807,8 @@ def main() -> int:
         # Terrain (GenFloor). We try to ensure a sufficiently large ground plane so the city layout
         # doesn't spill into the void.
         grav_home = gravimera_default_home_dir()
-        min_terrain_m = float(args.min_terrain_size_m)
+        min_terrain_m = float(args.min_terrain_size_m or profile.min_terrain_size_m)
+        floor_prompt = str(args.floor_prompt or profile.floor_prompt).strip()
         floor_id = str(manifest.get("floor_id_uuid") or "").strip()
 
         def _terrain_ok(terrain_id: str) -> bool:
@@ -1537,8 +2826,8 @@ def main() -> int:
                 return 130
             attempts += 1
             print(f"Generating GenFloor terrain… (attempt {attempts})")
-            prompt = f"{str(args.floor_prompt).strip()} Size requirement: at least {min_terrain_m:.0f}m x {min_terrain_m:.0f}m."
-            floor_id = build_genfloor_flat_chrome(http, dt_secs=args.dt_secs, prompt=prompt)
+            prompt = f"{floor_prompt} Size requirement: at least {min_terrain_m:.0f}m x {min_terrain_m:.0f}m."
+            floor_id = build_genfloor_flat(http, dt_secs=args.dt_secs, prompt=prompt)
             manifest["floor_id_uuid"] = floor_id
             _write_json(manifest_path, manifest)
             size = read_terrain_size_m(gravimera_home=grav_home, realm_id=realm_id, terrain_id_uuid=floor_id)
@@ -1555,10 +2844,16 @@ def main() -> int:
         terrain_size = read_terrain_size_m(gravimera_home=grav_home, realm_id=realm_id, terrain_id_uuid=floor_id)
         if terrain_size:
             half = 0.5 * min(float(terrain_size[0]), float(terrain_size[1]))
-            layout_extent_m = max(18.0, min(half - 8.0, 180.0))
+            if profile.layout_kind == "wasteland_town":
+                layout_extent_m = max(16.0, min(half - 6.0, 34.0))
+            else:
+                layout_extent_m = max(18.0, min(half - 8.0, 180.0))
         else:
-            layout_extent_m = 140.0
-        plaza_extent_m = max(20.0, min(55.0, layout_extent_m * 0.45))
+            layout_extent_m = 24.0 if profile.layout_kind == "wasteland_town" else 140.0
+        if profile.layout_kind == "wasteland_town":
+            plaza_extent_m = max(9.0, min(14.0, layout_extent_m * 0.42))
+        else:
+            plaza_extent_m = max(20.0, min(55.0, layout_extent_m * 0.45))
 
         # Import scene sources (required for run_apply_patch).
         dirs = get_active_scene_dirs(http)
@@ -1566,94 +2861,10 @@ def main() -> int:
             print(f"warn: active scene_id mismatch: expected={scene_id} got={dirs['scene_id']}")
         import_scene_sources(http, dirs["scene_src_dir"], dt_secs=args.dt_secs)
 
-        run_id = ensure_run_id(manifest)
+        run_id = ensure_run_id(manifest, profile_id=profile.profile_id)
         _write_json(manifest_path, manifest)
 
-        # Asset plan: generate lots of new prefabs (buildings, vehicles, robots/aliens, props).
-        #
-        # This list is ordered (FIFO Gen3D task queue), so put "infrastructure" first so we can
-        # start placing streets/plaza while the rest of the queue runs.
-        asset_plan: list[tuple[str, str]] = [
-            # --- Infrastructure ---
-            ("road_tile", "A modular futuristic chrome road tile for a utopian city boulevard. Clean white/silver materials, subtle lane markings, embedded blue neon strips. No text, no logos."),
-            ("sidewalk_tile", "A modular futuristic sidewalk tile: chrome + white ceramic, subtle hex micro-pattern, clean utopian design. No text."),
-            ("plaza_tile", "A modular utopian chrome plaza tile: clean white/silver, hex micro pattern, faint blue seams, suitable for a large city plaza. No text."),
-            ("crosswalk_tile", "A modular futuristic crosswalk tile: clean white stripes embedded into chrome road surface, subtle blue edge lights. No text."),
-
-            # --- Street furniture / props ---
-            ("streetlight_neon", "A slim futuristic neon streetlight: chrome pole, soft blue light, utopian city style. No text."),
-            ("streetlight_old", "An old-style street lamp: classic shape, warm glass, restored and clean, with subtle chrome futuristic additions. No text."),
-            ("bench_modern", "A modern futuristic public bench: chrome frame, white composite seat, minimal utopian design. No text."),
-            ("bench_old", "A vintage public bench: cast iron and wood, clean and maintained, with subtle futuristic chrome reinforcements. No text."),
-            ("billboard_holo", "A futuristic holographic billboard sign: chrome frame, translucent hologram panel, utopian city. No text."),
-            ("holo_sign_pillar", "A holographic information pillar: chrome base, floating UI glow, soft blue/teal light, utopian city. No text."),
-            ("fountain_chrome", "A sculptural utopian chrome fountain: clean white water effect, subtle blue lighting, centerpiece for a plaza. No text."),
-            ("statue_abstract", "An abstract public art statue: chrome and white composite, elegant curves, futuristic utopian sculpture. No text."),
-            ("kiosk_info", "A futuristic public information kiosk: chrome shell, glowing blue screen, minimal design. No text."),
-            ("vendor_stall", "A small futuristic vendor stall / market booth: chrome frame, clean canopy, subtle neon accents. No text."),
-            ("planter_tree", "A large planter with a small clean futuristic tree: chrome planter bowl, healthy greenery, utopian city. No text."),
-            ("planter_flowers", "A planter with colorful flowers: clean chrome base, well-maintained, utopian city decoration. No text."),
-            ("trash_bin", "A futuristic public trash bin: chrome and white, minimal design, clean and maintained. No text."),
-            ("bollard", "A street safety bollard: chrome cylinder with subtle blue glow ring, utopian city. No text."),
-
-            # --- Modern buildings ---
-            ("tower_chrome_tall", "A tall utopian chrome skyscraper tower: sleek clean design, subtle blue light seams, large windows, futuristic. No text."),
-            ("tower_chrome_mid", "A mid-rise utopian chrome building with terraces: clean white and silver materials, futuristic. No text."),
-            ("tower_chrome_spire", "A very tall chrome spire tower: needle-like silhouette, glowing accents, futuristic spaceport city. No text."),
-            ("tower_chrome_twist", "A twisting modern skyscraper: chrome and glass, elegant spiral form, utopian futuristic city. No text."),
-            ("tower_glass_arc", "A glass-and-chrome arc-shaped high-rise: clean futuristic architecture, soft blue internal lighting. No text."),
-            ("residential_pods", "A residential building with modular balcony pods: chrome and white panels, clean utopian design, futuristic. No text."),
-            ("hotel_sleek", "A sleek futuristic hotel building: chrome facade, vertical light strips, clean utopian city style. No text."),
-            ("lab_research", "A futuristic research lab building: chrome + white composite, antenna arrays, clean utopian design. No text."),
-            ("mall_plaza", "A low-rise futuristic commercial plaza/mall: clean chrome structure, canopies, open frontage, utopian city. No text."),
-            ("skybridge_module", "An elevated skybridge / pedestrian walkway module: chrome frame, transparent floor panels, soft blue lights. No text."),
-
-            # --- Old-style district buildings (mixed with future additions) ---
-            ("building_old_brick", "An old-style brick and stone building with art-deco ornaments and subtle futuristic chrome additions, clean and maintained. No text."),
-            ("building_old_artdeco", "A restored art-deco building: stone and metal ornaments, clean, with subtle neon chrome signage frames. No text."),
-            ("building_old_clocktower", "A historic clocktower building: stone base, clean and maintained, with futuristic chrome conduits and blue lights. No text."),
-            ("building_old_market", "An old market hall building: brick and iron structure, clean, with futuristic lighting and chrome details. No text."),
-            ("building_old_factory", "A converted old factory building: brick, tall windows, clean, with futuristic chrome additions. No text."),
-            ("building_old_shrine", "A small old shrine/chapel building: stone and wood, respectful, clean, with subtle futuristic lights. No text."),
-            ("building_old_townhouse", "A narrow townhouse building: old brick facade, clean and maintained, subtle chrome future retrofit. No text."),
-
-            # --- Spaceport corner ---
-            ("dome_terminal", "A dome-shaped transit terminal building: chrome and glass, clean utopian spaceport architecture. No text."),
-            ("hangar_spaceport", "A spaceport hangar building: large doors, chrome structure, clean, subtle blue runway lights. No text."),
-            ("ship_starship_lander", "A small starship lander parked on a plaza: sleek chrome hull, soft blue lights, utopian interstellar era. No text."),
-
-            # --- Vehicles: ground traffic ---
-            ("vehicle_hovercar", "A ground hovercar vehicle: sleek chrome body, blue neon accents, futuristic utopian city car. No text."),
-            ("vehicle_hovercar_taxi", "A futuristic hover taxi: chrome body, soft yellow accent stripe, clean utopian design. No text."),
-            ("vehicle_hoverbike", "A sleek hoverbike: chrome frame, blue neon strip, futuristic utopian city. No text."),
-            ("vehicle_cargo_truck", "A futuristic cargo truck: hover-capable, chrome and white panels, utilitarian but clean, utopian city. No text."),
-            ("vehicle_service_van", "A futuristic service van: chrome, clean, maintenance vehicle for utopian city. No text."),
-            ("vehicle_police_patrol", "A futuristic police patrol vehicle: chrome armor, blue light bar, clean utopian style, non-aggressive. No text."),
-
-            # --- Vehicles: sky traffic ---
-            ("vehicle_skybus", "A flying sky-bus for a utopian spaceport city: clean chrome, large windows, gentle blue lights. No text."),
-            ("vehicle_aerial_taxi", "A small aerial taxi vehicle: compact chrome craft, blue lights, utopian city sky traffic. No text."),
-            ("vehicle_drone_courier", "A courier drone vehicle: small flying cargo drone, chrome shell, soft blue lights. No text."),
-            ("vehicle_shuttle", "A small passenger shuttle: hovering/flying craft, chrome and glass, utopian spaceport city. No text."),
-
-            # --- Units: robots and aliens living together ---
-            ("unit_robot_worker", "A friendly humanoid robot worker unit that can walk: clean chrome and white panels, futuristic utopian city. No text."),
-            ("unit_robot_security", "A security robot unit that can walk: sleek chrome armor, blue visor, non-threatening but capable. No text."),
-            ("unit_robot_medic", "A medical assistant robot unit: white and chrome, soft green/blue lights, friendly, can walk. No text."),
-            ("unit_robot_vendor", "A vendor robot unit: small friendly robot with a tray, chrome body, can walk. No text."),
-            ("unit_alien_diplomat", "A tall elegant alien diplomat unit that can walk: smooth bioluminescent skin, futuristic robes, friendly. No text."),
-            ("unit_alien_merchant", "An alien merchant unit that can walk: short and round body, colorful fabric packs, friendly. No text."),
-            ("unit_alien_scientist", "An alien scientist unit that can walk: calm posture, lab coat-like futuristic clothing, friendly. No text."),
-            ("unit_alien_child", "A small alien child unit that can walk: cute proportions, curious, friendly, futuristic clothing. No text."),
-            ("unit_human_civilian", "A human civilian unit that can walk: futuristic utopian clothing, diverse and friendly. No text."),
-            ("unit_human_pilot", "A human pilot unit that can walk: clean futuristic flight suit, utopian spaceport era. No text."),
-            ("unit_android_artist", "An android artist unit that can walk: chrome body, colorful accent scarf, friendly, utopian city. No text."),
-            ("unit_alien_guardian", "A tall alien guardian unit that can walk: elegant armor, chrome accents, calm and protective. No text."),
-
-            # --- Drones (flying units) ---
-            ("unit_drone_camera", "A small flying camera drone unit: chrome sphere with lenses, soft blue lights, utopian city. No text."),
-            ("unit_drone_security", "A small security drone unit: chrome shell, blue lights, friendly but vigilant, hovering. No text."),
-        ]
+        asset_plan = profile.asset_plan
 
         prompt_by_key: dict[str, str] = {k: p for (k, p) in asset_plan}
 
@@ -1708,7 +2919,8 @@ def main() -> int:
             except Exception as err:
                 print(f"warn: prefabs/reload_realm failed before layout apply: {err}")
             prefab_catalog = get_prefab_catalog(http)
-            layers = build_layout_layers(
+            layers = build_layout_layers_for_profile(
+                profile,
                 prefab_catalog=prefab_catalog,
                 assets=assets,
                 layout_extent_m=layout_extent_m,
@@ -1727,7 +2939,8 @@ def main() -> int:
                 try:
                     reload_realm_prefabs(http)
                     prefab_catalog = get_prefab_catalog(http)
-                    layers = build_layout_layers(
+                    layers = build_layout_layers_for_profile(
+                        profile,
                         prefab_catalog=prefab_catalog,
                         assets=assets,
                         layout_extent_m=layout_extent_m,
@@ -1754,15 +2967,19 @@ def main() -> int:
             safe = re.sub(r"[^A-Za-z0-9_-]+", "_", tag).strip("_") or "shot"
             shots_taken += 1
             out_path = shots_dir / f"{shots_taken:03d}_{safe}.png"
-            overview_y = max(12.0, layout_extent_m * 0.11)
+            progress_camera = progress_camera_for_profile(
+                profile,
+                layout_extent_m=layout_extent_m,
+                plaza_extent_m=plaza_extent_m,
+            )
             set_camera_and_shot(
                 http,
-                x=0.0,
-                y=overview_y,
-                z=0.0,
-                yaw=0.75,
-                pitch=-0.38,
-                zoom_t=0.92,
+                x=float(progress_camera["x"]),
+                y=float(progress_camera["y"]),
+                z=float(progress_camera["z"]),
+                yaw=float(progress_camera["yaw"]),
+                pitch=float(progress_camera["pitch"]),
+                zoom_t=float(progress_camera["zoom_t"]),
                 out_path=out_path,
                 dt_secs=args.dt_secs,
             )
@@ -1846,9 +3063,14 @@ def main() -> int:
 
             # Apply layout occasionally so the UI shows incremental decoration progress.
             ready_count = _asset_ready_count()
-            have_infra = bool(str(assets.get("road_tile") or "").strip()) and bool(
-                str(assets.get("sidewalk_tile") or assets.get("plaza_tile") or "").strip()
-            )
+            if profile.layout_kind == "wasteland_town":
+                have_infra = bool(str(assets.get("road_cracked_tile") or "").strip()) and bool(
+                    str(assets.get("shoulder_scrap_tile") or "").strip()
+                )
+            else:
+                have_infra = bool(str(assets.get("road_tile") or "").strip()) and bool(
+                    str(assets.get("sidewalk_tile") or assets.get("plaza_tile") or "").strip()
+                )
             should_apply = have_infra and (
                 (not applied_once)
                 or (ready_count != last_layout_asset_count and new_assets_since_layout >= 4)
@@ -1893,11 +3115,20 @@ def main() -> int:
             )
             _save_manifest()
 
-        overview_y = max(14.0, layout_extent_m * 0.12)
-        _shot(label="overview_final", x=0.0, y=overview_y, z=0.0, yaw=0.75, pitch=-0.38, zoom_t=0.92)
-        _shot(label="street_plaza", x=0.0, y=2.6, z=-(plaza_extent_m * 0.33), yaw=1.95, pitch=-0.14, zoom_t=0.05)
-        _shot(label="old_district", x=(layout_extent_m * 0.7), y=2.6, z=(layout_extent_m * 0.66), yaw=-2.35, pitch=-0.18, zoom_t=0.0)
-        _shot(label="spaceport", x=-(layout_extent_m * 0.8), y=5.2, z=-(layout_extent_m * 0.8), yaw=0.65, pitch=-0.22, zoom_t=0.15)
+        for shot in curated_shots_for_profile(
+            profile,
+            layout_extent_m=layout_extent_m,
+            plaza_extent_m=plaza_extent_m,
+        ):
+            _shot(
+                label=str(shot["label"]),
+                x=float(shot["x"]),
+                y=float(shot["y"]),
+                z=float(shot["z"]),
+                yaw=float(shot["yaw"]),
+                pitch=float(shot["pitch"]),
+                zoom_t=float(shot["zoom_t"]),
+            )
 
         # Let brains attach in Play mode (existing engine behavior).
         set_mode(http, "play", dt_secs=args.dt_secs)
