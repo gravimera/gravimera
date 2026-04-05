@@ -19,6 +19,7 @@ The scene is intentionally different from the existing utopian chrome city. It s
 - [x] (2026-04-05 19:35 CST) Add the wasteland asset program and layout logic: new terrain prompt, new prefab prompts, compact crossroads layout, colorful tint pass, and frequent incremental scene patches plus screenshots.
 - [x] (2026-04-05 19:35 CST) Run the required rendered smoke test in an isolated home; the rendered game started and exited cleanly after the two-second limit.
 - [x] (2026-04-05 22:08 CST) Review the resumed live screenshots and tighten the wasteland placement rules again: sink the shoulder pads much deeper, shrink and reduce their count, and cut back the streetlamp ring so the two-street layout reads more clearly while the rest of the asset queue continues.
+- [x] (2026-04-05 23:27 CST) Add a second placement refinement for the still-sparse crossroads: extra curbside food carts, planters, and benches near the intersection so the scene has more everyday-life activity before the later vehicle/unit asset waves land.
 - [ ] (2026-04-05 19:44 CST) Run the real rendered UI build against `~/.gravimera`, capture screenshots under `test/run_1/...`, review the result, and iterate if needed. Completed so far: started the rendered build in `test/run_1/showcase_scene_wasteland_run_01`, created scene `showcase_scene_wasteland_20260405_v1`, generated terrain `5e10e11e-62cb-4004-b353-b5d1ca145910`, and saved the first prefab `road_cracked_tile` as `c26d6753-9cea-4823-b85a-fe8c53f7bab2`. Remaining: let the queue continue until enough infrastructure exists for the first layout patch and screenshots, then continue through the rest of the asset set.
 
 ## Surprises & Discoveries
@@ -46,6 +47,9 @@ The scene is intentionally different from the existing utopian chrome city. It s
 
 - Observation: even after the first layout fix, the shoulder pads still read too tall and the lamp count still over-framed the compact scene.
   Evidence: review shots taken at `test/run_1/showcase_scene_wasteland_run_01/review_shots/overview.png`, `.../crossroads.png`, and `.../market_lane.png` on 2026-04-05 showed the thicker shoulder prefab remaining visually dominant and the crossroads reading as a sparse checkerboard under tall lamps.
+
+- Observation: after the building-row wave landed, the layout organization improved, but the intersection itself still felt under-activated because the later vehicles and civilian units had not yet been generated.
+  Evidence: review shots taken at `test/run_1/showcase_scene_wasteland_run_01/review_cycle_02/crossroads_low.png`, `.../market_edge.png`, and `.../utility_housing.png` on 2026-04-05 showed readable storefront rows but a wide empty middle that needed more curbside life.
 
 ## Decision Log
 
@@ -75,6 +79,10 @@ The scene is intentionally different from the existing utopian chrome city. It s
 
 - Decision: lower and shrink the shoulder pads aggressively, and reduce the streetlamp ring for the compact wasteland scene.
   Rationale: this is the direct response to the live visual issue. The generated shoulder tile is too thick to sit proudly above grade in a 60m-class town, so the builder now sinks it much deeper, scales it down, and places fewer pads in straighter district-aligned rows while keeping enough structure for shops and forecourts.
+  Date/Author: 2026-04-05 / Codex.
+
+- Decision: enrich the crossroads with extra curbside props before the dynamic population assets arrive.
+  Rationale: the static scene should already look inhabited even while the longer-running vehicle and unit batches are still pending. Small duplicated props near the road corners improve first-glance appeal without materially changing the overall layout.
   Date/Author: 2026-04-05 / Codex.
 
 ## Outcomes & Retrospective
@@ -241,3 +249,4 @@ Revision note: updated on 2026-04-05 after implementing the new builder profile 
 Revision note: updated again on 2026-04-05 after starting the real rendered build, so the plan records the live scene id, terrain id, first generated prefab, and the fact that the queue is still running.
 Revision note: updated again on 2026-04-05 after tightening the wasteland street layout, rerunning the rendered smoke test, and resuming the live build so the plan captures the layout correction and its API-visible effect.
 Revision note: updated again on 2026-04-05 after a second live screenshot review showed the shoulder pads still too tall, so the plan now records the deeper shoulder sinking, smaller pad footprint, and reduced lamp count refinement.
+Revision note: updated again on 2026-04-05 after the building rows arrived and revealed a sparse crossroads, so the plan now records the added curbside carts, planters, and benches around the intersection.

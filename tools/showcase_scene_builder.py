@@ -1759,8 +1759,15 @@ def build_layout_layers_wasteland(
             )
 
     if food_cart:
-        cart_xs = [snap(-extent * 0.52), snap(-extent * 0.12), snap(extent * 0.22), snap(extent * 0.48)]
-        for idx, x in enumerate(cart_xs):
+        cart_positions = [
+            (snap(-extent * 0.52), market_line_z - spacing * 1.42, 180.0),
+            (snap(-extent * 0.12), market_line_z - spacing * 1.42, 180.0),
+            (snap(extent * 0.22), market_line_z - spacing * 1.42, 180.0),
+            (snap(extent * 0.48), market_line_z - spacing * 1.42, 180.0),
+            (-road_step * 0.76, street_edge + road_step * 0.16, 150.0),
+            (road_step * 0.84, -street_edge - road_step * 0.16, -28.0),
+        ]
+        for idx, (x, z, yaw_deg) in enumerate(cart_positions):
             scale = 0.88
             y = grounded_y(prefab_catalog, food_cart, scale=scale)
             district_market.append(
@@ -1769,10 +1776,10 @@ def build_layout_layers_wasteland(
                     prefab_id_uuid=food_cart,
                     x=x,
                     y=y,
-                    z=market_line_z - spacing * 1.42,
-                    yaw_deg=180.0,
+                    z=z,
+                    yaw_deg=yaw_deg,
                     scale=scale,
-                    tint_rgba=palette_pick(idx + 3),
+                    tint_rgba=palette_pick(idx + 3) if idx < 4 else palette_pick_muted(idx + 3, mix=0.18),
                 )
             )
 
@@ -2111,6 +2118,8 @@ def build_layout_layers_wasteland(
             (snap(extent * 0.24), market_line_z - spacing * 1.74, 180.0),
             (snap(extent * 0.54), housing_line_z + spacing * 1.14, 0.0),
             (utility_line_x + spacing * 1.04, snap(extent * 0.12), -90.0),
+            (-street_edge - spacing * 0.26, -road_step * 0.24, 90.0),
+            (street_edge + spacing * 0.26, road_step * 0.26, -90.0),
         ]
         for idx, (x, z, yaw_deg) in enumerate(bench_positions):
             scale = 0.88
@@ -2134,6 +2143,10 @@ def build_layout_layers_wasteland(
             (snap(extent * 0.74), housing_line_z + spacing * 0.66),
             (snap(-extent * 0.12), market_line_z - spacing * 1.58),
             (snap(extent * 0.86), market_line_z - spacing * 0.54),
+            (-road_step * 0.48, street_edge + road_step * 0.2),
+            (road_step * 0.48, street_edge + road_step * 0.24),
+            (-road_step * 0.52, -street_edge - road_step * 0.22),
+            (road_step * 0.52, -street_edge - road_step * 0.18),
         ]
         for idx, (x, z) in enumerate(planter_positions):
             scale = 0.78
