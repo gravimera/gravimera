@@ -866,7 +866,8 @@ pub(crate) fn gen3d_manual_tweak_hotkeys(
         tweak.deform_selected_index = None;
         workshop.error = None;
         workshop.status = if tweak.deform_mode {
-            "Sculpt (FFD) enabled. Drag a control point in the preview.".into()
+            "Sculpt (FFD) enabled. Drag a control point in the preview (Shift=big, Alt=precision)."
+                .into()
         } else {
             "Sculpt (FFD) exited.".into()
         };
@@ -1197,13 +1198,13 @@ pub(crate) fn gen3d_manual_tweak_update_selected_overlay(
         let display_component = component_label.as_deref().filter(|v| !v.trim().is_empty());
 
         let mut info_text = format!(
-            "Manual Tweak\nSelected: {}\nPart: {}\n\nMove: arrows | PgUp/PgDn (Shift=big)\nRotate: ,/. (Shift=45°)\nScale: -/= (Shift=big)\nRecolor: C (Shift=prev)\nUndo/Redo: Ctrl/Cmd+Z/Y",
+            "Manual Tweak\nSelected: {}\nPart: {}\n\nMove: arrows | PgUp/PgDn (Shift=big, Alt=precision)\nRotate: ,/. (Shift=45°, Alt=precision)\nScale: -/= (Shift=big, Alt=precision)\nRecolor: C (Shift=prev)\nUndo/Redo: Ctrl/Cmd+Z/Y",
             display_component.unwrap_or("unknown"),
             primitive_label.unwrap_or_else(|| "primitive".to_string()),
         );
-        info_text.push_str("\nSculpt (FFD): V (toggle), LMB drag handle (Shift=precision)");
+        info_text.push_str("\nSculpt (FFD): V (toggle), LMB drag handle (Shift=big, Alt=precision)");
         if tweak.deform_mode {
-            info_text.push_str("\nSculpt: ON (orbit disabled while sculpting)");
+            info_text.push_str("\nSculpt: ON (LMB drag empty space to orbit)");
         }
         if let Some(index) = tweak.deform_selected_index {
             info_text.push_str(&format!("\nControl point: {index}"));
@@ -1221,7 +1222,7 @@ pub(crate) fn gen3d_manual_tweak_update_selected_overlay(
         }
         info_text
     } else {
-        "Manual Tweak\nClick a part in the preview to select it.\n\nMove: arrows | PgUp/PgDn (Shift=big)\nRotate: ,/. (Shift=45°)\nScale: -/= (Shift=big)\nRecolor: C (Shift=prev)\nUndo/Redo: Ctrl/Cmd+Z/Y\n\nEsc: exit tweak".to_string()
+        "Manual Tweak\nClick a part in the preview to select it.\n\nMove: arrows | PgUp/PgDn (Shift=big, Alt=precision)\nRotate: ,/. (Shift=45°, Alt=precision)\nScale: -/= (Shift=big, Alt=precision)\nRecolor: C (Shift=prev)\nUndo/Redo: Ctrl/Cmd+Z/Y\n\nEsc: exit tweak".to_string()
     };
 
     for (frame_marker, card_marker, mut node, mut vis) in &mut overlay_nodes {
@@ -1703,8 +1704,10 @@ pub(crate) fn gen3d_manual_tweak_ffd_drag(
             .unwrap_or(drag.start_hit_world);
 
             let mut delta_world = current_hit_world - drag.start_hit_world;
-            if tweak_mod_shift(&keys) || tweak_mod_alt(&keys) {
+            if tweak_mod_alt(&keys) {
                 delta_world *= 0.25;
+            } else if tweak_mod_shift(&keys) {
+                delta_world *= 4.0;
             }
             let delta = inv_local_from_part.transform_vector3(delta_world);
             if !delta.is_finite() {
@@ -1765,8 +1768,10 @@ pub(crate) fn gen3d_manual_tweak_ffd_drag(
         .unwrap_or(drag.start_hit_world);
 
         let mut delta_world = current_hit_world - drag.start_hit_world;
-        if tweak_mod_shift(&keys) || tweak_mod_alt(&keys) {
+        if tweak_mod_alt(&keys) {
             delta_world *= 0.25;
+        } else if tweak_mod_shift(&keys) {
+            delta_world *= 4.0;
         }
         let delta = inv_local_from_part.transform_vector3(delta_world);
 
