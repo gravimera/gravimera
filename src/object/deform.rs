@@ -1,5 +1,6 @@
 use bevy::mesh::{Indices, VertexAttributeValues};
 use bevy::prelude::*;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::object::registry::{PrimitiveDeformDef, PrimitiveFfdDeformV1};
@@ -54,6 +55,9 @@ fn offsets_aabb(offsets: &[Vec3]) -> Option<(Vec3, Vec3)> {
 }
 
 fn apply_ffd_v1(mesh: &mut Mesh, ffd: &PrimitiveFfdDeformV1) -> Result<(), String> {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::render::render_resource::PrimitiveTopology;
+
     if mesh.primitive_topology() != bevy::render::render_resource::PrimitiveTopology::TriangleList {
         return Err("FFD deform only supports triangle list meshes.".to_string());
     }
@@ -72,9 +76,22 @@ fn apply_ffd_v1(mesh: &mut Mesh, ffd: &PrimitiveFfdDeformV1) -> Result<(), Strin
         ));
     }
 
-    let mut positions: Vec<[f32; 3]> = match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
+    let base_positions: Vec<[f32; 3]> = match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
         Some(VertexAttributeValues::Float32x3(values)) => values.clone(),
         _ => return Err("Mesh is missing POSITION attribute (Float32x3).".to_string()),
+    };
+
+    let indices = indices_as_u32(mesh.indices(), base_positions.len())?;
+
+    let subdivision_iters = ffd_subdivision_iterations(grid);
+    let (mut positions, indices) = if subdivision_iters > 0 {
+        subdivide_triangle_list(
+            base_positions.as_slice(),
+            indices.as_slice(),
+            subdivision_iters,
+        )?
+    } else {
+        (base_positions, indices)
     };
 
     let Some((min, max)) = aabb_from_positions(positions.as_slice()) else {
@@ -82,7 +99,6 @@ fn apply_ffd_v1(mesh: &mut Mesh, ffd: &PrimitiveFfdDeformV1) -> Result<(), Strin
     };
     let size = max - min;
 
-    let indices = mesh.indices().cloned();
     for p in &mut positions {
         let base = Vec3::new(p[0], p[1], p[2]);
         let u = Vec3::new(
@@ -114,10 +130,110 @@ fn apply_ffd_v1(mesh: &mut Mesh, ffd: &PrimitiveFfdDeformV1) -> Result<(), Strin
         p[2] = out.z;
     }
 
-    let normals = compute_normals_triangle_list(positions.as_slice(), indices.as_ref())?;
+    let normals = compute_normals_triangle_list_u32(positions.as_slice(), indices.as_slice())?;
+
+    if subdivision_iters > 0 {
+        // Rebuild the mesh so vertex attributes stay consistent after subdivision.
+        let mut rebuilt = Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        );
+        rebuilt.insert_indices(Indices::U32(indices));
+        rebuilt.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+        rebuilt.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+        *mesh = rebuilt;
+        return Ok(());
+    }
+
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_indices(Indices::U32(indices));
     Ok(())
+}
+
+fn ffd_subdivision_iterations(grid: [u8; 3]) -> usize {
+    let max_axis = grid.iter().copied().max().unwrap_or(2) as usize;
+    let desired = max_axis.saturating_sub(2);
+    desired.min(2)
+}
+
+fn indices_as_u32(indices: Option<&Indices>, vertex_count: usize) -> Result<Vec<u32>, String> {
+    let Some(indices) = indices else {
+        return Ok((0..vertex_count as u32).collect());
+    };
+
+    let mut out = Vec::with_capacity(indices.len());
+    for idx in indices.iter() {
+        let idx: u32 = idx
+            .try_into()
+            .map_err(|_| "Mesh index could not be converted to u32.".to_string())?;
+        out.push(idx);
+    }
+    Ok(out)
+}
+
+fn subdivide_triangle_list(
+    positions: &[[f32; 3]],
+    indices: &[u32],
+    iterations: usize,
+) -> Result<(Vec<[f32; 3]>, Vec<u32>), String> {
+    if iterations == 0 {
+        return Ok((positions.to_vec(), indices.to_vec()));
+    }
+    if !indices.len().is_multiple_of(3) {
+        return Err("Mesh indices are not a multiple of 3.".to_string());
+    }
+
+    let mut pos: Vec<Vec3> = positions
+        .iter()
+        .map(|p| Vec3::new(p[0], p[1], p[2]))
+        .collect();
+    let mut idx: Vec<u32> = indices.to_vec();
+
+    for _ in 0..iterations {
+        let mut next_pos = pos.clone();
+        let mut midpoint_cache: HashMap<(u32, u32), u32> = HashMap::new();
+        let mut next_idx: Vec<u32> = Vec::with_capacity(idx.len().saturating_mul(4));
+
+        let mut midpoint = |a: u32, b: u32| -> Result<u32, String> {
+            let key = if a < b { (a, b) } else { (b, a) };
+            if let Some(existing) = midpoint_cache.get(&key) {
+                return Ok(*existing);
+            }
+
+            let ia = a as usize;
+            let ib = b as usize;
+            if ia >= pos.len() || ib >= pos.len() {
+                return Err("Mesh indices are out of bounds.".to_string());
+            }
+            let m = (pos[ia] + pos[ib]) * 0.5;
+            let out = next_pos.len() as u32;
+            next_pos.push(m);
+            midpoint_cache.insert(key, out);
+            Ok(out)
+        };
+
+        for tri in idx.chunks(3) {
+            let a = tri[0];
+            let b = tri[1];
+            let c = tri[2];
+
+            let ab = midpoint(a, b)?;
+            let bc = midpoint(b, c)?;
+            let ca = midpoint(c, a)?;
+
+            next_idx.extend_from_slice(&[a, ab, ca]);
+            next_idx.extend_from_slice(&[ab, b, bc]);
+            next_idx.extend_from_slice(&[ca, bc, c]);
+            next_idx.extend_from_slice(&[ab, bc, ca]);
+        }
+
+        pos = next_pos;
+        idx = next_idx;
+    }
+
+    let out_positions: Vec<[f32; 3]> = pos.iter().map(|p| [p.x, p.y, p.z]).collect();
+    Ok((out_positions, idx))
 }
 
 fn aabb_from_positions(positions: &[[f32; 3]]) -> Option<(Vec3, Vec3)> {
@@ -178,22 +294,14 @@ fn ffd_trilerp_offset(u: Vec3, grid: [u8; 3], offsets: &[Vec3]) -> Vec3 {
     lerp(oxy0, oxy1, tz)
 }
 
-fn compute_normals_triangle_list(
+fn compute_normals_triangle_list_u32(
     positions: &[[f32; 3]],
-    indices: Option<&Indices>,
+    indices: &[u32],
 ) -> Result<Vec<[f32; 3]>, String> {
     let vertex_count = positions.len();
     if vertex_count == 0 {
         return Ok(Vec::new());
     }
-
-    let indices: Vec<u32> = match indices {
-        Some(indices) => indices
-            .iter()
-            .map(|idx| idx.try_into().unwrap_or(0u32))
-            .collect(),
-        None => (0..vertex_count as u32).collect(),
-    };
     if !indices.len().is_multiple_of(3) {
         return Err("Mesh indices are not a multiple of 3.".to_string());
     }
