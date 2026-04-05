@@ -18,7 +18,7 @@ The scene is intentionally different from the existing utopian chrome city. It s
 - [x] (2026-04-05 19:35 CST) Refactor `tools/showcase_scene_builder.py` into a profile-driven builder so the chrome scene remains reproducible and the new wasteland town can be generated without copying the resumable runtime code.
 - [x] (2026-04-05 19:35 CST) Add the wasteland asset program and layout logic: new terrain prompt, new prefab prompts, compact crossroads layout, colorful tint pass, and frequent incremental scene patches plus screenshots.
 - [x] (2026-04-05 19:35 CST) Run the required rendered smoke test in an isolated home; the rendered game started and exited cleanly after the two-second limit.
-- [ ] (2026-04-05 19:22 CST) Run the real rendered UI build against `~/.gravimera`, capture screenshots under `test/run_1/...`, review the result, and iterate if needed.
+- [ ] (2026-04-05 19:44 CST) Run the real rendered UI build against `~/.gravimera`, capture screenshots under `test/run_1/...`, review the result, and iterate if needed. Completed so far: started the rendered build in `test/run_1/showcase_scene_wasteland_run_01`, created scene `showcase_scene_wasteland_20260405_v1`, generated terrain `5e10e11e-62cb-4004-b353-b5d1ca145910`, and saved the first prefab `road_cracked_tile` as `c26d6753-9cea-4823-b85a-fe8c53f7bab2`. Remaining: let the queue continue until enough infrastructure exists for the first layout patch and screenshots, then continue through the rest of the asset set.
 
 ## Surprises & Discoveries
 
@@ -36,6 +36,9 @@ The scene is intentionally different from the existing utopian chrome city. It s
 
 - Observation: the required rendered smoke test still succeeds after the builder refactor, so the code changes did not introduce a startup regression in the game binary.
   Evidence: `tmpdir=$(mktemp -d); GRAVIMERA_HOME="$tmpdir/.gravimera" cargo run -- --rendered-seconds 2` exited with code `0` on 2026-04-05 19:35 CST.
+
+- Observation: the first road prefab generation is expensive but healthy; a malformed component was retried automatically and the prefab still completed successfully.
+  Evidence: the live run log in `test/run_1/showcase_scene_wasteland_run_01/gravimera_stdout.log` shows `patch_asphalt_b` failing an axis-consistency conversion check, then succeeding on retry, followed by the saved prefab id `c26d6753-9cea-4823-b85a-fe8c53f7bab2`.
 
 ## Decision Log
 
@@ -61,7 +64,7 @@ The scene is intentionally different from the existing utopian chrome city. It s
 
 ## Outcomes & Retrospective
 
-- The builder work is now in place. The remaining outcome is the real rendered run that should emit a fresh scene id under `~/.gravimera/realm/default/scenes/`, populate the compact crossroads town, capture periodic screenshots under `test/run_1/...`, and leave the saved scene available for later use from the UI.
+- The builder work is now in place and the real run is underway. The scene and terrain already exist under the user’s default Gravimera home, and the first prefab has been generated successfully. The remaining outcome is to let the queue continue until the town itself is visibly assembled, reviewed through screenshots, and, if necessary, iterated for better first-glance color and street-life density.
 
 ## Context and Orientation
 
@@ -220,3 +223,4 @@ That interface is important because future scene styles should be additive rathe
 
 Revision note: created this new ExecPlan on 2026-04-05 to capture the pivot from the already implemented chrome-city showcase to a second, compact wasteland-town showcase profile requested by the user. The plan is separate so both scene variants remain reproducible.
 Revision note: updated on 2026-04-05 after implementing the new builder profile and running the required rendered smoke test, so the plan reflects the current code and the remaining step is the real scene-generation run.
+Revision note: updated again on 2026-04-05 after starting the real rendered build, so the plan records the live scene id, terrain id, first generated prefab, and the fact that the queue is still running.
