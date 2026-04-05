@@ -120,6 +120,8 @@ pub(crate) struct Gen3dManualTweakState {
     pub(crate) enabled: bool,
     pub(crate) selected_part_id: Option<u128>,
     pub(crate) color_palette_index: usize,
+    pub(crate) deform_mode: bool,
+    pub(crate) deform_selected_index: Option<usize>,
     pub(crate) undo: Vec<Gen3dManualTweakUndoEntry>,
     pub(crate) redo: Vec<Gen3dManualTweakUndoEntry>,
 }

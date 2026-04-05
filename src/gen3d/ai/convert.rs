@@ -246,6 +246,7 @@ fn gen3d_projectile_def_from_ai(spec: &AiProjectileSpecJson) -> Result<ObjectDef
                         params: None,
                         color,
                         unlit: spec.unlit,
+                        deform: None,
                     },
                     Transform::from_scale(scale),
                 ),
@@ -271,6 +272,7 @@ fn gen3d_projectile_def_from_ai(spec: &AiProjectileSpecJson) -> Result<ObjectDef
                         }),
                         color,
                         unlit: spec.unlit,
+                        deform: None,
                     },
                     Transform::from_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
                 ),
@@ -298,6 +300,7 @@ fn gen3d_projectile_def_from_ai(spec: &AiProjectileSpecJson) -> Result<ObjectDef
                         params: None,
                         color,
                         unlit: spec.unlit,
+                        deform: None,
                     },
                     Transform::from_scale(Vec3::new(sx, sy, sz)),
                 ),
@@ -320,6 +323,7 @@ fn gen3d_projectile_def_from_ai(spec: &AiProjectileSpecJson) -> Result<ObjectDef
                         params: None,
                         color,
                         unlit: spec.unlit,
+                        deform: None,
                     },
                     Transform::from_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2))
                         .with_scale(scale),
@@ -2874,6 +2878,7 @@ pub(super) fn ai_to_component_def(
                 params,
                 color: color.unwrap_or(Color::srgb(0.85, 0.87, 0.90)),
                 unlit: false,
+                deform: None,
             },
             Transform::from_translation(Vec3::new(part.pos[0], part.pos[1], part.pos[2]))
                 .with_rotation(rot)
@@ -2954,7 +2959,11 @@ fn error_if_component_size_mismatch(
     let planned = planned_size.abs().max(Vec3::splat(0.01));
     let measured = measured_size.abs().max(Vec3::splat(0.01));
 
-    let ratio = Vec3::new(measured.x / planned.x, measured.y / planned.y, measured.z / planned.z);
+    let ratio = Vec3::new(
+        measured.x / planned.x,
+        measured.y / planned.y,
+        measured.z / planned.z,
+    );
     let ok = ratio.x >= MIN_AXIS_RATIO
         && ratio.x <= MAX_AXIS_RATIO
         && ratio.y >= MIN_AXIS_RATIO
@@ -3235,15 +3244,27 @@ fn primitive_parts_aabb(parts: &[ObjectPartDef]) -> Option<(Vec3, Vec3)> {
     let mut max = Vec3::splat(f32::NEG_INFINITY);
     let mut any = false;
     for part in parts.iter() {
-        let (mesh, params) = match &part.kind {
+        let (mesh, params, deform_range) = match &part.kind {
             ObjectPartKind::Primitive { primitive } => match primitive {
-                PrimitiveVisualDef::Primitive { mesh, params, .. } => (*mesh, params.as_ref()),
-                PrimitiveVisualDef::Mesh { mesh, .. } => (*mesh, None),
+                PrimitiveVisualDef::Primitive {
+                    mesh,
+                    params,
+                    deform,
+                    ..
+                } => {
+                    let deform_range = deform
+                        .as_ref()
+                        .and_then(crate::object::deform::deform_offsets_aabb)
+                        .map(|(min, max)| max - min)
+                        .unwrap_or(Vec3::ZERO);
+                    (*mesh, params.as_ref(), deform_range)
+                }
+                PrimitiveVisualDef::Mesh { mesh, .. } => (*mesh, None, Vec3::ZERO),
             },
             ObjectPartKind::ObjectRef { .. } => continue,
             ObjectPartKind::Model { .. } => continue,
         };
-        let base = primitive_base_size(mesh, params);
+        let base = primitive_base_size(mesh, params) + deform_range;
         let scaled = base * part.transform.scale;
         let half = scaled.abs() * 0.5;
         let center = part.transform.translation;

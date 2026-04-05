@@ -218,6 +218,7 @@ impl PrimitiveParamsKey {
 struct MeshGeometryKey {
     mesh: MeshKey,
     params: Option<PrimitiveParamsKey>,
+    deform_id: Option<u128>,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -483,9 +484,21 @@ fn build_object_nodes(
             }
             ObjectPartKind::Primitive { primitive } => {
                 let (mesh_key, params) = primitive_mesh_key(primitive);
+                let deform_id = match primitive {
+                    PrimitiveVisualDef::Primitive { deform, .. } => deform.as_ref().map(|deform| {
+                        let id = crate::object::deform::deform_cache_id(deform);
+                        builder
+                            .deform_payloads
+                            .entry(id)
+                            .or_insert_with(|| deform.clone());
+                        id
+                    }),
+                    _ => None,
+                };
                 let geometry_key = MeshGeometryKey {
                     mesh: mesh_key,
                     params,
+                    deform_id,
                 };
                 let material_spec = material_spec_for_primitive_visual(primitive);
                 let material_key = MaterialKeyHash::from_spec(&material_spec);
@@ -1013,6 +1026,7 @@ struct GltfGlbBuilder {
     geometry_cache: HashMap<MeshGeometryKey, GeometryAccessors>,
     mesh_cache: HashMap<MeshInstanceKey, json::Index<json::Mesh>>,
     material_cache: HashMap<MaterialKeyHash, json::Index<json::Material>>,
+    deform_payloads: HashMap<u128, crate::object::registry::PrimitiveDeformDef>,
     uses_unlit: bool,
 }
 
@@ -1033,6 +1047,7 @@ impl GltfGlbBuilder {
             geometry_cache: HashMap::new(),
             mesh_cache: HashMap::new(),
             material_cache: HashMap::new(),
+            deform_payloads: HashMap::new(),
             uses_unlit: false,
         }
     }
@@ -1133,7 +1148,13 @@ impl GltfGlbBuilder {
             return Ok(*existing);
         }
 
-        let mesh = build_bevy_mesh_from_key(key)?;
+        let mut mesh = build_bevy_mesh_from_key(key)?;
+        if let Some(deform_id) = key.deform_id {
+            let deform = self.deform_payloads.get(&deform_id).ok_or_else(|| {
+                format!("Missing primitive deform payload for deform_id={deform_id}")
+            })?;
+            crate::object::deform::apply_deform_to_mesh(&mut mesh, deform)?;
+        }
         if mesh.primitive_topology()
             != bevy::render::render_resource::PrimitiveTopology::TriangleList
         {

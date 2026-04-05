@@ -2286,6 +2286,7 @@ mod tests {
                     params: None,
                     color: Color::srgb(0.5, 0.5, 0.5),
                     unlit: false,
+                    deform: None,
                 },
                 Transform::IDENTITY,
             )
@@ -2345,6 +2346,7 @@ mod tests {
                     params: None,
                     color: Color::srgb(0.5, 0.5, 0.5),
                     unlit: false,
+                    deform: None,
                 },
                 Transform::IDENTITY,
             )
@@ -2447,6 +2449,7 @@ mod tests {
                     params: None,
                     color: Color::srgb(0.5, 0.5, 0.5),
                     unlit: false,
+                    deform: None,
                 },
                 Transform::IDENTITY,
             )
@@ -2709,6 +2712,7 @@ mod tests {
                     params: None,
                     color: Color::srgb(0.5, 0.5, 0.5),
                     unlit: false,
+                    deform: None,
                 },
                 Transform::IDENTITY,
             )
@@ -2799,6 +2803,7 @@ mod tests {
                     params: None,
                     color: Color::srgb(0.5, 0.5, 0.5),
                     unlit: false,
+                    deform: None,
                 },
                 Transform::IDENTITY,
             )
@@ -2874,6 +2879,7 @@ mod tests {
                     params: None,
                     color: Color::srgb(0.5, 0.5, 0.5),
                     unlit: false,
+                    deform: None,
                 },
                 Transform::IDENTITY,
             )
@@ -3003,6 +3009,7 @@ mod tests {
                     params: None,
                     color: Color::srgb(0.5, 0.5, 0.5),
                     unlit: false,
+                    deform: None,
                 },
                 Transform::IDENTITY,
             )

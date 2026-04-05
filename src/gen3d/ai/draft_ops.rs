@@ -5,7 +5,8 @@ use uuid::Uuid;
 use crate::object::registry::{
     builtin_object_id, MeshKey, ObjectDef, ObjectPartDef, ObjectPartKind, PartAnimationDef,
     PartAnimationDriver, PartAnimationFamily, PartAnimationKeyframeDef, PartAnimationSlot,
-    PartAnimationSpec, PrimitiveParams, PrimitiveVisualDef,
+    PartAnimationSpec, PrimitiveDeformDef, PrimitiveFfdDeformV1, PrimitiveParams,
+    PrimitiveVisualDef,
 };
 
 use super::super::state::Gen3dDraft;
@@ -90,6 +91,16 @@ enum PrimitiveParamsJsonV1 {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum PrimitiveDeformJsonV1 {
+    FfdV1 {
+        #[serde(default)]
+        grid: Option<[u8; 3]>,
+        offsets: Vec<[f32; 3]>,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PrimitiveSpecJsonV1 {
     mesh: String,
@@ -99,6 +110,8 @@ struct PrimitiveSpecJsonV1 {
     color_rgba: Option<[f32; 4]>,
     #[serde(default)]
     unlit: Option<bool>,
+    #[serde(default)]
+    deform: Option<PrimitiveDeformJsonV1>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -442,11 +455,48 @@ fn primitive_visual_from_spec(spec: &PrimitiveSpecJsonV1) -> Result<PrimitiveVis
         color[3].clamp(0.0, 1.0),
     );
 
+    let deform = match spec.deform.as_ref() {
+        None => None,
+        Some(PrimitiveDeformJsonV1::FfdV1 { grid, offsets }) => {
+            let grid = grid.unwrap_or([3, 3, 3]);
+            if grid.iter().any(|v| *v < 2) {
+                return Err(format!(
+                    "primitive.deform.ffd_v1.grid must be >= 2 per axis (got {grid:?})"
+                ));
+            }
+            let expected = (grid[0] as usize)
+                .saturating_mul(grid[1] as usize)
+                .saturating_mul(grid[2] as usize);
+            if offsets.len() != expected {
+                return Err(format!(
+                    "primitive.deform.ffd_v1.offsets length {} does not match grid={grid:?} (expected {expected})",
+                    offsets.len()
+                ));
+            }
+            let mut out: Vec<Vec3> = Vec::with_capacity(expected);
+            for (idx, offset) in offsets.iter().enumerate() {
+                for (axis, v) in offset.iter().enumerate() {
+                    if !v.is_finite() {
+                        return Err(format!(
+                            "primitive.deform.ffd_v1.offsets[{idx}][{axis}] must be finite"
+                        ));
+                    }
+                }
+                out.push(Vec3::new(offset[0], offset[1], offset[2]));
+            }
+            Some(PrimitiveDeformDef::FfdV1(PrimitiveFfdDeformV1 {
+                grid,
+                offsets: out,
+            }))
+        }
+    };
+
     Ok(PrimitiveVisualDef::Primitive {
         mesh,
         params,
         color,
         unlit: spec.unlit.unwrap_or(false),
+        deform,
     })
 }
 
@@ -1810,6 +1860,7 @@ pub(super) fn query_component_parts_v1(
                         params,
                         color,
                         unlit,
+                        deform,
                     } => {
                         let mesh_apply = match mesh {
                             MeshKey::UnitCube => Some("cube"),
@@ -1851,23 +1902,37 @@ pub(super) fn query_component_parts_v1(
                                 "major_radius": major_radius,
                             }),
                         };
+                        let deform_json = deform.as_ref().map(|deform| match deform {
+                            PrimitiveDeformDef::FfdV1(ffd) => serde_json::json!({
+                                "kind": "ffd_v1",
+                                "grid": ffd.grid,
+                                "offsets": ffd.offsets.iter().map(|v| [v.x, v.y, v.z]).collect::<Vec<_>>(),
+                            }),
+                        });
                         if let (Some(part_id_uuid), Some(mesh_apply)) =
                             (part_id_uuid.as_ref(), mesh_apply)
                         {
                             recolorable_primitives_total =
                                 recolorable_primitives_total.saturating_add(1);
                             if recolor_samples.len() < SAMPLE_RECOLOR_MAX {
+                                let mut set_primitive = serde_json::json!({
+                                    "mesh": mesh_apply,
+                                    "params": params_json.clone(),
+                                    // Example color. Change this (and replicate the op) as needed.
+                                    "color_rgba": [0.20, 0.40, 0.80, 1.00],
+                                    "unlit": *unlit,
+                                });
+                                if let Some(deform_json) = deform_json.as_ref() {
+                                    set_primitive
+                                        .as_object_mut()
+                                        .expect("json object")
+                                        .insert("deform".into(), deform_json.clone());
+                                }
                                 recolor_samples.push(serde_json::json!({
                                     "kind": "update_primitive_part",
                                     "component": component.as_str(),
                                     "part_id_uuid": part_id_uuid,
-                                    "set_primitive": {
-                                        "mesh": mesh_apply,
-                                        "params": params_json.clone(),
-                                        // Example color. Change this (and replicate the op) as needed.
-                                        "color_rgba": [0.20, 0.40, 0.80, 1.00],
-                                        "unlit": *unlit,
-                                    },
+                                    "set_primitive": set_primitive,
                                 }));
                             }
                             if transform_sample.is_none() {
@@ -1883,13 +1948,20 @@ pub(super) fn query_component_parts_v1(
                                 }));
                             }
                         }
-                        serde_json::json!({
+                        let mut prim_json = serde_json::json!({
                             "mesh": format!("{mesh:?}"),
                             "mesh_apply": mesh_apply,
                             "params": params_json,
                             "color_rgba": [srgba.red, srgba.green, srgba.blue, srgba.alpha],
                             "unlit": unlit,
-                        })
+                        });
+                        if let Some(deform_json) = deform_json {
+                            prim_json
+                                .as_object_mut()
+                                .expect("json object")
+                                .insert("deform".into(), deform_json);
+                        }
+                        prim_json
                     }
                     PrimitiveVisualDef::Mesh { mesh, material } => serde_json::json!({
                         "mesh": format!("{mesh:?}"),
@@ -2353,6 +2425,7 @@ mod tests {
                     params: None,
                     color: Color::srgb(0.5, 0.5, 0.5),
                     unlit: false,
+                    deform: None,
                 },
                 Transform::from_translation(Vec3::new(idx as f32 * 0.25, 0.0, 0.0)),
             );

@@ -633,6 +633,7 @@ mod tests {
                 params: None,
                 color: Color::WHITE,
                 unlit: false,
+                deform: None,
             },
             Transform::from_translation(Vec3::new(0.0, 0.225, 0.0))
                 .with_scale(Vec3::new(0.85, 0.10, 0.85)),
@@ -643,6 +644,7 @@ mod tests {
                 params: None,
                 color: Color::WHITE,
                 unlit: false,
+                deform: None,
             },
             Transform::from_translation(Vec3::new(0.0, 0.26, 0.27))
                 .with_scale(Vec3::new(0.75, 0.03, 0.28)),
@@ -653,6 +655,7 @@ mod tests {
                 params: None,
                 color: Color::WHITE,
                 unlit: false,
+                deform: None,
             },
             Transform::from_translation(Vec3::new(0.0, 0.265, 0.0))
                 .with_scale(Vec3::new(0.35, 0.02, 0.35)),
@@ -679,6 +682,7 @@ mod tests {
                 params: None,
                 color: Color::WHITE,
                 unlit: false,
+                deform: None,
             },
             Transform::from_translation(Vec3::ZERO).with_scale(Vec3::new(0.6, 0.26, 0.6)),
         );
@@ -688,6 +692,7 @@ mod tests {
                 params: None,
                 color: Color::WHITE,
                 unlit: false,
+                deform: None,
             },
             Transform::from_translation(Vec3::ZERO).with_scale(Vec3::new(0.56, 0.26, 0.56)),
         );
@@ -732,6 +737,7 @@ mod tests {
                 params: None,
                 color: Color::WHITE,
                 unlit: false,
+                deform: None,
             },
             Transform::from_scale(Vec3::new(1.0, 1.0, 1.0)),
         );

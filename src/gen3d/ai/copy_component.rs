@@ -1305,6 +1305,7 @@ mod tests {
                     params: None,
                     color: Color::WHITE,
                     unlit: false,
+                    deform: None,
                 },
                 Transform::from_scale(Vec3::splat(1.0)),
             )],
@@ -1726,6 +1727,7 @@ mod tests {
                 params: None,
                 color: Color::WHITE,
                 unlit: false,
+                deform: None,
             };
             let source_def = ObjectDef {
                 anchors: vec![anchor_named_forward("mount", Vec3::Z)],
@@ -1928,6 +1930,7 @@ mod tests {
                     params: None,
                     color: Color::WHITE,
                     unlit: false,
+                    deform: None,
                 },
                 Transform::from_scale(Vec3::splat(1.0)),
             ),
@@ -2212,6 +2215,7 @@ mod tests {
                     params: None,
                     color: Color::WHITE,
                     unlit: false,
+                    deform: None,
                 },
                 Transform::from_translation(Vec3::new(0.0, 0.0, 1.0)),
             )],
@@ -2323,6 +2327,7 @@ mod tests {
                     params: None,
                     color: Color::WHITE,
                     unlit: false,
+                    deform: None,
                 },
                 Transform::from_translation(Vec3::new(0.25, 0.0, 0.0)),
             )],
@@ -2463,6 +2468,7 @@ mod tests {
                     params: None,
                     color: Color::WHITE,
                     unlit: false,
+                    deform: None,
                 },
                 Transform::IDENTITY,
             )],
@@ -3288,6 +3294,7 @@ mod tests {
             params: None,
             color: Color::WHITE,
             unlit: false,
+            deform: None,
         };
         // Place an asymmetric feature at mount-local (right=+1, forward=+1). Under a 180-degree
         // rotation it would land at -Z, while a mirrored copy lands at +Z.

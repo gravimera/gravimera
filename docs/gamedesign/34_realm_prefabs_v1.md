@@ -127,7 +127,7 @@ Tagged union (`kind`):
 - Mesh-backed:
   - `{ "kind": "mesh", "mesh": <mesh_key>, "material": <material_key> }`
 - Procedural primitive:
-  - `{ "kind": "primitive", "mesh": <mesh_key>, "params": <primitive_params?>, "color_rgba": {r,g,b,a}, "unlit": <bool> }`
+  - `{ "kind": "primitive", "mesh": <mesh_key>, "params": <primitive_params?>, "color_rgba": {r,g,b,a}, "unlit": <bool>, "deform": <primitive_deform?> }`
 
 ### `mesh_key`
 
@@ -167,6 +167,19 @@ Tagged union (`kind`):
   - `{ "kind": "conical_frustum", "radius_top": <f32>, "radius_bottom": <f32>, "height": <f32> }`
 - Torus:
   - `{ "kind": "torus", "minor_radius": <f32>, "major_radius": <f32> }`
+
+### `primitive_deform` (optional)
+
+Tagged union (`kind`):
+
+- Free-form deformation (FFD) v1:
+  - `{ "kind": "ffd_v1", "grid": <u8[3]?>, "offsets": <vec3[]> }`
+  - `grid` is an optional 3-element array `[nx, ny, nz]`. When omitted, the engine defaults to `[3, 3, 3]`.
+  - `offsets` length must equal `nx * ny * nz`.
+  - Offsets are local-space meter translations applied to the control cage points (not absolute positions).
+  - Control point order is X-major, then Y, then Z:
+    - `index = x + nx * (y + ny * z)`
+  - The base (undeformed) cage positions are derived from the primitive mesh's local AABB.
 
 ### `animations`
 

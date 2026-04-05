@@ -1136,6 +1136,7 @@ fn primitive_to_dat(primitive: &PrimitiveVisualDef) -> SceneDatPrimitive {
             params,
             color,
             unlit,
+            ..
         } => scene_dat_primitive::Kind::Solid(SceneDatPrimitiveSolid {
             mesh: mesh_key_to_dat(*mesh),
             params: params.map(params_to_dat),
@@ -1178,6 +1179,7 @@ fn primitive_from_dat(primitive: &SceneDatPrimitive) -> Result<PrimitiveVisualDe
                 params,
                 color,
                 unlit: s.unlit,
+                deform: None,
             }
         }
     })

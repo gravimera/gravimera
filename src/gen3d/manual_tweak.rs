@@ -81,6 +81,8 @@ pub(crate) fn gen3d_manual_tweak_button(
     if !available && tweak.enabled {
         tweak.enabled = false;
         tweak.selected_part_id = None;
+        tweak.deform_mode = false;
+        tweak.deform_selected_index = None;
     }
 
     let label = if tweak.enabled {
@@ -121,6 +123,8 @@ pub(crate) fn gen3d_manual_tweak_button(
                 if !matches!(*last_interaction, Some(Interaction::Pressed)) {
                     tweak.enabled = !tweak.enabled;
                     tweak.selected_part_id = None;
+                    tweak.deform_mode = false;
+                    tweak.deform_selected_index = None;
                     workshop.error = None;
                     workshop.status = if tweak.enabled {
                         "Manual tweak enabled. Click a part in the preview to select it.".into()
@@ -224,12 +228,8 @@ pub(crate) struct ManualTweakPickUi<'w, 's> {
         With<Gen3dPreviewAnimationDropdownList>,
     >,
     cameras: Query<'w, 's, (&'static Camera, &'static GlobalTransform), With<Gen3dPreviewCamera>>,
-    panels: Query<
-        'w,
-        's,
-        (&'static ComputedNode, &'static UiGlobalTransform),
-        With<Gen3dPreviewPanel>,
-    >,
+    panels:
+        Query<'w, 's, (&'static ComputedNode, &'static UiGlobalTransform), With<Gen3dPreviewPanel>>,
 }
 
 #[derive(Default)]
@@ -313,7 +313,10 @@ fn node_visible(vis: Option<&Visibility>) -> bool {
 fn preview_cursor_unblocked(
     window: &Window,
     panel_interactions: &Query<&Interaction, With<Gen3dPreviewPanel>>,
-    side_panel_root: &Query<(&ComputedNode, &UiGlobalTransform, Option<&Visibility>), With<Gen3dSidePanelRoot>>,
+    side_panel_root: &Query<
+        (&ComputedNode, &UiGlobalTransform, Option<&Visibility>),
+        With<Gen3dSidePanelRoot>,
+    >,
     side_panel_toggle: &Query<
         (&ComputedNode, &UiGlobalTransform, Option<&Visibility>),
         With<Gen3dSidePanelToggleButton>,
@@ -463,7 +466,8 @@ pub(crate) fn gen3d_manual_tweak_pick_part(
     let Some(layout) = preview::preview_image_layout(panel_node, *panel_transform) else {
         return;
     };
-    let Some(cursor_target) = preview::preview_cursor_to_target(end, layout.image_bounds_physical) else {
+    let Some(cursor_target) = preview::preview_cursor_to_target(end, layout.image_bounds_physical)
+    else {
         return;
     };
 
@@ -498,6 +502,7 @@ pub(crate) fn gen3d_manual_tweak_pick_part(
     let picked = best.map(|(id, _)| id);
     if picked != tweak.selected_part_id {
         tweak.selected_part_id = picked;
+        tweak.deform_selected_index = None;
         workshop.error = None;
         workshop.status = if let Some(id) = picked {
             format!("Selected part {}.", uuid::Uuid::from_u128(id))
@@ -524,7 +529,9 @@ fn clamp_scale(v: Vec3) -> Vec3 {
             return 1.0;
         }
         let sign = if value == 0.0 { 1.0 } else { value.signum() };
-        let mag = value.abs().clamp(MANUAL_TWEAK_SCALE_MIN, MANUAL_TWEAK_SCALE_MAX);
+        let mag = value
+            .abs()
+            .clamp(MANUAL_TWEAK_SCALE_MIN, MANUAL_TWEAK_SCALE_MAX);
         sign * mag
     };
     Vec3::new(
@@ -582,6 +589,20 @@ fn primitive_params_to_draft_ops_json(
     }
 }
 
+fn primitive_deform_to_draft_ops_json(
+    deform: &crate::object::registry::PrimitiveDeformDef,
+) -> serde_json::Value {
+    use crate::object::registry::PrimitiveDeformDef;
+
+    match deform {
+        PrimitiveDeformDef::FfdV1(ffd) => serde_json::json!({
+            "kind": "ffd_v1",
+            "grid": ffd.grid,
+            "offsets": ffd.offsets.iter().map(|v| [v.x, v.y, v.z]).collect::<Vec<_>>(),
+        }),
+    }
+}
+
 fn color_to_rgba(color: Color) -> [f32; 4] {
     let c = color.to_srgba();
     [c.red, c.green, c.blue, c.alpha]
@@ -607,6 +628,7 @@ fn build_set_primitive_json(
             mesh,
             params,
             unlit,
+            deform,
             ..
         } => {
             let mesh_name = mesh_key_to_draft_ops_name(*mesh).ok_or_else(|| {
@@ -624,6 +646,12 @@ fn build_set_primitive_json(
                     .as_object_mut()
                     .expect("json object")
                     .insert("params".into(), primitive_params_to_draft_ops_json(params));
+            }
+            if let Some(deform) = deform.as_ref() {
+                value
+                    .as_object_mut()
+                    .expect("json object")
+                    .insert("deform".into(), primitive_deform_to_draft_ops_json(deform));
             }
             Ok(value)
         }
@@ -645,10 +673,9 @@ fn build_update_primitive_part_args(
         "part_id_uuid": uuid::Uuid::from_u128(part_id).to_string(),
     });
     if let Some(transform) = set_transform {
-        op.as_object_mut().expect("json object").insert(
-            "set_transform".into(),
-            build_set_transform_json(transform),
-        );
+        op.as_object_mut()
+            .expect("json object")
+            .insert("set_transform".into(), build_set_transform_json(transform));
     }
     if let Some(primitive) = set_primitive {
         op.as_object_mut()
@@ -663,7 +690,10 @@ fn build_update_primitive_part_args(
     })
 }
 
-fn patch_apply_draft_ops_args(mut args: serde_json::Value, if_assembly_rev: u32) -> serde_json::Value {
+fn patch_apply_draft_ops_args(
+    mut args: serde_json::Value,
+    if_assembly_rev: u32,
+) -> serde_json::Value {
     let Some(obj) = args.as_object_mut() else {
         return args;
     };
@@ -673,7 +703,10 @@ fn patch_apply_draft_ops_args(mut args: serde_json::Value, if_assembly_rev: u32)
     args
 }
 
-fn push_undo_entry(tweak: &mut Gen3dManualTweakState, entry: super::state::Gen3dManualTweakUndoEntry) {
+fn push_undo_entry(
+    tweak: &mut Gen3dManualTweakState,
+    entry: super::state::Gen3dManualTweakUndoEntry,
+) {
     if tweak.undo.len() >= MANUAL_TWEAK_UNDO_LIMIT {
         let drain = tweak.undo.len().saturating_sub(MANUAL_TWEAK_UNDO_LIMIT - 1);
         tweak.undo.drain(0..drain);
@@ -795,11 +828,25 @@ pub(crate) fn gen3d_manual_tweak_hotkeys(
         return;
     }
 
+    if keys.just_pressed(KeyCode::KeyV) {
+        tweak.deform_mode = !tweak.deform_mode;
+        tweak.deform_selected_index = None;
+        workshop.error = None;
+        workshop.status = if tweak.deform_mode {
+            "Sculpt (FFD) enabled. Drag a control point in the preview.".into()
+        } else {
+            "Sculpt (FFD) exited.".into()
+        };
+        return;
+    }
+
     let Some(part_id) = tweak.selected_part_id else {
         return;
     };
 
-    let Some((component, before_transform, primitive)) = find_selected_primitive_part(&draft, part_id) else {
+    let Some((component, before_transform, primitive)) =
+        find_selected_primitive_part(&draft, part_id)
+    else {
         tweak.selected_part_id = None;
         workshop.error = Some("Selected part no longer exists in the draft.".into());
         return;
@@ -851,7 +898,8 @@ pub(crate) fn gen3d_manual_tweak_hotkeys(
 
     let recolor_requested = keys.just_pressed(KeyCode::KeyC);
 
-    if !requested_move.is_finite() || !requested_rot_deg.is_finite() || !requested_scale.is_finite() {
+    if !requested_move.is_finite() || !requested_rot_deg.is_finite() || !requested_scale.is_finite()
+    {
         return;
     }
 
@@ -982,7 +1030,10 @@ pub(crate) fn gen3d_manual_tweak_update_selected_overlay(
             &mut Node,
             &mut Visibility,
         ),
-        Or<(With<Gen3dTweakSelectedFrame>, With<Gen3dTweakSelectedInfoCard>)>,
+        Or<(
+            With<Gen3dTweakSelectedFrame>,
+            With<Gen3dTweakSelectedInfoCard>,
+        )>,
     >,
     mut overlay_texts: Query<(&Gen3dTweakSelectedInfoText, &mut Text)>,
     mut mesh_cache: Local<MeshAabbCache>,
@@ -991,24 +1042,28 @@ pub(crate) fn gen3d_manual_tweak_update_selected_overlay(
         return;
     }
 
-    let hide_all = |overlay_nodes: &mut Query<
-        (
-            Option<&Gen3dTweakSelectedFrame>,
-            Option<&Gen3dTweakSelectedInfoCard>,
-            &mut Node,
-            &mut Visibility,
-        ),
-        Or<(With<Gen3dTweakSelectedFrame>, With<Gen3dTweakSelectedInfoCard>)>,
-    >,
-                    overlay_texts: &mut Query<(&Gen3dTweakSelectedInfoText, &mut Text)>| {
-        for (_frame, _card, mut node, mut vis) in overlay_nodes.iter_mut() {
-            node.display = Display::None;
-            *vis = Visibility::Hidden;
-        }
-        for (_marker, mut text) in overlay_texts.iter_mut() {
-            **text = "".into();
-        }
-    };
+    let hide_all =
+        |overlay_nodes: &mut Query<
+            (
+                Option<&Gen3dTweakSelectedFrame>,
+                Option<&Gen3dTweakSelectedInfoCard>,
+                &mut Node,
+                &mut Visibility,
+            ),
+            Or<(
+                With<Gen3dTweakSelectedFrame>,
+                With<Gen3dTweakSelectedInfoCard>,
+            )>,
+        >,
+         overlay_texts: &mut Query<(&Gen3dTweakSelectedInfoText, &mut Text)>| {
+            for (_frame, _card, mut node, mut vis) in overlay_nodes.iter_mut() {
+                node.display = Display::None;
+                *vis = Visibility::Hidden;
+            }
+            for (_marker, mut text) in overlay_texts.iter_mut() {
+                **text = "".into();
+            }
+        };
 
     if !tweak.enabled {
         hide_all(&mut overlay_nodes, &mut overlay_texts);
@@ -1020,10 +1075,12 @@ pub(crate) fn gen3d_manual_tweak_update_selected_overlay(
         .ok()
         .zip(cameras.single().ok())
         .zip(panels.single().ok())
-        .and_then(|((window, (camera, camera_transform)), (panel_node, panel_transform))| {
-            preview::preview_image_layout(panel_node, *panel_transform)
-                .map(|layout| (window, camera, camera_transform, layout))
-        });
+        .and_then(
+            |((window, (camera, camera_transform)), (panel_node, panel_transform))| {
+                preview::preview_image_layout(panel_node, *panel_transform)
+                    .map(|layout| (window, camera, camera_transform, layout))
+            },
+        );
     let Some((_window, camera, camera_transform, layout)) = context else {
         hide_all(&mut overlay_nodes, &mut overlay_texts);
         return;
@@ -1033,14 +1090,12 @@ pub(crate) fn gen3d_manual_tweak_update_selected_overlay(
 
     let selection = tweak.selected_part_id;
     let info_text = if let Some(part_id) = selection {
-        let part = parts
-            .iter()
-            .find(|(_, id, _)| id.0 == part_id)
-            .and_then(|(global_transform, _id, mesh3d)| {
-                mesh_local_aabb_cached(&mut mesh_cache, &meshes, &mesh3d.0).map(|aabb| {
-                    (global_transform.to_matrix(), aabb.0, aabb.1)
-                })
-            });
+        let part = parts.iter().find(|(_, id, _)| id.0 == part_id).and_then(
+            |(global_transform, _id, mesh3d)| {
+                mesh_local_aabb_cached(&mut mesh_cache, &meshes, &mesh3d.0)
+                    .map(|aabb| (global_transform.to_matrix(), aabb.0, aabb.1))
+            },
+        );
         if let Some((world_from_local, min_local, max_local)) = part {
             let corners = [
                 Vec3::new(min_local.x, min_local.y, min_local.z),
@@ -1067,7 +1122,8 @@ pub(crate) fn gen3d_manual_tweak_update_selected_overlay(
             }
 
             if any && min.is_finite() && max.is_finite() {
-                let frame_min = preview::preview_target_to_panel_logical(min, layout).max(Vec2::ZERO);
+                let frame_min =
+                    preview::preview_target_to_panel_logical(min, layout).max(Vec2::ZERO);
                 let frame_max = preview::preview_target_to_panel_logical(max, layout)
                     .min(layout.panel_size_logical);
                 frame_rect_panel = Some(Rect {
@@ -1109,6 +1165,13 @@ pub(crate) fn gen3d_manual_tweak_update_selected_overlay(
             display_component.unwrap_or("unknown"),
             primitive_label.unwrap_or_else(|| "primitive".to_string()),
         );
+        info_text.push_str("\nSculpt (FFD): V (toggle), LMB drag handle (Shift=precision)");
+        if tweak.deform_mode {
+            info_text.push_str("\nSculpt: ON (orbit disabled while sculpting)");
+        }
+        if let Some(index) = tweak.deform_selected_index {
+            info_text.push_str(&format!("\nControl point: {index}"));
+        }
         if let Some(transform) = transform {
             info_text = format!(
                 "{info_text}\n\npos: {:.2} {:.2} {:.2}\nscale: {:.2} {:.2} {:.2}",
@@ -1146,8 +1209,8 @@ pub(crate) fn gen3d_manual_tweak_update_selected_overlay(
 
         if card_marker.is_some() {
             if let Some(rect) = frame_rect_panel {
-                let card_left = (rect.max.x + 10.0)
-                    .clamp(8.0, (layout.panel_size_logical.x - 240.0).max(8.0));
+                let card_left =
+                    (rect.max.x + 10.0).clamp(8.0, (layout.panel_size_logical.x - 240.0).max(8.0));
                 let card_top = rect
                     .min
                     .y
@@ -1165,5 +1228,698 @@ pub(crate) fn gen3d_manual_tweak_update_selected_overlay(
 
     for (_marker, mut text) in &mut overlay_texts {
         **text = info_text.clone().into();
+    }
+}
+
+const MANUAL_TWEAK_FFD_DEFAULT_GRID: [u8; 3] = [3, 3, 3];
+
+#[derive(Component, Copy, Clone, Debug)]
+pub(crate) struct Gen3dManualTweakFfdHandle {
+    part_id: u128,
+    index: usize,
+}
+
+#[derive(Default)]
+pub(crate) struct ManualTweakFfdHandleAssets {
+    mesh: Option<Handle<Mesh>>,
+    material: Option<Handle<StandardMaterial>>,
+    material_selected: Option<Handle<StandardMaterial>>,
+}
+
+#[derive(Default)]
+pub(crate) struct ManualTweakFfdDragState {
+    active: bool,
+    component: String,
+    part_id: u128,
+    cp_index: usize,
+    grid: [u8; 3],
+    base_min: Vec3,
+    base_max: Vec3,
+    base_offsets: Vec<Vec3>,
+    start_hit_local: Vec3,
+    plane_normal_local: Vec3,
+    primitive_base: Option<crate::object::registry::PrimitiveVisualDef>,
+    before_args_json: serde_json::Value,
+    last_apply_time_secs: f32,
+}
+
+impl ManualTweakFfdDragState {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
+fn primitive_base_size_for_ffd(
+    mesh: crate::object::registry::MeshKey,
+    params: Option<&crate::object::registry::PrimitiveParams>,
+) -> Vec3 {
+    use crate::object::registry::{MeshKey, PrimitiveParams};
+
+    match mesh {
+        MeshKey::UnitCube => Vec3::ONE,
+        MeshKey::UnitCylinder => Vec3::ONE,
+        MeshKey::UnitCone => Vec3::ONE,
+        MeshKey::UnitSphere => Vec3::ONE,
+        MeshKey::UnitCapsule => match params {
+            Some(PrimitiveParams::Capsule {
+                half_length,
+                radius,
+            }) => Vec3::new(radius * 2.0, (half_length + radius) * 2.0, radius * 2.0),
+            _ => Vec3::ONE,
+        },
+        MeshKey::UnitConicalFrustum => match params {
+            Some(PrimitiveParams::ConicalFrustum {
+                radius_top,
+                radius_bottom,
+                height,
+            }) => {
+                let r = radius_top.max(*radius_bottom);
+                Vec3::new(r * 2.0, *height, r * 2.0)
+            }
+            _ => Vec3::ONE,
+        },
+        MeshKey::UnitTorus => match params {
+            Some(PrimitiveParams::Torus {
+                minor_radius,
+                major_radius,
+            }) => {
+                let r = major_radius + minor_radius;
+                Vec3::new(r * 2.0, minor_radius * 2.0, r * 2.0)
+            }
+            _ => Vec3::ONE,
+        },
+        _ => Vec3::ONE,
+    }
+}
+
+fn primitive_base_aabb_for_ffd(
+    primitive: &crate::object::registry::PrimitiveVisualDef,
+) -> Option<(Vec3, Vec3)> {
+    use crate::object::registry::PrimitiveVisualDef;
+
+    let PrimitiveVisualDef::Primitive { mesh, params, .. } = primitive else {
+        return None;
+    };
+    let size = primitive_base_size_for_ffd(*mesh, params.as_ref())
+        .abs()
+        .max(Vec3::splat(0.01));
+    let half = size * 0.5;
+    Some((-half, half))
+}
+
+fn ffd_point_count(grid: [u8; 3]) -> Option<usize> {
+    let nx = grid[0] as usize;
+    let ny = grid[1] as usize;
+    let nz = grid[2] as usize;
+    if nx < 2 || ny < 2 || nz < 2 {
+        return None;
+    }
+    Some(nx.saturating_mul(ny).saturating_mul(nz))
+}
+
+fn primitive_ffd_grid_and_offsets(
+    primitive: &crate::object::registry::PrimitiveVisualDef,
+) -> Option<([u8; 3], Vec<Vec3>)> {
+    use crate::object::registry::{PrimitiveDeformDef, PrimitiveVisualDef};
+
+    let PrimitiveVisualDef::Primitive { deform, .. } = primitive else {
+        return None;
+    };
+
+    match deform {
+        None => {
+            let grid = MANUAL_TWEAK_FFD_DEFAULT_GRID;
+            let count = ffd_point_count(grid)?;
+            Some((grid, vec![Vec3::ZERO; count]))
+        }
+        Some(PrimitiveDeformDef::FfdV1(ffd)) => Some((ffd.grid, ffd.offsets.clone())),
+    }
+}
+
+fn primitive_with_ffd_offsets(
+    primitive: &crate::object::registry::PrimitiveVisualDef,
+    grid: [u8; 3],
+    offsets: Vec<Vec3>,
+) -> Option<crate::object::registry::PrimitiveVisualDef> {
+    use crate::object::registry::{PrimitiveDeformDef, PrimitiveFfdDeformV1, PrimitiveVisualDef};
+
+    let PrimitiveVisualDef::Primitive {
+        mesh,
+        params,
+        color,
+        unlit,
+        ..
+    } = primitive
+    else {
+        return None;
+    };
+    Some(PrimitiveVisualDef::Primitive {
+        mesh: *mesh,
+        params: params.clone(),
+        color: *color,
+        unlit: *unlit,
+        deform: Some(PrimitiveDeformDef::FfdV1(PrimitiveFfdDeformV1 {
+            grid,
+            offsets,
+        })),
+    })
+}
+
+fn ffd_control_point_local(
+    base_min: Vec3,
+    base_max: Vec3,
+    grid: [u8; 3],
+    offsets: &[Vec3],
+    index: usize,
+) -> Option<Vec3> {
+    let nx = grid[0] as usize;
+    let ny = grid[1] as usize;
+    let nz = grid[2] as usize;
+    if nx < 2 || ny < 2 || nz < 2 {
+        return None;
+    }
+    let expected = nx.saturating_mul(ny).saturating_mul(nz);
+    if index >= expected || offsets.len() != expected {
+        return None;
+    }
+
+    let x = index % nx;
+    let yz = index / nx;
+    let y = yz % ny;
+    let z = yz / ny;
+
+    let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    let tx = x as f32 / (nx - 1) as f32;
+    let ty = y as f32 / (ny - 1) as f32;
+    let tz = z as f32 / (nz - 1) as f32;
+
+    let base = Vec3::new(
+        lerp(base_min.x, base_max.x, tx),
+        lerp(base_min.y, base_max.y, ty),
+        lerp(base_min.z, base_max.z, tz),
+    );
+    Some(base + offsets[index])
+}
+
+fn ray_plane_intersection(origin: Vec3, dir: Vec3, point: Vec3, normal: Vec3) -> Option<Vec3> {
+    let denom = dir.dot(normal);
+    if denom.abs() < 1e-6 {
+        return None;
+    }
+    let t = (point - origin).dot(normal) / denom;
+    if !t.is_finite() {
+        return None;
+    }
+    Some(origin + dir * t)
+}
+
+fn pick_control_point_index(
+    ray_origin_local: Vec3,
+    ray_dir_local: Vec3,
+    base_min: Vec3,
+    base_max: Vec3,
+    grid: [u8; 3],
+    offsets: &[Vec3],
+    radius_local: f32,
+) -> Option<usize> {
+    let dir = ray_dir_local.normalize_or_zero();
+    if dir.length_squared() < 1e-8 {
+        return None;
+    }
+
+    let count = ffd_point_count(grid)?;
+    if offsets.len() != count {
+        return None;
+    }
+
+    let mut best: Option<(usize, f32)> = None;
+    let radius2 = radius_local.max(0.001).powi(2);
+    for index in 0..count {
+        let Some(p) = ffd_control_point_local(base_min, base_max, grid, offsets, index) else {
+            continue;
+        };
+        let v = p - ray_origin_local;
+        let t = v.dot(dir);
+        if t < 0.0 {
+            continue;
+        }
+        let closest = ray_origin_local + dir * t;
+        let dist2 = (p - closest).length_squared();
+        if dist2 > radius2 {
+            continue;
+        }
+        match best {
+            None => best = Some((index, t)),
+            Some((_, best_t)) if t < best_t => best = Some((index, t)),
+            _ => {}
+        }
+    }
+    best.map(|(index, _)| index)
+}
+
+pub(crate) fn gen3d_manual_tweak_ffd_drag(
+    build_scene: Res<State<BuildScene>>,
+    time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    task_queue: Res<Gen3dTaskQueue>,
+    ui: ManualTweakPickUi,
+    parts: Query<(&GlobalTransform, &VisualPartId)>,
+    mut job: ResMut<Gen3dAiJob>,
+    mut draft: ResMut<Gen3dDraft>,
+    mut workshop: ResMut<Gen3dWorkshop>,
+    mut tweak: ResMut<Gen3dManualTweakState>,
+    mut drag: Local<ManualTweakFfdDragState>,
+) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        drag.reset();
+        return;
+    }
+    if !tweak.enabled || !tweak.deform_mode {
+        drag.reset();
+        return;
+    }
+    if workshop.image_viewer.is_some() || workshop.prompt_focused {
+        drag.reset();
+        return;
+    }
+    if job.is_running() || active_session_is_queued(&task_queue) {
+        drag.reset();
+        return;
+    }
+
+    let Ok(window) = ui.windows.single() else {
+        return;
+    };
+    let hovered = preview_cursor_unblocked(
+        window,
+        &ui.panel_interactions,
+        &ui.side_panel_root,
+        &ui.side_panel_toggle,
+        &ui.anim_dropdown_button,
+        &ui.explode_toggle_button,
+        &ui.export_button,
+        &ui.anim_dropdown_list,
+    );
+    if !hovered && !drag.active {
+        return;
+    }
+
+    let Some(cursor_physical) = window.physical_cursor_position() else {
+        return;
+    };
+
+    let Some(part_id) = tweak.selected_part_id else {
+        drag.reset();
+        return;
+    };
+
+    let Some((component, _before_transform, primitive)) =
+        find_selected_primitive_part(&draft, part_id)
+    else {
+        drag.reset();
+        return;
+    };
+
+    let Some((base_min, base_max)) = primitive_base_aabb_for_ffd(&primitive) else {
+        return;
+    };
+    let Some((grid, offsets)) = primitive_ffd_grid_and_offsets(&primitive) else {
+        return;
+    };
+
+    let part_transform = parts
+        .iter()
+        .find(|(_t, id)| id.0 == part_id)
+        .map(|(t, _id)| t.to_matrix());
+    let Some(part_from_local) = part_transform else {
+        return;
+    };
+    let inv_local_from_part = part_from_local.inverse();
+
+    let Some((panel_node, panel_transform)) = ui.panels.single().ok() else {
+        return;
+    };
+    let Some(layout) = preview::preview_image_layout(panel_node, *panel_transform) else {
+        return;
+    };
+    let Some(cursor_target) =
+        preview::preview_cursor_to_target(cursor_physical, layout.image_bounds_physical)
+    else {
+        return;
+    };
+    let Ok((camera, camera_transform)) = ui.cameras.single() else {
+        return;
+    };
+    let Ok(ray) = camera.viewport_to_world(camera_transform, cursor_target) else {
+        return;
+    };
+
+    let ray_origin_local = inv_local_from_part.transform_point3(ray.origin);
+    let ray_dir_local = inv_local_from_part.transform_vector3(ray.direction.into());
+
+    let base_size = (base_max - base_min).abs().max(Vec3::splat(0.01));
+    let radius_local = (base_size.length() * 0.04).clamp(0.015, 0.10);
+
+    if mouse_buttons.just_pressed(MouseButton::Left) && !drag.active {
+        let picked = pick_control_point_index(
+            ray_origin_local,
+            ray_dir_local,
+            base_min,
+            base_max,
+            grid,
+            offsets.as_slice(),
+            radius_local,
+        );
+        if let Some(cp_index) = picked {
+            let Some(cp_local) =
+                ffd_control_point_local(base_min, base_max, grid, offsets.as_slice(), cp_index)
+            else {
+                return;
+            };
+
+            let camera_forward_world: Vec3 = camera_transform.forward().into();
+            let plane_normal_local = inv_local_from_part
+                .transform_vector3(camera_forward_world)
+                .normalize_or_zero();
+            let plane_normal_local = if plane_normal_local.length_squared() > 1e-8 {
+                plane_normal_local
+            } else {
+                Vec3::Z
+            };
+            let start_hit_local = ray_plane_intersection(
+                ray_origin_local,
+                ray_dir_local,
+                cp_local,
+                plane_normal_local,
+            )
+            .unwrap_or(cp_local);
+
+            let primitive_base = primitive.clone();
+            let base_color = match &primitive_base {
+                crate::object::registry::PrimitiveVisualDef::Primitive { color, .. } => *color,
+                _ => Color::srgb(0.85, 0.87, 0.90),
+            };
+            let before_prim_json = match build_set_primitive_json(&primitive_base, base_color) {
+                Ok(value) => value,
+                Err(err) => {
+                    workshop.error = Some(err);
+                    return;
+                }
+            };
+            let before_args_json = build_update_primitive_part_args(
+                component.as_str(),
+                part_id,
+                None,
+                Some(before_prim_json),
+            );
+
+            drag.active = true;
+            drag.component = component;
+            drag.part_id = part_id;
+            drag.cp_index = cp_index;
+            drag.grid = grid;
+            drag.base_min = base_min;
+            drag.base_max = base_max;
+            drag.base_offsets = offsets;
+            drag.start_hit_local = start_hit_local;
+            drag.plane_normal_local = plane_normal_local;
+            drag.primitive_base = Some(primitive_base);
+            drag.before_args_json = before_args_json;
+            drag.last_apply_time_secs = time.elapsed_secs();
+
+            tweak.deform_selected_index = Some(cp_index);
+            workshop.error = None;
+            workshop.status = format!("Sculpt: selected control point {cp_index}.");
+        }
+    }
+
+    if !drag.active {
+        return;
+    }
+
+    if mouse_buttons.pressed(MouseButton::Left) {
+        let now = time.elapsed_secs();
+        let apply_due = (now - drag.last_apply_time_secs) >= 0.05;
+        if apply_due {
+            let current_hit = ray_plane_intersection(
+                ray_origin_local,
+                ray_dir_local,
+                drag.start_hit_local,
+                drag.plane_normal_local,
+            )
+            .unwrap_or(drag.start_hit_local);
+            let mut delta = current_hit - drag.start_hit_local;
+            if tweak_mod_shift(&keys) {
+                delta *= 0.25;
+            }
+            if !delta.is_finite() {
+                return;
+            }
+
+            let mut offsets = drag.base_offsets.clone();
+            if let Some(existing) = offsets.get_mut(drag.cp_index) {
+                *existing += delta;
+            }
+
+            let Some(primitive_base) = drag.primitive_base.as_ref() else {
+                return;
+            };
+            let Some(after_primitive) =
+                primitive_with_ffd_offsets(primitive_base, drag.grid, offsets)
+            else {
+                return;
+            };
+            let base_color = match &after_primitive {
+                crate::object::registry::PrimitiveVisualDef::Primitive { color, .. } => *color,
+                _ => Color::srgb(0.85, 0.87, 0.90),
+            };
+            let after_prim_json = match build_set_primitive_json(&after_primitive, base_color) {
+                Ok(value) => value,
+                Err(err) => {
+                    workshop.error = Some(err);
+                    return;
+                }
+            };
+            let after_args = build_update_primitive_part_args(
+                drag.component.as_str(),
+                drag.part_id,
+                None,
+                Some(after_prim_json),
+            );
+
+            let apply_args = patch_apply_draft_ops_args(after_args, job.assembly_rev());
+            match super::gen3d_apply_draft_ops_from_api(&mut job, &mut draft, apply_args) {
+                Ok(_) => {
+                    workshop.error = None;
+                    drag.last_apply_time_secs = now;
+                }
+                Err(err) => {
+                    workshop.error = Some(err);
+                }
+            }
+        }
+    }
+
+    if mouse_buttons.just_released(MouseButton::Left) {
+        let current_hit = ray_plane_intersection(
+            ray_origin_local,
+            ray_dir_local,
+            drag.start_hit_local,
+            drag.plane_normal_local,
+        )
+        .unwrap_or(drag.start_hit_local);
+        let mut delta = current_hit - drag.start_hit_local;
+        if tweak_mod_shift(&keys) {
+            delta *= 0.25;
+        }
+
+        let mut offsets = drag.base_offsets.clone();
+        if let Some(existing) = offsets.get_mut(drag.cp_index) {
+            *existing += delta;
+        }
+
+        let changed = offsets != drag.base_offsets;
+        if changed {
+            let Some(primitive_base) = drag.primitive_base.as_ref() else {
+                drag.reset();
+                return;
+            };
+            let Some(after_primitive) =
+                primitive_with_ffd_offsets(primitive_base, drag.grid, offsets)
+            else {
+                drag.reset();
+                return;
+            };
+            let base_color = match &after_primitive {
+                crate::object::registry::PrimitiveVisualDef::Primitive { color, .. } => *color,
+                _ => Color::srgb(0.85, 0.87, 0.90),
+            };
+            let after_prim_json = match build_set_primitive_json(&after_primitive, base_color) {
+                Ok(value) => value,
+                Err(err) => {
+                    workshop.error = Some(err);
+                    drag.reset();
+                    return;
+                }
+            };
+            let after_args = build_update_primitive_part_args(
+                drag.component.as_str(),
+                drag.part_id,
+                None,
+                Some(after_prim_json),
+            );
+
+            let apply_args = patch_apply_draft_ops_args(after_args.clone(), job.assembly_rev());
+            match super::gen3d_apply_draft_ops_from_api(&mut job, &mut draft, apply_args) {
+                Ok(_) => {
+                    workshop.error = None;
+                    workshop.status = "Tweak: Deform (FFD)".into();
+                    push_undo_entry(
+                        &mut tweak,
+                        super::state::Gen3dManualTweakUndoEntry {
+                            label: "Deform (FFD)".into(),
+                            undo_args_json: drag.before_args_json.clone(),
+                            redo_args_json: after_args,
+                        },
+                    );
+                    tweak.redo.clear();
+                }
+                Err(err) => {
+                    workshop.error = Some(err);
+                }
+            }
+        }
+
+        drag.reset();
+    }
+}
+
+pub(crate) fn gen3d_manual_tweak_update_ffd_handles(
+    mut commands: Commands,
+    build_scene: Res<State<BuildScene>>,
+    tweak: Res<Gen3dManualTweakState>,
+    draft: Res<Gen3dDraft>,
+    parts: Query<(Entity, &VisualPartId)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut handle_assets: Local<ManualTweakFfdHandleAssets>,
+    mut handles: Query<
+        (
+            Entity,
+            &Gen3dManualTweakFfdHandle,
+            &mut Transform,
+            &mut MeshMaterial3d<StandardMaterial>,
+        ),
+        With<Gen3dManualTweakFfdHandle>,
+    >,
+) {
+    if !super::gen3d_ui_scene(build_scene.get()) {
+        return;
+    }
+
+    let show = tweak.enabled && tweak.deform_mode && tweak.selected_part_id.is_some();
+    if !show {
+        for (entity, _handle, _t, _mat) in handles.iter_mut() {
+            commands.entity(entity).try_despawn();
+        }
+        return;
+    }
+
+    let Some(part_id) = tweak.selected_part_id else {
+        return;
+    };
+    let Some((part_entity, _)) = parts.iter().find(|(_, id)| id.0 == part_id) else {
+        return;
+    };
+    let Some((_component, _transform, primitive)) = find_selected_primitive_part(&draft, part_id)
+    else {
+        return;
+    };
+
+    let Some((base_min, base_max)) = primitive_base_aabb_for_ffd(&primitive) else {
+        return;
+    };
+    let Some((grid, offsets)) = primitive_ffd_grid_and_offsets(&primitive) else {
+        return;
+    };
+    let Some(count) = ffd_point_count(grid) else {
+        return;
+    };
+
+    if handle_assets.mesh.is_none() {
+        handle_assets.mesh = Some(meshes.add(Sphere::new(0.030)));
+    }
+    if handle_assets.material.is_none() {
+        handle_assets.material = Some(materials.add(StandardMaterial {
+            base_color: Color::srgb(0.25, 0.85, 0.95),
+            emissive: LinearRgba::rgb(0.10, 0.20, 0.24),
+            metallic: 0.0,
+            perceptual_roughness: 0.2,
+            ..default()
+        }));
+    }
+    if handle_assets.material_selected.is_none() {
+        handle_assets.material_selected = Some(materials.add(StandardMaterial {
+            base_color: Color::srgb(1.00, 0.85, 0.20),
+            emissive: LinearRgba::rgb(0.20, 0.14, 0.02),
+            metallic: 0.0,
+            perceptual_roughness: 0.15,
+            ..default()
+        }));
+    }
+
+    let mesh = handle_assets.mesh.as_ref().expect("mesh handle");
+    let material = handle_assets.material.as_ref().expect("material handle");
+    let material_selected = handle_assets
+        .material_selected
+        .as_ref()
+        .expect("selected material handle");
+
+    for (entity, handle, _t, _mat) in handles.iter_mut() {
+        if handle.part_id != part_id {
+            commands.entity(entity).try_despawn();
+        }
+    }
+
+    let mut existing: std::collections::HashMap<usize, Entity> = std::collections::HashMap::new();
+    for (entity, handle, _t, _mat) in handles.iter() {
+        if handle.part_id == part_id {
+            existing.insert(handle.index, entity);
+        }
+    }
+
+    for index in 0..count {
+        let Some(pos) =
+            ffd_control_point_local(base_min, base_max, grid, offsets.as_slice(), index)
+        else {
+            continue;
+        };
+        let selected = tweak.deform_selected_index == Some(index);
+        let mat = if selected {
+            material_selected.clone()
+        } else {
+            material.clone()
+        };
+
+        if let Some(entity) = existing.get(&index).copied() {
+            if let Ok((_e, _handle, mut t, mut m)) = handles.get_mut(entity) {
+                t.translation = pos;
+                *m = MeshMaterial3d(mat);
+            }
+            continue;
+        }
+
+        let entity = commands
+            .spawn((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(mat),
+                Transform::from_translation(pos),
+                Visibility::Inherited,
+                bevy::camera::visibility::RenderLayers::layer(super::GEN3D_PREVIEW_UI_LAYER),
+                Gen3dManualTweakFfdHandle { part_id, index },
+            ))
+            .id();
+        commands.entity(part_entity).add_child(entity);
     }
 }

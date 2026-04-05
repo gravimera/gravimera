@@ -8,8 +8,9 @@ use crate::object::registry::{
     MeleeAttackProfile, MobilityDef, MobilityMode, MovementBlockRule, ObjectDef, ObjectInteraction,
     ObjectLibrary, ObjectPartDef, ObjectPartKind, PartAnimationDef, PartAnimationDriver,
     PartAnimationFamily, PartAnimationKeyframeDef, PartAnimationSlot, PartAnimationSpec,
-    PrimitiveParams, PrimitiveVisualDef, ProjectileObstacleRule, ProjectileProfile,
-    RangedAttackProfile, UnitAttackKind, UnitAttackProfile,
+    PrimitiveDeformDef, PrimitiveFfdDeformV1, PrimitiveParams, PrimitiveVisualDef,
+    ProjectileObstacleRule, ProjectileProfile, RangedAttackProfile, UnitAttackKind,
+    UnitAttackProfile,
 };
 
 pub(crate) const PREFAB_FILE_FORMAT_VERSION: u32 = 1;
@@ -1009,6 +1010,70 @@ impl PrimitiveParamsJson {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+enum PrimitiveDeformDefJson {
+    FfdV1 {
+        #[serde(default)]
+        grid: Option<[u8; 3]>,
+        offsets: Vec<Vec3Json>,
+    },
+}
+
+impl PrimitiveDeformDefJson {
+    fn from_deform(deform: &PrimitiveDeformDef) -> Self {
+        match deform {
+            PrimitiveDeformDef::FfdV1(ffd) => Self::FfdV1 {
+                grid: (ffd.grid != [3, 3, 3]).then_some(ffd.grid),
+                offsets: ffd
+                    .offsets
+                    .iter()
+                    .copied()
+                    .map(Vec3Json::from_vec3)
+                    .collect(),
+            },
+        }
+    }
+
+    fn to_deform(&self) -> Result<PrimitiveDeformDef, String> {
+        match self {
+            Self::FfdV1 { grid, offsets } => {
+                let grid = grid.unwrap_or([3, 3, 3]);
+                if grid.iter().any(|v| *v < 2) {
+                    return Err(format!(
+                        "Invalid deform.ffd_v1.grid={grid:?} (each axis must be >= 2)"
+                    ));
+                }
+                let expected = (grid[0] as usize)
+                    .saturating_mul(grid[1] as usize)
+                    .saturating_mul(grid[2] as usize);
+                if offsets.len() != expected {
+                    return Err(format!(
+                        "Invalid deform.ffd_v1.offsets length {} (expected {expected} for grid={grid:?})",
+                        offsets.len()
+                    ));
+                }
+                let offsets: Vec<Vec3> = offsets
+                    .iter()
+                    .copied()
+                    .map(Vec3Json::to_vec3)
+                    .map(|v| {
+                        if v.is_finite() {
+                            Ok(v)
+                        } else {
+                            Err("Invalid deform.ffd_v1.offset (must be finite)".to_string())
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(PrimitiveDeformDef::FfdV1(PrimitiveFfdDeformV1 {
+                    grid,
+                    offsets,
+                }))
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 enum PrimitiveVisualDefJson {
     Mesh {
         mesh: MeshKeyJson,
@@ -1019,6 +1084,8 @@ enum PrimitiveVisualDefJson {
         params: Option<PrimitiveParamsJson>,
         color_rgba: ColorRgbaJson,
         unlit: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        deform: Option<PrimitiveDeformDefJson>,
     },
 }
 
@@ -1034,11 +1101,13 @@ impl PrimitiveVisualDefJson {
                 params,
                 color,
                 unlit,
+                deform,
             } => Self::Primitive {
                 mesh: MeshKeyJson::from_mesh(*mesh),
                 params: params.as_ref().map(PrimitiveParamsJson::from_params),
                 color_rgba: ColorRgbaJson::from_color(*color),
                 unlit: *unlit,
+                deform: deform.as_ref().map(PrimitiveDeformDefJson::from_deform),
             },
         }
     }
@@ -1054,11 +1123,16 @@ impl PrimitiveVisualDefJson {
                 params,
                 color_rgba,
                 unlit,
+                deform,
             } => PrimitiveVisualDef::Primitive {
                 mesh: mesh.to_mesh(),
                 params: params.as_ref().map(PrimitiveParamsJson::to_params),
                 color: color_rgba.to_color(),
                 unlit: *unlit,
+                deform: deform
+                    .as_ref()
+                    .map(PrimitiveDeformDefJson::to_deform)
+                    .transpose()?,
             },
         })
     }

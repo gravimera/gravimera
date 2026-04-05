@@ -141,6 +141,7 @@ fn infer_projectile_spec_json(projectile_def: &ObjectDef) -> Result<serde_json::
                     params,
                     color,
                     unlit,
+                    ..
                 },
         } => (*mesh, *params, *color, *unlit),
         _ => {

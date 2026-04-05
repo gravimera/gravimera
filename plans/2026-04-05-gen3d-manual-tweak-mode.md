@@ -25,9 +25,9 @@ The result must be directly observable in the rendered UI, and the edits must pe
 - [x] (2026-04-05) Manual Tweak UI mode + exit semantics (toggle button + `Esc` exits tweak mode first).
 - [x] (2026-04-05) Part picking + selection highlighting in Gen3D preview (click-to-select primitive parts).
 - [x] (2026-04-05) MVP edits: move/rotate/scale/recolor + Undo/Redo, applied via DraftOps (`apply_draft_ops_v1`).
-- [ ] Deform edits (FFD) + persistence + export + size/bounds consistency.
+- [x] (2026-04-05) Deform edits (FFD): sculpt toggle + control cage handles, persistence, export, and size/bounds consistency.
 - [x] (2026-04-05) Updated docs (`docs/controls.md`, `docs/gen3d/README.md`) and passed required rendered smoke test.
-- [ ] Commit with a clear message.
+- [x] (2026-04-05) Committed Milestone A (Manual Tweak MVP): `fb51113`.
 
 ## Surprises & Discoveries
 
@@ -61,7 +61,23 @@ The result must be directly observable in the rendered UI, and the edits must pe
 
 ## Outcomes & Retrospective
 
-(Fill in at completion.)
+- Delivered a deterministic, fully manual edit surface inside Gen3D that does not require new prompts or LLM calls.
+  - Transform + recolor edits apply via DraftOps with `atomic=true` + `if_assembly_rev` gating.
+  - Undo/Redo works by applying deterministic inverse DraftOps.
+- Implemented a generic deformation mechanism for procedural primitives (FFD control cage).
+  - Persists in prefab JSON (`primitive.deform`) and round-trips through save/load.
+  - Runtime uses a deform-aware mesh cache; export applies the same deform before writing GLB buffers.
+- Updated user-facing docs for workflows and controls.
+
+Validation:
+
+- `cargo test -q gen3d` passes locally.
+- Required rendered smoke test passes: `cargo run -- --rendered-seconds 2` (with temporary `GRAVIMERA_HOME`).
+
+Known limitations / follow-ups:
+
+- Manual Tweak currently edits `primitive` parts only (not imported `model` parts).
+- Sculpt is FFD-based (control points), not true per-vertex editing; additional sculpt UX (symmetry, falloff, per-axis handles) can be added later without changing persistence.
 
 ## Context and Orientation
 

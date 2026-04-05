@@ -121,6 +121,7 @@ Key properties:
 
 - Selection: click a part in the preview to select it (shows a purple frame + info card).
 - Edits: move/rotate/scale/recolor the selected part using hotkeys (see `docs/controls.md`).
+- Deform (FFD): toggle sculpt with `V`, then drag a control point handle in the preview to deform the selected part (see `docs/controls.md`).
 - Undo/Redo: `Ctrl/Cmd+Z` and `Ctrl/Cmd+Y` apply deterministic DraftOps to reverse/reapply changes.
 - Determinism: edits are applied via `apply_draft_ops_v1` (`update_primitive_part`), not by direct
   mutation from UI code.
@@ -130,7 +131,7 @@ Key properties:
 Current limitations:
 
 - Primitive parts only (no manual editing of imported `model` parts yet).
-- Deform / vertex-level editing is planned but not implemented in this milestone.
+- Deform is currently a generic FFD control cage (not per-mesh raw vertex editing).
 
 ## Preview export
 

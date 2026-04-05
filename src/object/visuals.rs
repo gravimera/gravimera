@@ -125,6 +125,13 @@ impl MaterialCache {
 pub(crate) struct PrimitiveMeshCache {
     map: HashMap<PrimitiveMeshCacheKey, Handle<Mesh>>,
     mirrored_winding: HashMap<AssetId<Mesh>, Handle<Mesh>>,
+    deformed: HashMap<PrimitiveDeformedMeshCacheKey, Handle<Mesh>>,
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+struct PrimitiveDeformedMeshCacheKey {
+    base: AssetId<Mesh>,
+    deform_id: u128,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -251,6 +258,35 @@ impl PrimitiveMeshCache {
 
         let handle = meshes.add(mirrored);
         self.mirrored_winding.insert(key, handle.clone());
+        handle
+    }
+
+    pub(crate) fn get_or_create_deformed(
+        &mut self,
+        meshes: &mut Assets<Mesh>,
+        mesh: &Handle<Mesh>,
+        deform: &crate::object::registry::PrimitiveDeformDef,
+    ) -> Handle<Mesh> {
+        let deform_id = crate::object::deform::deform_cache_id(deform);
+        let key = PrimitiveDeformedMeshCacheKey {
+            base: mesh.id(),
+            deform_id,
+        };
+        if let Some(existing) = self.deformed.get(&key) {
+            return existing.clone();
+        }
+
+        let Some(base) = meshes.get(mesh).cloned() else {
+            return mesh.clone();
+        };
+        let mut deformed = base;
+        if let Err(err) = crate::object::deform::apply_deform_to_mesh(&mut deformed, deform) {
+            warn!("Failed to apply primitive deform: {err}");
+            return mesh.clone();
+        }
+
+        let handle = meshes.add(deformed);
+        self.deformed.insert(key, handle.clone());
         handle
     }
 }
@@ -711,6 +747,7 @@ fn resolve_primitive_visual(
             params,
             color,
             unlit,
+            deform,
         } => {
             let mesh = match params {
                 Some(params)
@@ -728,6 +765,11 @@ fn resolve_primitive_visual(
                 }
                 Some(_) => resolve_mesh(*mesh, assets)?,
                 None => resolve_mesh(*mesh, assets)?,
+            };
+            let mesh = if let Some(deform) = deform.as_ref() {
+                mesh_cache.get_or_create_deformed(meshes, &mesh, deform)
+            } else {
+                mesh
             };
 
             let color = multiply_color(*color, tint);

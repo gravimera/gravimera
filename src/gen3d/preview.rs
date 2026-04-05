@@ -15,13 +15,13 @@ use crate::types::{
 
 use super::ai::Gen3dAiJob;
 use super::state::{
-    Gen3dDraft, Gen3dPreview, Gen3dPreviewAnimationDropdownButton,
+    Gen3dDraft, Gen3dManualTweakState, Gen3dPreview, Gen3dPreviewAnimationDropdownButton,
     Gen3dPreviewAnimationDropdownList, Gen3dPreviewCamera, Gen3dPreviewCollisionRoot,
     Gen3dPreviewComponentLabel, Gen3dPreviewComponentLabelText, Gen3dPreviewExplodeToggleButton,
     Gen3dPreviewExportButton, Gen3dPreviewHoverFrame, Gen3dPreviewHoverInfoCard,
     Gen3dPreviewHoverInfoText, Gen3dPreviewLight, Gen3dPreviewModelRoot, Gen3dPreviewPanel,
     Gen3dPreviewSceneRoot, Gen3dPreviewUiModelRoot, Gen3dReviewOverlayRoot, Gen3dSidePanelRoot,
-    Gen3dSidePanelToggleButton, Gen3dManualTweakState, Gen3dWorkshop,
+    Gen3dSidePanelToggleButton, Gen3dWorkshop,
 };
 use super::task_queue::Gen3dTaskQueue;
 
@@ -1242,7 +1242,9 @@ pub(crate) fn gen3d_preview_orbit_controls(
         for _ in mouse_wheel.read() {}
     }
 
-    let dragging = hovered && mouse_buttons.pressed(MouseButton::Left);
+    let dragging = hovered
+        && mouse_buttons.pressed(MouseButton::Left)
+        && !(tweak.enabled && tweak.deform_mode);
     if dragging {
         if let (Some(prev), Some(cur)) = (preview.last_cursor, cursor) {
             let delta = cur - prev;
@@ -1256,12 +1258,12 @@ pub(crate) fn gen3d_preview_orbit_controls(
         let allow_arrow_pan = !tweak.enabled;
         let x = (keys.pressed(KeyCode::KeyD)
             || (allow_arrow_pan && keys.pressed(KeyCode::ArrowRight))) as i8
-            - (keys.pressed(KeyCode::KeyA)
-                || (allow_arrow_pan && keys.pressed(KeyCode::ArrowLeft))) as i8;
+            - (keys.pressed(KeyCode::KeyA) || (allow_arrow_pan && keys.pressed(KeyCode::ArrowLeft)))
+                as i8;
         let y = (keys.pressed(KeyCode::KeyW) || (allow_arrow_pan && keys.pressed(KeyCode::ArrowUp)))
             as i8
-            - (keys.pressed(KeyCode::KeyS)
-                || (allow_arrow_pan && keys.pressed(KeyCode::ArrowDown))) as i8;
+            - (keys.pressed(KeyCode::KeyS) || (allow_arrow_pan && keys.pressed(KeyCode::ArrowDown)))
+                as i8;
         let mut pan_input = Vec2::new(x as f32, y as f32);
         if pan_input.length_squared() > 1.0 {
             pan_input = pan_input.normalize();
@@ -2309,6 +2311,7 @@ mod tests {
                     params: None,
                     color: Color::WHITE,
                     unlit: false,
+                    deform: None,
                 },
                 Transform::IDENTITY,
             )

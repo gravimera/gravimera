@@ -52,6 +52,17 @@ pub(crate) enum PrimitiveParams {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct PrimitiveFfdDeformV1 {
+    pub(crate) grid: [u8; 3],
+    pub(crate) offsets: Vec<Vec3>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum PrimitiveDeformDef {
+    FfdV1(PrimitiveFfdDeformV1),
+}
+
+#[derive(Clone, Debug)]
 pub(crate) enum PrimitiveVisualDef {
     Mesh {
         mesh: MeshKey,
@@ -62,6 +73,7 @@ pub(crate) enum PrimitiveVisualDef {
         params: Option<PrimitiveParams>,
         color: Color,
         unlit: bool,
+        deform: Option<PrimitiveDeformDef>,
     },
 }
 

@@ -6296,6 +6296,7 @@ mod tests {
                     params: None,
                     color: Color::srgb(0.6, 0.6, 0.7),
                     unlit: false,
+                    deform: None,
                 },
                 Transform::default(),
             )],

@@ -794,6 +794,7 @@ mod tests {
                         params: None,
                         color: Color::WHITE,
                         unlit: false,
+                        deform: None,
                     },
                     Transform::from_scale(Vec3::ONE),
                 )],

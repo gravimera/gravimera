@@ -136,7 +136,6 @@ fn gen3d_draft_projectile_object_id() -> u128 {
     builtin_object_id(GEN3D_DRAFT_PROJECTILE_KEY)
 }
 
-pub(crate) use ai::{gen3d_generate_text_simple, gen3d_generate_text_simple_with_prefix};
 pub(crate) use ai::{
     gen3d_apply_draft_ops_from_api, gen3d_apply_pending_seed_from_prefab,
     gen3d_cancel_build_from_api, gen3d_copy_from_workspace_from_api,
@@ -151,6 +150,7 @@ pub(crate) use ai::{
 pub(crate) use ai::{gen3d_generate_button, gen3d_poll_ai_job, Gen3dAiJob};
 #[allow(unused_imports)]
 pub(crate) use ai::{gen3d_generate_prefab_defs_headless, Gen3dHeadlessPrefabResult};
+pub(crate) use ai::{gen3d_generate_text_simple, gen3d_generate_text_simple_with_prefix};
 pub(crate) use images::{
     gen3d_clear_images_button, gen3d_handle_drag_and_drop, gen3d_image_viewer_click_to_close,
     gen3d_image_viewer_keyboard_navigation, gen3d_rebuild_images_list_ui,
@@ -159,8 +159,9 @@ pub(crate) use images::{
     gen3d_update_images_inline_visibility, gen3d_update_thumbnail_tooltip,
 };
 pub(crate) use manual_tweak::{
-    gen3d_manual_tweak_button, gen3d_manual_tweak_pick_part,
-    gen3d_manual_tweak_hotkeys, gen3d_manual_tweak_update_selected_overlay,
+    gen3d_manual_tweak_button, gen3d_manual_tweak_ffd_drag, gen3d_manual_tweak_hotkeys,
+    gen3d_manual_tweak_pick_part, gen3d_manual_tweak_update_ffd_handles,
+    gen3d_manual_tweak_update_selected_overlay,
 };
 pub(crate) use preview::{
     collect_preview_component_overlays, compute_preview_component_bounds_center_from_transforms,
@@ -199,9 +200,9 @@ pub(crate) use ui::{
     gen3d_preview_export_button, gen3d_preview_export_dialog_poll, gen3d_prompt_box_focus,
     gen3d_prompt_defocus_on_click_outside, gen3d_prompt_ime_position, gen3d_prompt_input_indicator,
     gen3d_prompt_scroll_wheel, gen3d_prompt_scrollbar_drag, gen3d_prompt_text_input,
-    gen3d_rebuild_preview_animation_dropdown_options_ui,
-    gen3d_side_panel_toggle_button, gen3d_update_preview_animation_dropdown_ui,
-    gen3d_update_preview_explode_toggle_ui, gen3d_update_preview_export_button_ui,
-    gen3d_update_preview_panel_image_fit, gen3d_update_prompt_scrollbar_ui,
-    gen3d_update_side_panel_ui, gen3d_update_ui_text, spawn_gen3d_preview_panel,
+    gen3d_rebuild_preview_animation_dropdown_options_ui, gen3d_side_panel_toggle_button,
+    gen3d_update_preview_animation_dropdown_ui, gen3d_update_preview_explode_toggle_ui,
+    gen3d_update_preview_export_button_ui, gen3d_update_preview_panel_image_fit,
+    gen3d_update_prompt_scrollbar_ui, gen3d_update_side_panel_ui, gen3d_update_ui_text,
+    spawn_gen3d_preview_panel,
 };

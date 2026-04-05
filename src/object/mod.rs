@@ -1,3 +1,4 @@
+pub(crate) mod deform;
 pub(crate) mod depth_bias;
 pub(crate) mod registry;
 pub(crate) mod types;

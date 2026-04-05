@@ -1362,6 +1362,7 @@ fn resolve_primitive_proto(
             params,
             color,
             unlit,
+            deform,
         } => {
             let mesh_handle = match params {
                 Some(params)
@@ -1379,6 +1380,11 @@ fn resolve_primitive_proto(
                 }
                 Some(_) => resolve_mesh(*mesh, assets)?,
                 None => resolve_mesh(*mesh, assets)?,
+            };
+            let mesh_handle = if let Some(deform) = deform.as_ref() {
+                mesh_cache.get_or_create_deformed(meshes, &mesh_handle, deform)
+            } else {
+                mesh_handle
             };
 
             let c = multiply_color(*color, tint);

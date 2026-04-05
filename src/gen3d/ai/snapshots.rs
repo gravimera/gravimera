@@ -318,6 +318,7 @@ struct PrimitivePartFp {
     params: Option<PrimitiveParams>,
     color: Option<[f32; 4]>,
     unlit: Option<bool>,
+    deform_id: Option<u128>,
     translation: Vec3,
     rotation: Quat,
     scale: Vec3,
@@ -327,12 +328,13 @@ fn primitive_part_fp(part: &ObjectPartDef) -> Option<PrimitivePartFp> {
     let ObjectPartKind::Primitive { primitive } = &part.kind else {
         return None;
     };
-    let (mesh, params, color, unlit) = match primitive {
+    let (mesh, params, color, unlit, deform_id) = match primitive {
         PrimitiveVisualDef::Primitive {
             mesh,
             params,
             color,
             unlit,
+            deform,
         } => {
             let c = color.to_srgba();
             (
@@ -340,9 +342,10 @@ fn primitive_part_fp(part: &ObjectPartDef) -> Option<PrimitivePartFp> {
                 params.clone(),
                 Some([c.red, c.green, c.blue, c.alpha]),
                 Some(*unlit),
+                deform.as_ref().map(crate::object::deform::deform_cache_id),
             )
         }
-        PrimitiveVisualDef::Mesh { .. } => (None, None, None, None),
+        PrimitiveVisualDef::Mesh { .. } => (None, None, None, None, None),
     };
     Some(PrimitivePartFp {
         part_id: part.part_id,
@@ -351,6 +354,7 @@ fn primitive_part_fp(part: &ObjectPartDef) -> Option<PrimitivePartFp> {
         params,
         color,
         unlit,
+        deform_id,
         translation: part.transform.translation,
         rotation: part.transform.rotation,
         scale: part.transform.scale,
