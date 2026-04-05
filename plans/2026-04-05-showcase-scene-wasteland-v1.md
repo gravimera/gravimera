@@ -40,6 +40,9 @@ The scene is intentionally different from the existing utopian chrome city. It s
 - Observation: the first road prefab generation is expensive but healthy; a malformed component was retried automatically and the prefab still completed successfully.
   Evidence: the live run log in `test/run_1/showcase_scene_wasteland_run_01/gravimera_stdout.log` shows `patch_asphalt_b` failing an axis-consistency conversion check, then succeeding on retry, followed by the saved prefab id `c26d6753-9cea-4823-b85a-fe8c53f7bab2`.
 
+- Observation: the initial wasteland layout overused road-adjacent tiles, which made the town read as a raised tiled grid instead of two streets with lots.
+  Evidence: the first live run loaded at least 175 objects and the visible result showed continuous shoulder slabs across much of the default-sized scene. After tightening the layout rules and resuming the same run, the live API reported `12` road tiles and `10` shoulder pads with `109` total objects before later asset waves refill the scene.
+
 ## Decision Log
 
 - Decision: implement the wasteland town as a **new builder profile**, not a one-off fork.
@@ -60,6 +63,10 @@ The scene is intentionally different from the existing utopian chrome city. It s
 
 - Decision: keep the chrome scene as the default builder profile and add `--profile wasteland_town` for the new variant.
   Rationale: this preserves the existing workflow and existing plan examples while still making the new scene explicit and reproducible.
+  Date/Author: 2026-04-05 / Codex.
+
+- Decision: in the wasteland profile, treat shoulder tiles as occasional pads and forecourts, not continuous street bands.
+  Rationale: the generated shoulder prefab is visually thicker than a road marking and works better as a deliberate lot surface than as a full-scene strip. Reducing road rows to a single crossing line also makes the town layout more legible.
   Date/Author: 2026-04-05 / Codex.
 
 ## Outcomes & Retrospective
@@ -224,3 +231,4 @@ That interface is important because future scene styles should be additive rathe
 Revision note: created this new ExecPlan on 2026-04-05 to capture the pivot from the already implemented chrome-city showcase to a second, compact wasteland-town showcase profile requested by the user. The plan is separate so both scene variants remain reproducible.
 Revision note: updated on 2026-04-05 after implementing the new builder profile and running the required rendered smoke test, so the plan reflects the current code and the remaining step is the real scene-generation run.
 Revision note: updated again on 2026-04-05 after starting the real rendered build, so the plan records the live scene id, terrain id, first generated prefab, and the fact that the queue is still running.
+Revision note: updated again on 2026-04-05 after tightening the wasteland street layout, rerunning the rendered smoke test, and resuming the live build so the plan captures the layout correction and its API-visible effect.
