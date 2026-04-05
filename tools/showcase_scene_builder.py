@@ -743,6 +743,44 @@ def build_layout_layers(
         if isinstance(size, list) and len(size) == 3:
             plaza_step = _clamp(float(size[0]), 0.8, 6.0)
 
+    # --- Color palette (pastel neon accents) ---
+    #
+    # The overall theme is "utopian chrome", but the user wants the scene to be colorful on first
+    # glance. We keep the base materials clean and use deterministic tints to add readable color.
+    palette: list[dict[str, float]] = [
+        {"r": 0.32, "g": 0.82, "b": 1.00, "a": 1.0},  # cyan
+        {"r": 1.00, "g": 0.36, "b": 0.86, "a": 1.0},  # magenta
+        {"r": 1.00, "g": 0.86, "b": 0.30, "a": 1.0},  # gold
+        {"r": 0.55, "g": 1.00, "b": 0.55, "a": 1.0},  # lime
+        {"r": 0.78, "g": 0.58, "b": 1.00, "a": 1.0},  # lavender
+    ]
+
+    def palette_pick(seed: int) -> dict[str, float]:
+        return dict(palette[seed % len(palette)])
+
+    def palette_pick_muted(seed: int, *, mix: float = 0.35) -> dict[str, float]:
+        # Mix the palette color toward white so chrome stays chrome, but picks up color accents.
+        c = palette_pick(seed)
+        mix = float(_clamp(float(mix), 0.0, 1.0))
+        return {
+            "r": (1.0 - mix) + mix * float(c["r"]),
+            "g": (1.0 - mix) + mix * float(c["g"]),
+            "b": (1.0 - mix) + mix * float(c["b"]),
+            "a": 1.0,
+        }
+
+    def plaza_tile_tint(ix: int, iz: int, x: float, z: float) -> dict[str, float] | None:
+        # Deterministic pattern: more vibrant in the plaza center, sparse accents in the ring.
+        r = float((x * x + z * z) ** 0.5)
+        if r > plaza_extent * 0.66:
+            return None
+        h = (ix * 1103515245 + iz * 12345) & 0xFFFFFFFF
+        if r < plaza_extent * 0.38:
+            return palette_pick(h)
+        if (h % 19) == 0:
+            return palette_pick(h // 19)
+        return None
+
     # --- Streets: a grid of boulevards ---
     if road:
         if extent >= 120.0:
@@ -814,6 +852,7 @@ def build_layout_layers(
             z = -plaza_extent
             while z <= plaza_extent + 1e-3:
                 py = grounded_y(prefab_catalog, plaza, scale=1.0)
+                tint = plaza_tile_tint(ix, iz, float(x), float(z))
                 infra_plaza.append(
                     make_instance(
                         local_id=f"plaza_{ix:02}_{iz:02}",
@@ -823,6 +862,7 @@ def build_layout_layers(
                         z=z,
                         yaw_deg=0.0,
                         scale=1.0,
+                        tint_rgba=tint,
                     )
                 )
                 z += plaza_step
@@ -965,7 +1005,16 @@ def build_layout_layers(
         pos = -span
         while pos <= span + 1e-3:
             deco.append(
-                make_instance(local_id=f"billboard_{k:03}", prefab_id_uuid=billboard, x=float(pos), y=hy, z=billboard_z, yaw_deg=180.0, scale=1.0)
+                make_instance(
+                    local_id=f"billboard_{k:03}",
+                    prefab_id_uuid=billboard,
+                    x=float(pos),
+                    y=hy,
+                    z=billboard_z,
+                    yaw_deg=180.0,
+                    scale=1.0,
+                    tint_rgba=palette_pick(k + 2),
+                )
             )
             pos += step_m
             k += 1
@@ -982,7 +1031,16 @@ def build_layout_layers(
             ]
         ):
             deco.append(
-                make_instance(local_id=f"holo_{k:02}", prefab_id_uuid=holo_pillar, x=x, y=hy, z=z, yaw_deg=yaw, scale=1.0)
+                make_instance(
+                    local_id=f"holo_{k:02}",
+                    prefab_id_uuid=holo_pillar,
+                    x=x,
+                    y=hy,
+                    z=z,
+                    yaw_deg=yaw,
+                    scale=1.0,
+                    tint_rgba=palette_pick(k),
+                )
             )
 
     if planter_tree:
@@ -1026,8 +1084,30 @@ def build_layout_layers(
         k = 0
         x = -vendor_span
         while x <= vendor_span + 1e-3:
-            deco.append(make_instance(local_id=f"vendor_n_{k:02}", prefab_id_uuid=vendor, x=float(x), y=vy, z=-vendor_z, yaw_deg=0.0, scale=1.0))
-            deco.append(make_instance(local_id=f"vendor_s_{k:02}", prefab_id_uuid=vendor, x=float(x), y=vy, z=vendor_z, yaw_deg=180.0, scale=1.0))
+            deco.append(
+                make_instance(
+                    local_id=f"vendor_n_{k:02}",
+                    prefab_id_uuid=vendor,
+                    x=float(x),
+                    y=vy,
+                    z=-vendor_z,
+                    yaw_deg=0.0,
+                    scale=1.0,
+                    tint_rgba=palette_pick(k),
+                )
+            )
+            deco.append(
+                make_instance(
+                    local_id=f"vendor_s_{k:02}",
+                    prefab_id_uuid=vendor,
+                    x=float(x),
+                    y=vy,
+                    z=vendor_z,
+                    yaw_deg=180.0,
+                    scale=1.0,
+                    tint_rgba=palette_pick(k + 1),
+                )
+            )
             x += spacing
             k += 1
 
@@ -1074,6 +1154,7 @@ def build_layout_layers(
                 yaw = (ang * 180.0 / 3.141592653589793) + 180.0
                 scale = 1.25 if i % 3 == 0 else (1.05 if i % 3 == 1 else 0.95)
                 y = grounded_y(prefab_catalog, b, scale=scale)
+                tint = palette_pick_muted((i * 7) + (j * 3), mix=0.35) if (i + j) % 3 == 0 else None
                 buildings_modern.append(
                     make_instance(
                         local_id=f"modern_{i:02}_{j:02}",
@@ -1083,6 +1164,7 @@ def build_layout_layers(
                         z=z,
                         yaw_deg=yaw,
                         scale=scale,
+                        tint_rgba=tint,
                     )
                 )
 
@@ -1100,7 +1182,16 @@ def build_layout_layers(
             ]
         ):
             buildings_modern.append(
-                make_instance(local_id=f"skybridge_{idx:02}", prefab_id_uuid=skybridge, x=x, y=sb_y, z=z, yaw_deg=yaw, scale=sb_scale)
+                make_instance(
+                    local_id=f"skybridge_{idx:02}",
+                    prefab_id_uuid=skybridge,
+                    x=x,
+                    y=sb_y,
+                    z=z,
+                    yaw_deg=yaw,
+                    scale=sb_scale,
+                    tint_rgba=palette_pick_muted(idx + 2, mix=0.45),
+                )
             )
 
     # --- Old district buildings: SE quadrant ---
@@ -1190,7 +1281,18 @@ def build_layout_layers(
                 x = old_base + rng.uniform(0.0, extent * 0.32)
                 z = old_base + rng.uniform(0.0, extent * 0.32)
             y = grounded_y(prefab_catalog, pid_choice, scale=0.95)
-            vehicles_ground.append(make_instance(local_id=f"veh_g_{idx:03}", prefab_id_uuid=pid_choice, x=x, y=y, z=z, yaw_deg=0.0, scale=0.95))
+            vehicles_ground.append(
+                make_instance(
+                    local_id=f"veh_g_{idx:03}",
+                    prefab_id_uuid=pid_choice,
+                    x=x,
+                    y=y,
+                    z=z,
+                    yaw_deg=0.0,
+                    scale=0.95,
+                    tint_rgba=palette_pick(idx + 1) if (idx % 3 == 0) else None,
+                )
+            )
 
     if air_vehicles:
         rng = random.Random(456)
@@ -1203,7 +1305,18 @@ def build_layout_layers(
             z = z_start + idx * z_step
             x = air_x + rng.uniform(-2.0, 2.0)
             base = grounded_y(prefab_catalog, pid_choice, scale=1.0)
-            vehicles_air.append(make_instance(local_id=f"veh_a_{idx:03}", prefab_id_uuid=pid_choice, x=x, y=base + 16.0, z=z, yaw_deg=90.0, scale=1.0))
+            vehicles_air.append(
+                make_instance(
+                    local_id=f"veh_a_{idx:03}",
+                    prefab_id_uuid=pid_choice,
+                    x=x,
+                    y=base + 16.0,
+                    z=z,
+                    yaw_deg=90.0,
+                    scale=1.0,
+                    tint_rgba=palette_pick_muted(idx + 3, mix=0.55),
+                )
+            )
 
     # --- Population ---
     if units:
