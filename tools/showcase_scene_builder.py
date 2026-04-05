@@ -1508,21 +1508,29 @@ def build_layout_layers_wasteland(
         return round(v / spacing) * spacing
 
     road_step = spacing * 0.7
+    road_width_m = spacing * 0.5
+    road_sink_m = 0.04
     if road:
         info = prefab_catalog.get(road) or {}
         size = info.get("size") or []
         if isinstance(size, list) and len(size) == 3:
-            road_step = _clamp(float(size[0]), 2.5, 7.0)
+            road_step = _clamp(max(float(size[0]), float(size[2])), 2.5, 7.6)
+            road_width_m = _clamp(min(float(size[0]), float(size[2])), 2.0, 5.0)
+            road_sink_m = _clamp(float(size[1]) * 0.35, 0.03, 0.08)
 
     shoulder_step = road_step
+    shoulder_width_m = road_width_m * 0.9
+    shoulder_sink_m = 0.08
     if shoulder:
         info = prefab_catalog.get(shoulder) or {}
         size = info.get("size") or []
         if isinstance(size, list) and len(size) == 3:
-            shoulder_step = _clamp(float(size[0]), 2.5, 7.5)
+            shoulder_step = _clamp(max(float(size[0]), float(size[2])), 2.5, 7.5)
+            shoulder_width_m = _clamp(min(float(size[0]), float(size[2])), 2.4, 4.2)
+            shoulder_sink_m = _clamp(float(size[1]) * 0.3, 0.06, 0.14)
 
-    road_lines = [-road_step, 0.0, road_step]
-    shoulder_lines = [-(road_step * 2.0), road_step * 2.0]
+    crosswalk_sink_m = min(road_sink_m, 0.05)
+    road_lines = [0.0]
 
     palette: list[dict[str, float]] = [
         {"r": 0.91, "g": 0.44, "b": 0.21, "a": 1.0},
@@ -1545,12 +1553,18 @@ def build_layout_layers_wasteland(
             "a": 1.0,
         }
 
+    street_edge = max((road_width_m * 1.35), 4.75)
+    market_line_z = snap(max(street_edge + spacing * 1.0, hub_extent + spacing * 0.25))
+    housing_line_z = -snap(max(street_edge + spacing * 1.0, hub_extent + spacing * 0.25))
+    garage_line_z = -snap(max(street_edge + spacing * 1.0, hub_extent + spacing * 0.3))
+    utility_line_x = snap(max(street_edge + spacing * 1.0, hub_extent + spacing * 0.55))
+
     if road:
         for z_line in road_lines:
             x = -extent
             idx = 0
             while x <= extent + 1e-3:
-                y = grounded_y(prefab_catalog, road, scale=1.0)
+                y = grounded_y(prefab_catalog, road, scale=1.0) - road_sink_m
                 infra_roads.append(
                     make_instance(
                         local_id=f"road_x_{idx:03}_{int((z_line + 20.0) * 100):04}",
@@ -1573,7 +1587,7 @@ def build_layout_layers_wasteland(
                     z += road_step
                     idx += 1
                     continue
-                y = grounded_y(prefab_catalog, road, scale=1.0)
+                y = grounded_y(prefab_catalog, road, scale=1.0) - road_sink_m
                 infra_roads.append(
                     make_instance(
                         local_id=f"road_z_{idx:03}_{int((x_line + 20.0) * 100):04}",
@@ -1589,49 +1603,32 @@ def build_layout_layers_wasteland(
                 idx += 1
 
     if shoulder:
-        for z_line in shoulder_lines:
-            x = -extent
-            idx = 0
-            while x <= extent + 1e-3:
-                y = grounded_y(prefab_catalog, shoulder, scale=1.0)
-                infra_shoulders.append(
-                    make_instance(
-                        local_id=f"shoulder_x_{idx:03}_{int((z_line + 20.0) * 100):04}",
-                        prefab_id_uuid=shoulder,
-                        x=x,
-                        y=y,
-                        z=z_line,
-                        yaw_deg=0.0,
-                        scale=1.0,
-                        tint_rgba=palette_pick_muted(idx, mix=0.72) if idx % 6 == 0 else None,
-                    )
+        shoulder_pad_positions = [
+            (snap(-extent * 0.72), market_line_z - spacing * 0.9, 0.0, 1.0),
+            (snap(-extent * 0.34), market_line_z - spacing * 0.9, 0.0, 1.0),
+            (snap(extent * 0.04), market_line_z - spacing * 0.9, 0.0, 1.0),
+            (snap(extent * 0.42), market_line_z - spacing * 0.9, 0.0, 1.0),
+            (snap(-extent * 0.7), garage_line_z + spacing * 0.75, 0.0, 1.0),
+            (snap(-extent * 0.32), garage_line_z + spacing * 0.75, 0.0, 1.0),
+            (snap(extent * 0.26), housing_line_z + spacing * 0.7, 0.0, 1.0),
+            (snap(extent * 0.62), housing_line_z + spacing * 0.7, 0.0, 1.0),
+            (utility_line_x - shoulder_width_m * 0.8, snap(extent * 0.56), 90.0, 1.0),
+            (utility_line_x - shoulder_width_m * 0.8, snap(extent * 0.88), 90.0, 1.0),
+        ]
+        for idx, (x, z, yaw_deg, scale) in enumerate(shoulder_pad_positions):
+            y = grounded_y(prefab_catalog, shoulder, scale=scale) - shoulder_sink_m
+            infra_shoulders.append(
+                make_instance(
+                    local_id=f"shoulder_pad_{idx:02}",
+                    prefab_id_uuid=shoulder,
+                    x=x,
+                    y=y,
+                    z=z,
+                    yaw_deg=yaw_deg,
+                    scale=scale,
+                    tint_rgba=palette_pick_muted(idx + 2, mix=0.74) if idx in (1, 3, 6, 8) else None,
                 )
-                x += shoulder_step
-                idx += 1
-
-        for x_line in shoulder_lines:
-            z = -extent
-            idx = 0
-            while z <= extent + 1e-3:
-                if abs(z) <= (shoulder_step * 0.8):
-                    z += shoulder_step
-                    idx += 1
-                    continue
-                y = grounded_y(prefab_catalog, shoulder, scale=1.0)
-                infra_shoulders.append(
-                    make_instance(
-                        local_id=f"shoulder_z_{idx:03}_{int((x_line + 20.0) * 100):04}",
-                        prefab_id_uuid=shoulder,
-                        x=x_line,
-                        y=y,
-                        z=z,
-                        yaw_deg=90.0,
-                        scale=1.0,
-                        tint_rgba=palette_pick_muted(idx + 3, mix=0.72) if idx % 7 == 0 else None,
-                    )
-                )
-                z += shoulder_step
-                idx += 1
+            )
 
     if crosswalk:
         cross_line = max(road_step * 1.6, hub_extent * 0.65)
@@ -1647,7 +1644,7 @@ def build_layout_layers_wasteland(
             (cross_span, -cross_line, 0.0),
         ]
         for idx, (x, z, yaw_deg) in enumerate(cross_positions):
-            y = grounded_y(prefab_catalog, crosswalk, scale=1.0)
+            y = grounded_y(prefab_catalog, crosswalk, scale=1.0) - crosswalk_sink_m
             props.append(
                 make_instance(
                     local_id=f"crosswalk_{idx:02}",
@@ -1660,20 +1657,14 @@ def build_layout_layers_wasteland(
                 )
             )
 
-    street_edge = road_step * 2.35
-    market_line_z = snap(max(street_edge + spacing * 1.0, hub_extent + spacing * 0.25))
-    housing_line_z = -market_line_z
-    garage_line_z = snap(-max(street_edge + spacing * 1.2, hub_extent + spacing * 0.55))
-    utility_line_x = snap(-max(street_edge + spacing * 1.1, hub_extent + spacing * 0.6))
-
     if streetlamp:
         lamp_positions: list[tuple[float, float, float]] = []
         axis_points = [
-            snap(-extent * 0.82),
-            snap(-extent * 0.42),
+            snap(-extent * 0.78),
+            snap(-extent * 0.3),
             0.0,
-            snap(extent * 0.42),
-            snap(extent * 0.82),
+            snap(extent * 0.3),
+            snap(extent * 0.78),
         ]
         for x in axis_points:
             lamp_positions.append((x, street_edge, 180.0))
@@ -1699,7 +1690,7 @@ def build_layout_layers_wasteland(
             )
 
     if string_lights:
-        rig_xs = [snap(-extent * 0.45), 0.0, snap(extent * 0.42)]
+        rig_xs = [snap(-extent * 0.34), snap(extent * 0.02), snap(extent * 0.38)]
         for idx, x in enumerate(rig_xs):
             scale = 1.0 + (0.08 * idx)
             y = grounded_y(prefab_catalog, string_lights, scale=scale) + 7.5
@@ -1722,11 +1713,10 @@ def build_layout_layers_wasteland(
         if prefab_id
     ]
     market_xs = [
-        snap(-extent * 0.72),
-        snap(-extent * 0.38),
-        snap(-extent * 0.05),
-        snap(extent * 0.28),
-        snap(extent * 0.62),
+        snap(-extent * 0.68),
+        snap(-extent * 0.3),
+        0.0,
+        snap(extent * 0.34),
     ]
     for idx, x in enumerate(market_xs):
         if not market_building_prefabs:
@@ -1750,11 +1740,10 @@ def build_layout_layers_wasteland(
     if market_stall:
         stall_xs = [
             snap(-extent * 0.78),
-            snap(-extent * 0.54),
-            snap(-extent * 0.24),
-            snap(extent * 0.04),
-            snap(extent * 0.34),
-            snap(extent * 0.64),
+            snap(-extent * 0.46),
+            snap(-extent * 0.12),
+            snap(extent * 0.2),
+            snap(extent * 0.52),
         ]
         for idx, x in enumerate(stall_xs):
             scale = 0.9 + ((idx % 2) * 0.06)
@@ -1773,7 +1762,7 @@ def build_layout_layers_wasteland(
             )
 
     if food_cart:
-        cart_xs = [snap(-extent * 0.46), snap(-extent * 0.08), snap(extent * 0.24), snap(extent * 0.56)]
+        cart_xs = [snap(-extent * 0.52), snap(-extent * 0.12), snap(extent * 0.22), snap(extent * 0.48)]
         for idx, x in enumerate(cart_xs):
             scale = 0.88
             y = grounded_y(prefab_catalog, food_cart, scale=scale)
@@ -1791,7 +1780,7 @@ def build_layout_layers_wasteland(
             )
 
     if awning:
-        awning_xs = [snap(-extent * 0.72), snap(-extent * 0.38), snap(-extent * 0.05), snap(extent * 0.28), snap(extent * 0.62)]
+        awning_xs = [snap(-extent * 0.68), snap(-extent * 0.3), 0.0, snap(extent * 0.34)]
         for idx, x in enumerate(awning_xs):
             scale = 0.94
             y = grounded_y(prefab_catalog, awning, scale=scale)
@@ -1809,7 +1798,7 @@ def build_layout_layers_wasteland(
             )
 
     if sign_neon:
-        sign_xs = [snap(-extent * 0.78), snap(-extent * 0.24), snap(extent * 0.18), snap(extent * 0.62)]
+        sign_xs = [snap(-extent * 0.72), snap(-extent * 0.12), snap(extent * 0.28), snap(extent * 0.6)]
         for idx, x in enumerate(sign_xs):
             scale = 0.82
             y = grounded_y(prefab_catalog, sign_neon, scale=scale)
@@ -1828,8 +1817,8 @@ def build_layout_layers_wasteland(
 
     if sign_totem:
         sign_positions = [
-            (snap(-extent * 0.88), market_line_z - spacing * 0.55, 180.0),
-            (snap(extent * 0.86), market_line_z - spacing * 0.55, 180.0),
+            (snap(-extent * 0.9), market_line_z - spacing * 0.55, 180.0),
+            (snap(extent * 0.58), market_line_z - spacing * 0.55, 180.0),
             (snap(extent * 0.42), housing_line_z + spacing * 0.4, 0.0),
             (snap(-extent * 0.84), garage_line_z + spacing * 0.45, 35.0),
         ]
@@ -1851,9 +1840,9 @@ def build_layout_layers_wasteland(
 
     garage_prefabs = [prefab_id for prefab_id in [garage_bay, repair_shed, recycler_tower] if prefab_id]
     garage_positions = [
-        (snap(-extent * 0.72), garage_line_z, 25.0, 1.08),
-        (snap(-extent * 0.46), garage_line_z + spacing * 0.18, 8.0, 0.96),
-        (snap(-extent * 0.18), garage_line_z - spacing * 0.12, -12.0, 1.02),
+        (snap(-extent * 0.82), garage_line_z, 25.0, 1.08),
+        (snap(-extent * 0.52), garage_line_z + spacing * 0.18, 8.0, 0.96),
+        (snap(-extent * 0.2), garage_line_z - spacing * 0.12, -12.0, 1.02),
     ]
     for idx, (x, z, yaw_deg, scale) in enumerate(garage_positions):
         if not garage_prefabs:
@@ -1875,10 +1864,10 @@ def build_layout_layers_wasteland(
 
     housing_prefabs = [prefab_id for prefab_id in [stacked_home, container_shop, diner_bar, motel_block, stacked_home] if prefab_id]
     housing_positions = [
-        (snap(extent * 0.24), housing_line_z, 0.0, 0.98),
-        (snap(extent * 0.52), housing_line_z + spacing * 0.1, 0.0, 1.08),
-        (snap(extent * 0.78), housing_line_z - spacing * 0.08, 0.0, 1.02),
-        (snap(extent * 0.44), housing_line_z - spacing * 0.88, -18.0, 0.92),
+        (snap(extent * 0.16), housing_line_z, 0.0, 0.98),
+        (snap(extent * 0.46), housing_line_z + spacing * 0.1, 0.0, 1.08),
+        (snap(extent * 0.76), housing_line_z - spacing * 0.08, 0.0, 1.02),
+        (snap(extent * 0.52), housing_line_z - spacing * 0.88, -18.0, 0.92),
     ]
     for idx, (x, z, yaw_deg, scale) in enumerate(housing_positions):
         if not housing_prefabs:
