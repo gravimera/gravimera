@@ -113,9 +113,9 @@ Enter/exit the Gen3D workshop from Build mode via the top-left workspace dropdow
   PNGs, animated GIFs, and a manifest for the current draft preview motions
 - Manual Tweak (micro edits): click `Manual Tweak` to enter a deterministic edit mode for primitive parts.
   - Select: click a part in the preview (selection shows a purple frame + info card).
-  - Move: arrow keys (XZ) and `PgUp`/`PgDn` (Y). `Shift` = bigger step.
-  - Rotate: `,` / `.` (around Y). `Shift` = 45°.
-  - Scale: `-` / `=` (uniform). `Shift` = bigger step.
+  - Move: arrow keys (XZ) and `PgUp`/`PgDn` (Y). `Shift` = bigger step. `Alt` = precision.
+  - Rotate: `,` / `.` (around Y). `Shift` = 45°. `Alt` = precision.
+  - Scale: `-` / `=` (uniform). `Shift` = bigger step. `Alt` = precision.
   - Recolor: `C` (cycle palette), `Shift+C` (previous).
   - Sculpt (FFD): `V` (toggle). Drag a control point handle with `LMB` to deform the selected primitive part (`Shift` = precision). Drag empty space with `LMB` to orbit the preview camera.
   - Undo/Redo: `Ctrl/Cmd+Z` / `Ctrl/Cmd+Y`.

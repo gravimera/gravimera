@@ -21,10 +21,13 @@ use super::task_queue::{Gen3dTaskQueue, Gen3dTaskState};
 const MANUAL_TWEAK_UNDO_LIMIT: usize = 64;
 const MANUAL_TWEAK_MOVE_STEP_M: f32 = 0.05;
 const MANUAL_TWEAK_MOVE_STEP_FAST_M: f32 = 0.20;
+const MANUAL_TWEAK_MOVE_STEP_PRECISE_M: f32 = 0.01;
 const MANUAL_TWEAK_ROT_STEP_DEG: f32 = 5.0;
 const MANUAL_TWEAK_ROT_STEP_FAST_DEG: f32 = 45.0;
+const MANUAL_TWEAK_ROT_STEP_PRECISE_DEG: f32 = 1.0;
 const MANUAL_TWEAK_SCALE_STEP: f32 = 1.05;
 const MANUAL_TWEAK_SCALE_STEP_FAST: f32 = 1.20;
+const MANUAL_TWEAK_SCALE_STEP_PRECISE: f32 = 1.01;
 const MANUAL_TWEAK_SCALE_MIN: f32 = 0.01;
 const MANUAL_TWEAK_SCALE_MAX: f32 = 50.0;
 
@@ -516,6 +519,10 @@ fn tweak_mod_shift(keys: &ButtonInput<KeyCode>) -> bool {
     keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight)
 }
 
+fn tweak_mod_alt(keys: &ButtonInput<KeyCode>) -> bool {
+    keys.pressed(KeyCode::AltLeft) || keys.pressed(KeyCode::AltRight)
+}
+
 fn tweak_mod_cmd(keys: &ButtonInput<KeyCode>) -> bool {
     keys.pressed(KeyCode::ControlLeft)
         || keys.pressed(KeyCode::ControlRight)
@@ -808,6 +815,7 @@ pub(crate) fn gen3d_manual_tweak_hotkeys(
 
     let modifier_cmd = tweak_mod_cmd(&keys);
     let modifier_shift = tweak_mod_shift(&keys);
+    let modifier_alt = tweak_mod_alt(&keys);
 
     if modifier_cmd {
         let redo_requested = (keys.just_pressed(KeyCode::KeyZ) && modifier_shift)
@@ -906,19 +914,18 @@ pub(crate) fn gen3d_manual_tweak_hotkeys(
     }
 
     let mut requested_scale: f32 = 1.0;
+    let scale_step = if modifier_alt {
+        MANUAL_TWEAK_SCALE_STEP_PRECISE
+    } else if modifier_shift {
+        MANUAL_TWEAK_SCALE_STEP_FAST
+    } else {
+        MANUAL_TWEAK_SCALE_STEP
+    };
     if keys.just_pressed(KeyCode::Minus) {
-        requested_scale *= if modifier_shift {
-            1.0 / MANUAL_TWEAK_SCALE_STEP_FAST
-        } else {
-            1.0 / MANUAL_TWEAK_SCALE_STEP
-        };
+        requested_scale *= 1.0 / scale_step;
     }
     if keys.just_pressed(KeyCode::Equal) {
-        requested_scale *= if modifier_shift {
-            MANUAL_TWEAK_SCALE_STEP_FAST
-        } else {
-            MANUAL_TWEAK_SCALE_STEP
-        };
+        requested_scale *= scale_step;
     }
 
     let recolor_requested = keys.just_pressed(KeyCode::KeyC);
@@ -933,14 +940,18 @@ pub(crate) fn gen3d_manual_tweak_hotkeys(
         || requested_rot_deg.abs() > 1e-6
         || (requested_scale - 1.0).abs() > 1e-6
     {
-        let step = if modifier_shift {
+        let step = if modifier_alt {
+            MANUAL_TWEAK_MOVE_STEP_PRECISE_M
+        } else if modifier_shift {
             MANUAL_TWEAK_MOVE_STEP_FAST_M
         } else {
             MANUAL_TWEAK_MOVE_STEP_M
         };
         let delta = requested_move * step;
 
-        let rot_step_deg = if modifier_shift {
+        let rot_step_deg = if modifier_alt {
+            MANUAL_TWEAK_ROT_STEP_PRECISE_DEG
+        } else if modifier_shift {
             MANUAL_TWEAK_ROT_STEP_FAST_DEG
         } else {
             MANUAL_TWEAK_ROT_STEP_DEG
@@ -1692,7 +1703,7 @@ pub(crate) fn gen3d_manual_tweak_ffd_drag(
             .unwrap_or(drag.start_hit_world);
 
             let mut delta_world = current_hit_world - drag.start_hit_world;
-            if tweak_mod_shift(&keys) {
+            if tweak_mod_shift(&keys) || tweak_mod_alt(&keys) {
                 delta_world *= 0.25;
             }
             let delta = inv_local_from_part.transform_vector3(delta_world);
@@ -1754,7 +1765,7 @@ pub(crate) fn gen3d_manual_tweak_ffd_drag(
         .unwrap_or(drag.start_hit_world);
 
         let mut delta_world = current_hit_world - drag.start_hit_world;
-        if tweak_mod_shift(&keys) {
+        if tweak_mod_shift(&keys) || tweak_mod_alt(&keys) {
             delta_world *= 0.25;
         }
         let delta = inv_local_from_part.transform_vector3(delta_world);
