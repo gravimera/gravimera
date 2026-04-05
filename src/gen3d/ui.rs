@@ -347,6 +347,54 @@ where
                                 Gen3dPreviewHoverInfoText,
                             ));
                         });
+                    overlay.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(0.0),
+                            top: Val::Px(0.0),
+                            width: Val::Px(0.0),
+                            height: Val::Px(0.0),
+                            border: UiRect::all(Val::Px(2.0)),
+                            display: Display::None,
+                            ..default()
+                        },
+                        BackgroundColor(Color::NONE),
+                        BorderColor::all(Color::srgba(0.82, 0.45, 1.0, 0.95)),
+                        Visibility::Hidden,
+                        ZIndex(14),
+                        Gen3dTweakSelectedFrame,
+                    ));
+                    overlay
+                        .spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Px(0.0),
+                                top: Val::Px(0.0),
+                                max_width: Val::Px(240.0),
+                                padding: UiRect::all(Val::Px(8.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(4.0),
+                                display: Display::None,
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.94)),
+                            BorderColor::all(Color::srgba(0.58, 0.30, 0.70, 0.92)),
+                            Visibility::Hidden,
+                            ZIndex(15),
+                            Gen3dTweakSelectedInfoCard,
+                        ))
+                        .with_children(|card| {
+                            card.spawn((
+                                Text::new(""),
+                                TextFont {
+                                    font_size: 13.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.96, 0.92, 0.99)),
+                                Gen3dTweakSelectedInfoText,
+                            ));
+                        });
                     overlay
                         .spawn((
                             Node {
@@ -492,6 +540,7 @@ pub(crate) fn enter_gen3d_mode(
     job: Res<Gen3dAiJob>,
     mut workshop: ResMut<Gen3dWorkshop>,
     mut preview_state: ResMut<Gen3dPreview>,
+    mut tweak: ResMut<Gen3dManualTweakState>,
     mut meta_state: ResMut<crate::motion_ui::MotionAlgorithmUiState>,
     mut meta_roots: Query<&mut Visibility, With<crate::motion_ui::MotionAlgorithmUiRoot>>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
@@ -513,6 +562,8 @@ pub(crate) fn enter_gen3d_mode(
     workshop.prompt_scrollbar_drag = None;
     workshop.side_tab = Gen3dSideTab::Status;
     workshop.side_panel_open = false;
+    tweak.enabled = false;
+    tweak.selected_part_id = None;
     preview_state.animation_channel = "idle".to_string();
     preview_state.animation_channels.clear();
     preview_state.animation_dropdown_open = false;
@@ -1552,6 +1603,34 @@ pub(crate) fn enter_gen3d_mode(
                                 Button,
                                 Node {
                                     width: Val::Percent(100.0),
+                                    height: Val::Px(38.0),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.10, 0.10, 0.11, 0.55)),
+                                BorderColor::all(Color::srgba(0.30, 0.30, 0.34, 0.70)),
+                                Visibility::Hidden,
+                                Gen3dManualTweakButton,
+                            ))
+                            .with_children(|button| {
+                                button.spawn((
+                                    Text::new("Manual Tweak"),
+                                    TextFont {
+                                        font_size: 14.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                    Gen3dManualTweakButtonText,
+                                ));
+                            });
+
+                        column
+                            .spawn((
+                                Button,
+                                Node {
+                                    width: Val::Percent(100.0),
                                     height: Val::Px(34.0),
                                     justify_content: JustifyContent::Center,
                                     align_items: AlignItems::Center,
@@ -2030,7 +2109,8 @@ pub(crate) fn gen3d_cancel_queue_button(
 pub(crate) fn gen3d_exit_on_escape(
     build_scene: Res<State<BuildScene>>,
     keys: Res<ButtonInput<KeyCode>>,
-    workshop: Res<Gen3dWorkshop>,
+    mut workshop: ResMut<Gen3dWorkshop>,
+    mut tweak: ResMut<Gen3dManualTweakState>,
     mut next_build_scene: ResMut<NextState<BuildScene>>,
 ) {
     if !matches!(build_scene.get(), BuildScene::Preview) {
@@ -2040,6 +2120,16 @@ pub(crate) fn gen3d_exit_on_escape(
         return;
     }
     if workshop.image_viewer.is_some() {
+        return;
+    }
+    if workshop.prompt_focused {
+        return;
+    }
+    if tweak.enabled {
+        tweak.enabled = false;
+        tweak.selected_part_id = None;
+        workshop.error = None;
+        workshop.status = "Manual tweak exited.".into();
         return;
     }
     next_build_scene.set(BuildScene::Realm);

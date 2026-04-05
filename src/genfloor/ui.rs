@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::gen3d::Gen3dAiJob;
+use crate::gen3d::Gen3dManualTweakState;
 use crate::gen3d::Gen3dPreview;
 use crate::gen3d::Gen3dWorkshop;
 use crate::gen3d::{Gen3dExitButton, Gen3dGenerateButton, Gen3dSaveButton};
@@ -20,6 +21,7 @@ pub(crate) fn enter_genfloor_mode(
     job: Res<Gen3dAiJob>,
     mut workshop: ResMut<Gen3dWorkshop>,
     preview_state: ResMut<Gen3dPreview>,
+    tweak: ResMut<Gen3dManualTweakState>,
     meta_state: ResMut<crate::motion_ui::MotionAlgorithmUiState>,
     meta_roots: Query<&mut Visibility, With<crate::motion_ui::MotionAlgorithmUiRoot>>,
     windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
@@ -39,6 +41,7 @@ pub(crate) fn enter_genfloor_mode(
         job,
         workshop,
         preview_state,
+        tweak,
         meta_state,
         meta_roots,
         windows,

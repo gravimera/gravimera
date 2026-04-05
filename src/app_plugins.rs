@@ -689,6 +689,7 @@ impl Plugin for RenderedGen3dPlugin {
                 crate::gen3d::gen3d_exit_on_escape
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(in_state(BuildScene::Preview))
+                    .before(crate::gen3d::gen3d_prompt_text_input)
                     .before(crate::gen3d::gen3d_image_viewer_keyboard_navigation),
                 crate::gen3d::gen3d_side_panel_toggle_button
                     .run_if(crate::automation::local_input_enabled),
@@ -714,6 +715,17 @@ impl Plugin for RenderedGen3dPlugin {
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::gen3d::gen3d_save_button
                     .after(crate::gen3d::gen3d_poll_ai_job)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(in_state(BuildScene::Preview))
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::gen3d::gen3d_manual_tweak_button
+                    .after(crate::gen3d::gen3d_save_button)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(in_state(BuildScene::Preview))
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::gen3d::gen3d_manual_tweak_hotkeys
+                    .after(crate::gen3d::gen3d_manual_tweak_button)
+                    .before(crate::gen3d::gen3d_apply_draft_to_preview)
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(in_state(BuildScene::Preview))
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
@@ -986,6 +998,21 @@ impl Plugin for RenderedGen3dPlugin {
         app.add_systems(
             PostUpdate,
             crate::gen3d::gen3d_update_preview_component_overlay
+                .after(crate::gen3d::gen3d_update_preview_panel_image_fit)
+                .in_set(UiSystems::Content)
+                .run_if(in_gen3d_ui_scene),
+        );
+        app.add_systems(
+            PostUpdate,
+            crate::gen3d::gen3d_manual_tweak_pick_part
+                .after(crate::gen3d::gen3d_update_preview_panel_image_fit)
+                .in_set(UiSystems::Content)
+                .run_if(in_gen3d_ui_scene),
+        );
+        app.add_systems(
+            PostUpdate,
+            crate::gen3d::gen3d_manual_tweak_update_selected_overlay
+                .after(crate::gen3d::gen3d_manual_tweak_pick_part)
                 .after(crate::gen3d::gen3d_update_preview_panel_image_fit)
                 .in_set(UiSystems::Content)
                 .run_if(in_gen3d_ui_scene),

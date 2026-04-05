@@ -21,7 +21,7 @@ use super::state::{
     Gen3dPreviewExportButton, Gen3dPreviewHoverFrame, Gen3dPreviewHoverInfoCard,
     Gen3dPreviewHoverInfoText, Gen3dPreviewLight, Gen3dPreviewModelRoot, Gen3dPreviewPanel,
     Gen3dPreviewSceneRoot, Gen3dPreviewUiModelRoot, Gen3dReviewOverlayRoot, Gen3dSidePanelRoot,
-    Gen3dSidePanelToggleButton, Gen3dWorkshop,
+    Gen3dSidePanelToggleButton, Gen3dManualTweakState, Gen3dWorkshop,
 };
 use super::task_queue::Gen3dTaskQueue;
 
@@ -1135,6 +1135,7 @@ pub(crate) fn gen3d_preview_orbit_controls(
     keys: Res<ButtonInput<KeyCode>>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     mut workshop: ResMut<Gen3dWorkshop>,
+    tweak: Res<Gen3dManualTweakState>,
     mut orbit_ui: Gen3dPreviewOrbitUi,
     mut mouse_wheel: bevy::ecs::message::MessageReader<bevy::input::mouse::MouseWheel>,
     focus_world: Gen3dPreviewFocusWorld,
@@ -1252,10 +1253,15 @@ pub(crate) fn gen3d_preview_orbit_controls(
     }
 
     if hovered && !workshop.prompt_focused {
-        let x = (keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight)) as i8
-            - (keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft)) as i8;
-        let y = (keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp)) as i8
-            - (keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown)) as i8;
+        let allow_arrow_pan = !tweak.enabled;
+        let x = (keys.pressed(KeyCode::KeyD)
+            || (allow_arrow_pan && keys.pressed(KeyCode::ArrowRight))) as i8
+            - (keys.pressed(KeyCode::KeyA)
+                || (allow_arrow_pan && keys.pressed(KeyCode::ArrowLeft))) as i8;
+        let y = (keys.pressed(KeyCode::KeyW) || (allow_arrow_pan && keys.pressed(KeyCode::ArrowUp)))
+            as i8
+            - (keys.pressed(KeyCode::KeyS)
+                || (allow_arrow_pan && keys.pressed(KeyCode::ArrowDown))) as i8;
         let mut pan_input = Vec2::new(x as f32, y as f32);
         if pan_input.length_squared() > 1.0 {
             pan_input = pan_input.normalize();
@@ -1672,6 +1678,7 @@ pub(crate) fn gen3d_apply_draft_to_preview(
     build_scene: Res<State<BuildScene>>,
     job: Res<Gen3dAiJob>,
     task_queue: Res<Gen3dTaskQueue>,
+    tweak: Res<Gen3dManualTweakState>,
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     assets: Res<SceneAssets>,
@@ -1748,9 +1755,11 @@ pub(crate) fn gen3d_apply_draft_to_preview(
 
     if in_preview {
         let session_id = task_queue.active_session_id;
+        let mark_parts = tweak.enabled;
         let needs_rebuild = existing_ui.is_empty()
             || preview.ui_applied_session_id != Some(session_id)
-            || preview.ui_applied_assembly_rev != Some(job.assembly_rev());
+            || preview.ui_applied_assembly_rev != Some(job.assembly_rev())
+            || preview.ui_applied_mark_parts != mark_parts;
         if needs_rebuild {
             for entity in &existing_ui {
                 commands.entity(entity).try_despawn();
@@ -1758,6 +1767,7 @@ pub(crate) fn gen3d_apply_draft_to_preview(
 
             preview.ui_applied_session_id = Some(session_id);
             preview.ui_applied_assembly_rev = Some(job.assembly_rev());
+            preview.ui_applied_mark_parts = mark_parts;
 
             if draft.defs.is_empty() {
                 preview.draft_focus = Vec3::ZERO;
@@ -1807,7 +1817,7 @@ pub(crate) fn gen3d_apply_draft_to_preview(
                     super::gen3d_draft_object_id(),
                     None,
                     VisualSpawnSettings {
-                        mark_parts: false,
+                        mark_parts,
                         render_layer: Some(super::GEN3D_PREVIEW_UI_LAYER),
                     },
                 );

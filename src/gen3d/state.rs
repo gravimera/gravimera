@@ -116,6 +116,22 @@ impl Gen3dSpeedMode {
 pub(crate) struct Gen3dExitButton;
 
 #[derive(Resource, Default)]
+pub(crate) struct Gen3dManualTweakState {
+    pub(crate) enabled: bool,
+    pub(crate) selected_part_id: Option<u128>,
+    pub(crate) color_palette_index: usize,
+    pub(crate) undo: Vec<Gen3dManualTweakUndoEntry>,
+    pub(crate) redo: Vec<Gen3dManualTweakUndoEntry>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct Gen3dManualTweakUndoEntry {
+    pub(crate) label: String,
+    pub(crate) undo_args_json: serde_json::Value,
+    pub(crate) redo_args_json: serde_json::Value,
+}
+
+#[derive(Resource, Default)]
 pub(crate) struct Gen3dWorkshop {
     pub(crate) images: Vec<Gen3dImageRef>,
     pub(crate) prompt: String,
@@ -170,6 +186,7 @@ pub(crate) struct Gen3dPreview {
     pub(crate) collision_dirty: bool,
     pub(crate) ui_applied_session_id: Option<uuid::Uuid>,
     pub(crate) ui_applied_assembly_rev: Option<u32>,
+    pub(crate) ui_applied_mark_parts: bool,
     pub(crate) capture_applied_session_id: Option<uuid::Uuid>,
     pub(crate) capture_applied_assembly_rev: Option<u32>,
     pub(crate) draft_focus: Vec3,
@@ -331,6 +348,12 @@ pub(crate) struct Gen3dSaveButton;
 pub(crate) struct Gen3dSaveButtonText;
 
 #[derive(Component)]
+pub(crate) struct Gen3dManualTweakButton;
+
+#[derive(Component)]
+pub(crate) struct Gen3dManualTweakButtonText;
+
+#[derive(Component)]
 pub(crate) struct Gen3dCancelQueueButton;
 
 #[derive(Component)]
@@ -438,6 +461,18 @@ pub(crate) struct Gen3dPreviewHoverInfoCard;
 
 #[derive(Component)]
 pub(crate) struct Gen3dPreviewHoverInfoText;
+
+#[derive(Component)]
+pub(crate) struct Gen3dTweakSelectedFrame;
+
+#[derive(Component)]
+pub(crate) struct Gen3dTweakSelectedInfoCard;
+
+#[derive(Component)]
+pub(crate) struct Gen3dTweakSelectedInfoText;
+
+#[derive(Component)]
+pub(crate) struct Gen3dTweakHelpText;
 
 #[derive(Component)]
 pub(crate) struct Gen3dPreviewAnimationDropdownButton;

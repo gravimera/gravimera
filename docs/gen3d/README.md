@@ -103,12 +103,34 @@ component tree, not just the first root layer.
 - Hovering uses a flatter segmented frame rather than a filled selection box so bright components
   stay readable.
 - With the cursor over the preview (and the prompt box unfocused), use `W` / `A` / `S` / `D` or the
-  arrow keys to pan the preview view. Click outside the prompt box to defocus it.
+  arrow keys to pan the preview view. Click outside the prompt box to defocus it. (In Manual Tweak
+  mode, arrow keys are reserved for part edits; use `W` / `A` / `S` / `D` for panning.)
 - In explode mode, separated components show their names directly in the preview. Hover still shows
   the fuller info card.
 
 This is preview-only inspection UI. It does not modify the draft, saved prefab, or component
 attachments.
+
+## Manual Tweak Mode (interactive micro-edits)
+
+When a Gen3D draft exists and the workshop is idle, the right-side control column shows a
+`Manual Tweak` button. This enters a deterministic micro-edit mode for **primitive parts** inside
+the current draft.
+
+Key properties:
+
+- Selection: click a part in the preview to select it (shows a purple frame + info card).
+- Edits: move/rotate/scale/recolor the selected part using hotkeys (see `docs/controls.md`).
+- Undo/Redo: `Ctrl/Cmd+Z` and `Ctrl/Cmd+Y` apply deterministic DraftOps to reverse/reapply changes.
+- Determinism: edits are applied via `apply_draft_ops_v1` (`update_primitive_part`), not by direct
+  mutation from UI code.
+- Persistence: edits affect the in-memory Gen3D draft; click `Save Snapshot` to persist them into
+  the 3D Models library (and export).
+
+Current limitations:
+
+- Primitive parts only (no manual editing of imported `model` parts yet).
+- Deform / vertex-level editing is planned but not implemented in this milestone.
 
 ## Preview export
 

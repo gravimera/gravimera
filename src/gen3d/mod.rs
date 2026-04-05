@@ -1,6 +1,7 @@
 mod agent;
 mod ai;
 mod images;
+mod manual_tweak;
 mod preview;
 mod preview_export;
 mod save;
@@ -156,6 +157,10 @@ pub(crate) use images::{
     gen3d_thumbnail_button_open_viewer, gen3d_thumbnail_button_style_on_interaction,
     gen3d_thumbnail_button_style_on_selection, gen3d_update_image_viewer_ui,
     gen3d_update_images_inline_visibility, gen3d_update_thumbnail_tooltip,
+};
+pub(crate) use manual_tweak::{
+    gen3d_manual_tweak_button, gen3d_manual_tweak_pick_part,
+    gen3d_manual_tweak_hotkeys, gen3d_manual_tweak_update_selected_overlay,
 };
 pub(crate) use preview::{
     collect_preview_component_overlays, compute_preview_component_bounds_center_from_transforms,

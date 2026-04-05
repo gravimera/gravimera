@@ -103,7 +103,7 @@ Enter/exit the Gen3D workshop from Build mode via the top-left workspace dropdow
 - Preview zoom: mouse wheel on the preview panel
 - Prompt input: click the prompt box to focus it (caret shows). Click outside the prompt box to
   defocus so `W` / `A` / `S` / `D` controls the preview again.
-- Preview pan: with the cursor over the preview, `W` / `A` / `S` / `D` or arrow keys
+- Preview pan: with the cursor over the preview, `W` / `A` / `S` / `D` or arrow keys (arrow keys are reserved for Manual Tweak)
 - Component inspection: move the cursor over a visible preview component to show a frame and info
   card; when parent/child frames overlap, the more specific nested component wins
 - Explode inspection: use the preview panel `Inspect` → `Explode` toggle to separate preview
@@ -111,6 +111,15 @@ Enter/exit the Gen3D workshop from Build mode via the top-left workspace dropdow
   centered on the exploded assembly while explode is active
 - Preview export: use the preview panel `Export` button to choose a local folder, then write still
   PNGs, animated GIFs, and a manifest for the current draft preview motions
+- Manual Tweak (micro edits): click `Manual Tweak` to enter a deterministic edit mode for primitive parts.
+  - Select: click a part in the preview (selection shows a purple frame + info card).
+  - Move: arrow keys (XZ) and `PgUp`/`PgDn` (Y). `Shift` = bigger step.
+  - Rotate: `,` / `.` (around Y). `Shift` = 45°.
+  - Scale: `-` / `=` (uniform). `Shift` = bigger step.
+  - Recolor: `C` (cycle palette), `Shift+C` (previous).
+  - Undo/Redo: `Ctrl/Cmd+Z` / `Ctrl/Cmd+Y`.
+  - Exit tweak: `Esc` (when the prompt box is not focused).
+  - Persistence: edits affect the live Gen3D draft; click `Save Snapshot` to save them into the 3D Models library.
 
 ## Scene Preview (GenScene)
 
