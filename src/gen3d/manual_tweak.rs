@@ -1256,8 +1256,8 @@ pub(crate) struct ManualTweakFfdDragState {
     base_min: Vec3,
     base_max: Vec3,
     base_offsets: Vec<Vec3>,
-    start_hit_local: Vec3,
-    plane_normal_local: Vec3,
+    start_hit_world: Vec3,
+    plane_normal_world: Vec3,
     primitive_base: Option<crate::object::registry::PrimitiveVisualDef>,
     before_args_json: serde_json::Value,
     last_apply_time_secs: f32,
@@ -1575,6 +1575,9 @@ pub(crate) fn gen3d_manual_tweak_ffd_drag(
         return;
     };
 
+    let ray_origin_world = ray.origin;
+    let ray_dir_world: Vec3 = ray.direction.into();
+
     let ray_origin_local = inv_local_from_part.transform_point3(ray.origin);
     let ray_dir_local = inv_local_from_part.transform_vector3(ray.direction.into());
 
@@ -1598,22 +1601,15 @@ pub(crate) fn gen3d_manual_tweak_ffd_drag(
                 return;
             };
 
-            let camera_forward_world: Vec3 = camera_transform.forward().into();
-            let plane_normal_local = inv_local_from_part
-                .transform_vector3(camera_forward_world)
-                .normalize_or_zero();
-            let plane_normal_local = if plane_normal_local.length_squared() > 1e-8 {
-                plane_normal_local
+            let cp_world = part_from_local.transform_point3(cp_local);
+
+            let plane_normal_world: Vec3 = camera_transform.forward().into();
+            let plane_normal_world = plane_normal_world.normalize_or_zero();
+            let plane_normal_world = if plane_normal_world.length_squared() > 1e-8 {
+                plane_normal_world
             } else {
                 Vec3::Z
             };
-            let start_hit_local = ray_plane_intersection(
-                ray_origin_local,
-                ray_dir_local,
-                cp_local,
-                plane_normal_local,
-            )
-            .unwrap_or(cp_local);
 
             let primitive_base = primitive.clone();
             let base_color = match &primitive_base {
@@ -1642,8 +1638,8 @@ pub(crate) fn gen3d_manual_tweak_ffd_drag(
             drag.base_min = base_min;
             drag.base_max = base_max;
             drag.base_offsets = offsets;
-            drag.start_hit_local = start_hit_local;
-            drag.plane_normal_local = plane_normal_local;
+            drag.start_hit_world = cp_world;
+            drag.plane_normal_world = plane_normal_world;
             drag.primitive_base = Some(primitive_base);
             drag.before_args_json = before_args_json;
             drag.last_apply_time_secs = time.elapsed_secs();
@@ -1660,19 +1656,21 @@ pub(crate) fn gen3d_manual_tweak_ffd_drag(
 
     if mouse_buttons.pressed(MouseButton::Left) {
         let now = time.elapsed_secs();
-        let apply_due = (now - drag.last_apply_time_secs) >= 0.05;
+        let apply_due = (now - drag.last_apply_time_secs) >= 0.02;
         if apply_due {
-            let current_hit = ray_plane_intersection(
-                ray_origin_local,
-                ray_dir_local,
-                drag.start_hit_local,
-                drag.plane_normal_local,
+            let current_hit_world = ray_plane_intersection(
+                ray_origin_world,
+                ray_dir_world,
+                drag.start_hit_world,
+                drag.plane_normal_world,
             )
-            .unwrap_or(drag.start_hit_local);
-            let mut delta = current_hit - drag.start_hit_local;
+            .unwrap_or(drag.start_hit_world);
+
+            let mut delta_world = current_hit_world - drag.start_hit_world;
             if tweak_mod_shift(&keys) {
-                delta *= 0.25;
+                delta_world *= 0.25;
             }
+            let delta = inv_local_from_part.transform_vector3(delta_world);
             if !delta.is_finite() {
                 return;
             }
@@ -1722,17 +1720,19 @@ pub(crate) fn gen3d_manual_tweak_ffd_drag(
     }
 
     if mouse_buttons.just_released(MouseButton::Left) {
-        let current_hit = ray_plane_intersection(
-            ray_origin_local,
-            ray_dir_local,
-            drag.start_hit_local,
-            drag.plane_normal_local,
+        let current_hit_world = ray_plane_intersection(
+            ray_origin_world,
+            ray_dir_world,
+            drag.start_hit_world,
+            drag.plane_normal_world,
         )
-        .unwrap_or(drag.start_hit_local);
-        let mut delta = current_hit - drag.start_hit_local;
+        .unwrap_or(drag.start_hit_world);
+
+        let mut delta_world = current_hit_world - drag.start_hit_world;
         if tweak_mod_shift(&keys) {
-            delta *= 0.25;
+            delta_world *= 0.25;
         }
+        let delta = inv_local_from_part.transform_vector3(delta_world);
 
         let mut offsets = drag.base_offsets.clone();
         if let Some(existing) = offsets.get_mut(drag.cp_index) {
