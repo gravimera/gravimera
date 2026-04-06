@@ -121,6 +121,7 @@ Enter/exit the Gen3D workshop from Build mode via the top-left workspace dropdow
     - Precise: type `#RRGGBB`.
     - History: last 12 applied colors; click a swatch to reuse it.
     - Apply: click `Apply` to recolor the selected part and close the picker.
+    - Cancel: click `Cancel` to close the picker without applying.
   - Sculpt (FFD): `V` (toggle). Drag a control point handle with `LMB` to deform the selected primitive part (`Shift` = big, `Ctrl` = precision). Drag empty space with `LMB` to orbit the preview camera.
   - Undo/Redo: `Ctrl/Cmd+Z` / `Ctrl/Cmd+Y`.
   - Exit tweak: `Esc` (when the prompt box is not focused).

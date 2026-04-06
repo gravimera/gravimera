@@ -401,6 +401,12 @@ pub(crate) struct Gen3dManualTweakColorPickerApplyButton;
 pub(crate) struct Gen3dManualTweakColorPickerApplyButtonText;
 
 #[derive(Component)]
+pub(crate) struct Gen3dManualTweakColorPickerCancelButton;
+
+#[derive(Component)]
+pub(crate) struct Gen3dManualTweakColorPickerCancelButtonText;
+
+#[derive(Component)]
 pub(crate) struct Gen3dManualTweakColorPickerRecentSwatch {
     index: usize,
 }

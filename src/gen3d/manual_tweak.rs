@@ -11,7 +11,8 @@ use super::ai::Gen3dAiJob;
 use super::preview;
 use super::state::{
     Gen3dDraft, Gen3dManualTweakButton, Gen3dManualTweakButtonText, Gen3dManualTweakState,
-    Gen3dManualTweakColorPickerApplyButton, Gen3dManualTweakColorPickerPalette,
+    Gen3dManualTweakColorPickerApplyButton, Gen3dManualTweakColorPickerCancelButton,
+    Gen3dManualTweakColorPickerPalette,
     Gen3dManualTweakColorPickerPaletteSelector, Gen3dManualTweakColorPickerPreviewSwatch,
     Gen3dManualTweakColorPickerRecentSwatch, Gen3dManualTweakColorPickerRgbField,
     Gen3dManualTweakColorPickerRgbFieldText, Gen3dManualTweakColorPickerRoot,
@@ -2169,6 +2170,7 @@ pub(crate) fn gen3d_manual_tweak_color_picker_rgb_text_input(
 ) {
     let accept_input =
         matches!(build_scene.get(), BuildScene::Preview) && tweak.color_picker_rgb_focused;
+    let accept_char = |ch: char| ch == '#' || ch == 'x' || ch == 'X' || ch.is_ascii_hexdigit();
 
     for event in ime_events.read() {
         let Ime::Commit { value, .. } = event else {
@@ -2181,7 +2183,7 @@ pub(crate) fn gen3d_manual_tweak_color_picker_rgb_text_input(
             if ch.is_control() || ch == '\n' {
                 continue;
             }
-            if ch.is_ascii_digit() || ch == '#' || ch == ',' || ch == ' ' || ch == '\t' {
+            if accept_char(ch) {
                 if tweak.color_picker_rgb_text.len() < 32 {
                     tweak.color_picker_rgb_text.push(ch);
                 }
@@ -2219,12 +2221,7 @@ pub(crate) fn gen3d_manual_tweak_color_picker_rgb_text_input(
                             if ch.is_control() || ch == '\n' {
                                 continue;
                             }
-                            if ch.is_ascii_digit()
-                                || ch == '#'
-                                || ch == ','
-                                || ch == ' '
-                                || ch == '\t'
-                            {
+                            if accept_char(ch) {
                                 if tweak.color_picker_rgb_text.len() >= 32 {
                                     break;
                                 }
@@ -2241,8 +2238,7 @@ pub(crate) fn gen3d_manual_tweak_color_picker_rgb_text_input(
                         if ch.is_control() || ch == '\n' {
                             continue;
                         }
-                        if ch.is_ascii_digit() || ch == '#' || ch == ',' || ch == ' ' || ch == '\t'
-                        {
+                        if accept_char(ch) {
                             if tweak.color_picker_rgb_text.len() < 32 {
                                 tweak.color_picker_rgb_text.push(ch);
                                 changed = true;
@@ -2259,7 +2255,7 @@ pub(crate) fn gen3d_manual_tweak_color_picker_rgb_text_input(
                     if ch.is_control() || ch == '\n' {
                         continue;
                     }
-                    if ch.is_ascii_digit() || ch == '#' || ch == ',' || ch == ' ' || ch == '\t' {
+                    if accept_char(ch) {
                         if tweak.color_picker_rgb_text.len() < 32 {
                             tweak.color_picker_rgb_text.push(ch);
                             changed = true;
@@ -2536,8 +2532,58 @@ pub(crate) fn gen3d_manual_tweak_color_picker_apply_button(
     *last_interaction = Some(*interaction);
 }
 
+pub(crate) fn gen3d_manual_tweak_color_picker_cancel_button(
+    build_scene: Res<State<BuildScene>>,
+    mut tweak: ResMut<Gen3dManualTweakState>,
+    mut last_interaction: Local<Option<Interaction>>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        With<Gen3dManualTweakColorPickerCancelButton>,
+    >,
+) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        *last_interaction = None;
+        return;
+    }
+    if !tweak.enabled || !tweak.color_picker_open {
+        *last_interaction = None;
+        return;
+    }
+
+    let Ok((interaction, mut bg, mut border)) = buttons.single_mut() else {
+        *last_interaction = None;
+        return;
+    };
+
+    match *interaction {
+        Interaction::None => {
+            *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.11, 0.80));
+            *border = BorderColor::all(Color::srgba(0.30, 0.30, 0.34, 0.70));
+        }
+        Interaction::Hovered => {
+            *bg = BackgroundColor(Color::srgba(0.16, 0.10, 0.10, 0.88));
+            *border = BorderColor::all(Color::srgb(0.95, 0.45, 0.45));
+        }
+        Interaction::Pressed => {
+            *bg = BackgroundColor(Color::srgba(0.22, 0.12, 0.12, 0.96));
+            *border = BorderColor::all(Color::srgb(1.00, 0.55, 0.55));
+
+            let was_pressed = matches!(*last_interaction, Some(Interaction::Pressed));
+            if was_pressed {
+                return;
+            }
+
+            tweak.color_picker_open = false;
+            tweak.color_picker_rgb_focused = false;
+        }
+    }
+
+    *last_interaction = Some(*interaction);
+}
+
 pub(crate) fn gen3d_manual_tweak_color_picker_update_ui(
     build_scene: Res<State<BuildScene>>,
+    time: Res<Time>,
     mut tweak: ResMut<Gen3dManualTweakState>,
     mut nodes: ParamSet<(
         Query<(&mut Node, &mut Visibility), With<Gen3dManualTweakColorPickerRoot>>,
@@ -2605,8 +2651,15 @@ pub(crate) fn gen3d_manual_tweak_color_picker_update_ui(
     if !tweak.color_picker_rgb_focused {
         tweak.color_picker_rgb_text = format_rgb_text(color);
     }
+    let mut rgb_display = tweak.color_picker_rgb_text.clone();
+    if tweak.color_picker_rgb_focused {
+        let blink_on = ((time.elapsed_secs() * 2.0).floor() as i32) & 1 == 0;
+        if blink_on {
+            rgb_display.push('▏');
+        }
+    }
     for mut text in &mut rgb_texts {
-        **text = tweak.color_picker_rgb_text.clone().into();
+        **text = rgb_display.clone().into();
     }
     for (mut bg, mut border) in &mut rgb_fields {
         let focused = tweak.color_picker_rgb_focused;

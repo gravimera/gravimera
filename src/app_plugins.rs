@@ -760,8 +760,13 @@ impl Plugin for RenderedGen3dPlugin {
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(in_state(BuildScene::Preview))
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
-                crate::gen3d::gen3d_manual_tweak_color_picker_apply_button
+                crate::gen3d::gen3d_manual_tweak_color_picker_cancel_button
                     .after(crate::gen3d::gen3d_manual_tweak_color_picker_recent_swatches)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(in_state(BuildScene::Preview))
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::gen3d::gen3d_manual_tweak_color_picker_apply_button
+                    .after(crate::gen3d::gen3d_manual_tweak_color_picker_cancel_button)
                     .before(crate::gen3d::gen3d_apply_draft_to_preview)
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(in_state(BuildScene::Preview))

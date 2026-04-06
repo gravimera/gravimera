@@ -565,29 +565,66 @@ where
                                         });
 
                                         col.spawn((
-                                            Button,
                                             Node {
                                                 width: Val::Px(190.0),
-                                                height: Val::Px(34.0),
-                                                justify_content: JustifyContent::Center,
-                                                align_items: AlignItems::Center,
-                                                border: UiRect::all(Val::Px(1.0)),
+                                                flex_direction: FlexDirection::Row,
+                                                column_gap: Val::Px(8.0),
                                                 ..default()
                                             },
-                                            BackgroundColor(Color::srgba(0.08, 0.14, 0.10, 0.85)),
-                                            BorderColor::all(Color::srgb(0.25, 0.80, 0.45)),
-                                            Gen3dManualTweakColorPickerApplyButton,
+                                            BackgroundColor(Color::NONE),
                                         ))
-                                        .with_children(|button| {
-                                            button.spawn((
-                                                Text::new("Apply"),
-                                                TextFont {
-                                                    font_size: 14.0,
+                                        .with_children(|row| {
+                                            row.spawn((
+                                                Button,
+                                                Node {
+                                                    width: Val::Px(91.0),
+                                                    height: Val::Px(34.0),
+                                                    justify_content: JustifyContent::Center,
+                                                    align_items: AlignItems::Center,
+                                                    border: UiRect::all(Val::Px(1.0)),
                                                     ..default()
                                                 },
-                                                TextColor(Color::srgb(0.70, 1.0, 0.82)),
-                                                Gen3dManualTweakColorPickerApplyButtonText,
-                                            ));
+                                                BackgroundColor(Color::srgba(0.08, 0.14, 0.10, 0.85)),
+                                                BorderColor::all(Color::srgb(0.25, 0.80, 0.45)),
+                                                Gen3dManualTweakColorPickerApplyButton,
+                                            ))
+                                            .with_children(|button| {
+                                                button.spawn((
+                                                    Text::new("Apply"),
+                                                    TextFont {
+                                                        font_size: 14.0,
+                                                        ..default()
+                                                    },
+                                                    TextColor(Color::srgb(0.70, 1.0, 0.82)),
+                                                    Gen3dManualTweakColorPickerApplyButtonText,
+                                                ));
+                                            });
+
+                                            row.spawn((
+                                                Button,
+                                                Node {
+                                                    width: Val::Px(91.0),
+                                                    height: Val::Px(34.0),
+                                                    justify_content: JustifyContent::Center,
+                                                    align_items: AlignItems::Center,
+                                                    border: UiRect::all(Val::Px(1.0)),
+                                                    ..default()
+                                                },
+                                                BackgroundColor(Color::srgba(0.10, 0.10, 0.11, 0.80)),
+                                                BorderColor::all(Color::srgba(0.30, 0.30, 0.34, 0.70)),
+                                                Gen3dManualTweakColorPickerCancelButton,
+                                            ))
+                                            .with_children(|button| {
+                                                button.spawn((
+                                                    Text::new("Cancel"),
+                                                    TextFont {
+                                                        font_size: 14.0,
+                                                        ..default()
+                                                    },
+                                                    TextColor(Color::srgb(0.94, 0.94, 0.96)),
+                                                    Gen3dManualTweakColorPickerCancelButtonText,
+                                                ));
+                                            });
                                         });
                                     });
                                 });

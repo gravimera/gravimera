@@ -1165,20 +1165,21 @@ pub(crate) fn gen3d_preview_orbit_controls(
     if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
-    if tweak.color_picker_open {
-        drag_state.lmb_started_on_ffd_handle = false;
-        for _ in mouse_wheel.read() {}
-        return;
-    }
     let Ok(mut window) = orbit_ui.windows.single_mut() else {
         return;
     };
-    let mut hovered = orbit_ui
-        .panel
-        .iter()
-        .any(|(i, ..)| matches!(*i, Interaction::Hovered | Interaction::Pressed));
 
     let cursor_physical = window.physical_cursor_position();
+    let Ok((_interaction, panel_node, panel_transform)) = orbit_ui.panel.single() else {
+        // Drain wheel events so we don't build up.
+        for _ in mouse_wheel.read() {}
+        return;
+    };
+
+    let mut hovered = cursor_physical
+        .map(|cursor| panel_node.contains_point(*panel_transform, cursor))
+        .unwrap_or(false);
+
     if hovered {
         if let Some(cursor) = cursor_physical {
             let mut blocked = false;
@@ -1249,7 +1250,7 @@ pub(crate) fn gen3d_preview_orbit_controls(
     if mouse_buttons.just_pressed(MouseButton::Left) {
         drag_state.lmb_started_on_ffd_handle = false;
 
-        if hovered && tweak.enabled && tweak.deform_mode {
+        if hovered && !tweak.color_picker_open && tweak.enabled && tweak.deform_mode {
             let picked_handle = cursor_physical.and_then(|cursor_physical| {
                 let Some(part_id) = tweak.selected_part_id else {
                     return None;
@@ -1328,7 +1329,10 @@ pub(crate) fn gen3d_preview_orbit_controls(
     }
 
     let orbit_blocked = tweak.enabled && tweak.deform_mode && drag_state.lmb_started_on_ffd_handle;
-    let dragging = hovered && mouse_buttons.pressed(MouseButton::Left) && !orbit_blocked;
+    let dragging = hovered
+        && mouse_buttons.pressed(MouseButton::Left)
+        && !orbit_blocked
+        && !tweak.color_picker_open;
     if dragging {
         if let (Some(prev), Some(cur)) = (preview.last_cursor, cursor) {
             let delta = cur - prev;
@@ -1338,7 +1342,7 @@ pub(crate) fn gen3d_preview_orbit_controls(
         }
     }
 
-    if hovered && !workshop.prompt_focused {
+    if hovered && !workshop.prompt_focused && !tweak.color_picker_rgb_focused {
         let allow_arrow_pan = !tweak.enabled;
         let x = (keys.pressed(KeyCode::KeyD)
             || (allow_arrow_pan && keys.pressed(KeyCode::ArrowRight))) as i8
