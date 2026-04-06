@@ -546,6 +546,7 @@ where
                                                 justify_content: JustifyContent::FlexStart,
                                                 align_items: AlignItems::Center,
                                                 border: UiRect::all(Val::Px(1.0)),
+                                                overflow: Overflow::clip_x(),
                                                 ..default()
                                             },
                                             BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.80)),
@@ -555,12 +556,33 @@ where
                                         .with_children(|field| {
                                             field.spawn((
                                                 Text::new(""),
+                                                TextLayout::new_with_no_wrap(),
                                                 TextFont {
                                                     font_size: 14.0,
                                                     ..default()
                                                 },
                                                 TextColor(Color::srgb(0.92, 0.92, 0.96)),
                                                 Gen3dManualTweakColorPickerRgbFieldText,
+                                            ));
+                                            field.spawn((
+                                                Text::new("|"),
+                                                TextLayout::new_with_no_wrap(),
+                                                TextFont {
+                                                    font_size: 14.0,
+                                                    ..default()
+                                                },
+                                                TextColor(Color::srgba(0.92, 0.92, 0.96, 0.0)),
+                                                Gen3dManualTweakColorPickerRgbFieldCaret,
+                                            ));
+                                            field.spawn((
+                                                Text::new(""),
+                                                TextLayout::new_with_no_wrap(),
+                                                TextFont {
+                                                    font_size: 14.0,
+                                                    ..default()
+                                                },
+                                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                                Gen3dManualTweakColorPickerRgbFieldTextRight,
                                             ));
                                         });
 

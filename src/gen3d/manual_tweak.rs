@@ -15,7 +15,8 @@ use super::state::{
     Gen3dManualTweakColorPickerPalette,
     Gen3dManualTweakColorPickerPaletteSelector, Gen3dManualTweakColorPickerPreviewSwatch,
     Gen3dManualTweakColorPickerRecentSwatch, Gen3dManualTweakColorPickerRgbField,
-    Gen3dManualTweakColorPickerRgbFieldText, Gen3dManualTweakColorPickerRoot,
+    Gen3dManualTweakColorPickerRgbFieldCaret, Gen3dManualTweakColorPickerRgbFieldText,
+    Gen3dManualTweakColorPickerRgbFieldTextRight, Gen3dManualTweakColorPickerRoot,
     Gen3dManualTweakColorPickerValue, Gen3dManualTweakColorPickerValueSelector,
     Gen3dPreviewAnimationDropdownButton, Gen3dPreviewAnimationDropdownList, Gen3dPreviewCamera,
     Gen3dPreviewExplodeToggleButton, Gen3dPreviewExportButton, Gen3dPreviewPanel,
@@ -738,6 +739,7 @@ fn color_picker_set_from_color(tweak: &mut Gen3dManualTweakState, color: Color) 
     tweak.color_picker_s = s;
     tweak.color_picker_v = v;
     tweak.color_picker_rgb_text = format_rgb_text(color);
+    tweak.color_picker_rgb_cursor = tweak.color_picker_rgb_text.len();
 }
 
 fn build_set_transform_json(transform: Transform) -> serde_json::Value {
@@ -2125,6 +2127,8 @@ pub(crate) fn gen3d_manual_tweak_color_picker_rgb_field_focus(
     for interaction in &mut fields {
         if *interaction == Interaction::Pressed {
             tweak.color_picker_rgb_focused = true;
+            tweak.color_picker_rgb_cursor = tweak.color_picker_rgb_text.len();
+            break;
         }
     }
 }
@@ -2171,6 +2175,10 @@ pub(crate) fn gen3d_manual_tweak_color_picker_rgb_text_input(
     let accept_input =
         matches!(build_scene.get(), BuildScene::Preview) && tweak.color_picker_rgb_focused;
     let accept_char = |ch: char| ch == '#' || ch == 'x' || ch == 'X' || ch.is_ascii_hexdigit();
+    let mut cursor = tweak
+        .color_picker_rgb_cursor
+        .min(tweak.color_picker_rgb_text.len());
+    let mut changed = false;
 
     for event in ime_events.read() {
         let Ime::Commit { value, .. } = event else {
@@ -2179,19 +2187,30 @@ pub(crate) fn gen3d_manual_tweak_color_picker_rgb_text_input(
         if !accept_input || value.is_empty() {
             continue;
         }
+        let remaining = 32usize.saturating_sub(tweak.color_picker_rgb_text.len());
+        if remaining == 0 {
+            continue;
+        }
+
+        let mut insert = String::new();
         for ch in value.chars() {
+            if insert.len() >= remaining {
+                break;
+            }
             if ch.is_control() || ch == '\n' {
                 continue;
             }
             if accept_char(ch) {
-                if tweak.color_picker_rgb_text.len() < 32 {
-                    tweak.color_picker_rgb_text.push(ch);
-                }
+                insert.push(ch);
             }
+        }
+        if !insert.is_empty() {
+            tweak.color_picker_rgb_text.insert_str(cursor, &insert);
+            cursor += insert.len();
+            changed = true;
         }
     }
 
-    let mut changed = false;
     for event in keyboard.read() {
         if event.state != bevy::input::ButtonState::Pressed {
             continue;
@@ -2202,7 +2221,29 @@ pub(crate) fn gen3d_manual_tweak_color_picker_rgb_text_input(
 
         match event.key_code {
             KeyCode::Backspace => {
-                changed |= tweak.color_picker_rgb_text.pop().is_some();
+                if cursor > 0 && cursor <= tweak.color_picker_rgb_text.len() {
+                    tweak.color_picker_rgb_text.remove(cursor - 1);
+                    cursor -= 1;
+                    changed = true;
+                }
+            }
+            KeyCode::Delete => {
+                if cursor < tweak.color_picker_rgb_text.len() {
+                    tweak.color_picker_rgb_text.remove(cursor);
+                    changed = true;
+                }
+            }
+            KeyCode::ArrowLeft => {
+                cursor = cursor.saturating_sub(1);
+            }
+            KeyCode::ArrowRight => {
+                cursor = (cursor + 1).min(tweak.color_picker_rgb_text.len());
+            }
+            KeyCode::Home => {
+                cursor = 0;
+            }
+            KeyCode::End => {
+                cursor = tweak.color_picker_rgb_text.len();
             }
             KeyCode::Enter | KeyCode::NumpadEnter => {
                 tweak.color_picker_rgb_focused = false;
@@ -2217,15 +2258,23 @@ pub(crate) fn gen3d_manual_tweak_color_picker_rgb_text_input(
                     || keys.pressed(KeyCode::SuperRight);
                 if modifier {
                     if let Some(text) = crate::clipboard::read_text() {
-                        for ch in text.chars() {
-                            if ch.is_control() || ch == '\n' {
-                                continue;
-                            }
-                            if accept_char(ch) {
-                                if tweak.color_picker_rgb_text.len() >= 32 {
+                        let remaining = 32usize.saturating_sub(tweak.color_picker_rgb_text.len());
+                        if remaining > 0 {
+                            let mut insert = String::new();
+                            for ch in text.chars() {
+                                if insert.len() >= remaining {
                                     break;
                                 }
-                                tweak.color_picker_rgb_text.push(ch);
+                                if ch.is_control() || ch == '\n' {
+                                    continue;
+                                }
+                                if accept_char(ch) {
+                                    insert.push(ch);
+                                }
+                            }
+                            if !insert.is_empty() {
+                                tweak.color_picker_rgb_text.insert_str(cursor, &insert);
+                                cursor += insert.len();
                                 changed = true;
                             }
                         }
@@ -2234,15 +2283,24 @@ pub(crate) fn gen3d_manual_tweak_color_picker_rgb_text_input(
                 }
 
                 if let Some(text) = &event.text {
-                    for ch in text.chars() {
-                        if ch.is_control() || ch == '\n' {
-                            continue;
-                        }
-                        if accept_char(ch) {
-                            if tweak.color_picker_rgb_text.len() < 32 {
-                                tweak.color_picker_rgb_text.push(ch);
-                                changed = true;
+                    let remaining = 32usize.saturating_sub(tweak.color_picker_rgb_text.len());
+                    if remaining > 0 {
+                        let mut insert = String::new();
+                        for ch in text.chars() {
+                            if insert.len() >= remaining {
+                                break;
                             }
+                            if ch.is_control() || ch == '\n' {
+                                continue;
+                            }
+                            if accept_char(ch) {
+                                insert.push(ch);
+                            }
+                        }
+                        if !insert.is_empty() {
+                            tweak.color_picker_rgb_text.insert_str(cursor, &insert);
+                            cursor += insert.len();
+                            changed = true;
                         }
                     }
                 }
@@ -2251,20 +2309,32 @@ pub(crate) fn gen3d_manual_tweak_color_picker_rgb_text_input(
                 let Some(text) = &event.text else {
                     continue;
                 };
-                for ch in text.chars() {
-                    if ch.is_control() || ch == '\n' {
-                        continue;
-                    }
-                    if accept_char(ch) {
-                        if tweak.color_picker_rgb_text.len() < 32 {
-                            tweak.color_picker_rgb_text.push(ch);
-                            changed = true;
+                let remaining = 32usize.saturating_sub(tweak.color_picker_rgb_text.len());
+                if remaining > 0 {
+                    let mut insert = String::new();
+                    for ch in text.chars() {
+                        if insert.len() >= remaining {
+                            break;
                         }
+                        if ch.is_control() || ch == '\n' {
+                            continue;
+                        }
+                        if accept_char(ch) {
+                            insert.push(ch);
+                        }
+                    }
+                    if !insert.is_empty() {
+                        tweak.color_picker_rgb_text.insert_str(cursor, &insert);
+                        cursor += insert.len();
+                        changed = true;
                     }
                 }
             }
         }
     }
+
+    cursor = cursor.min(tweak.color_picker_rgb_text.len());
+    tweak.color_picker_rgb_cursor = cursor;
 
     if changed {
         if let Some((r, g, b)) = parse_rgb_text(&tweak.color_picker_rgb_text) {
@@ -2612,7 +2682,21 @@ pub(crate) fn gen3d_manual_tweak_color_picker_update_ui(
             Without<Gen3dManualTweakColorPickerPreviewSwatch>,
         ),
     >,
-    mut rgb_texts: Query<&mut Text, With<Gen3dManualTweakColorPickerRgbFieldText>>,
+    mut rgb_left_texts: Query<
+        &mut Text,
+        (
+            With<Gen3dManualTweakColorPickerRgbFieldText>,
+            Without<Gen3dManualTweakColorPickerRgbFieldTextRight>,
+        ),
+    >,
+    mut rgb_right_texts: Query<
+        &mut Text,
+        (
+            With<Gen3dManualTweakColorPickerRgbFieldTextRight>,
+            Without<Gen3dManualTweakColorPickerRgbFieldText>,
+        ),
+    >,
+    mut rgb_carets: Query<&mut TextColor, With<Gen3dManualTweakColorPickerRgbFieldCaret>>,
     mut preview_swatches: Query<
         &mut BackgroundColor,
         (
@@ -2650,16 +2734,33 @@ pub(crate) fn gen3d_manual_tweak_color_picker_update_ui(
 
     if !tweak.color_picker_rgb_focused {
         tweak.color_picker_rgb_text = format_rgb_text(color);
+        tweak.color_picker_rgb_cursor = tweak.color_picker_rgb_text.len();
     }
-    let mut rgb_display = tweak.color_picker_rgb_text.clone();
-    if tweak.color_picker_rgb_focused {
-        let blink_on = ((time.elapsed_secs() * 2.0).floor() as i32) & 1 == 0;
-        if blink_on {
-            rgb_display.push('▏');
+    let cursor = tweak
+        .color_picker_rgb_cursor
+        .min(tweak.color_picker_rgb_text.len());
+    tweak.color_picker_rgb_cursor = cursor;
+    let (left, right) = tweak.color_picker_rgb_text.split_at(cursor);
+
+    for mut text in &mut rgb_left_texts {
+        if text.as_str() != left {
+            **text = left.to_string();
         }
     }
-    for mut text in &mut rgb_texts {
-        **text = rgb_display.clone().into();
+    for mut text in &mut rgb_right_texts {
+        if text.as_str() != right {
+            **text = right.to_string();
+        }
+    }
+
+    let caret_alpha = if tweak.color_picker_rgb_focused {
+        let blink_on = ((time.elapsed_secs() * 2.0).floor() as i32) & 1 == 0;
+        if blink_on { 1.0 } else { 0.0 }
+    } else {
+        0.0
+    };
+    for mut caret in &mut rgb_carets {
+        caret.0 = Color::srgba(0.92, 0.92, 0.96, caret_alpha);
     }
     for (mut bg, mut border) in &mut rgb_fields {
         let focused = tweak.color_picker_rgb_focused;

@@ -129,6 +129,7 @@ pub(crate) struct Gen3dManualTweakState {
     pub(crate) color_picker_s: f32,
     pub(crate) color_picker_v: f32,
     pub(crate) color_picker_rgb_text: String,
+    pub(crate) color_picker_rgb_cursor: usize,
     pub(crate) color_picker_rgb_focused: bool,
     pub(crate) color_picker_palette_image: Handle<Image>,
     pub(crate) color_picker_value_image: Handle<Image>,
@@ -390,6 +391,12 @@ pub(crate) struct Gen3dManualTweakColorPickerRgbField;
 
 #[derive(Component)]
 pub(crate) struct Gen3dManualTweakColorPickerRgbFieldText;
+
+#[derive(Component)]
+pub(crate) struct Gen3dManualTweakColorPickerRgbFieldCaret;
+
+#[derive(Component)]
+pub(crate) struct Gen3dManualTweakColorPickerRgbFieldTextRight;
 
 #[derive(Component)]
 pub(crate) struct Gen3dManualTweakColorPickerPreviewSwatch;
