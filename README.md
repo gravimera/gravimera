@@ -46,19 +46,8 @@ cargo run --release # or without --release if you are debuging
 
 ## Example Videos
 
-### Gen3D Demo
-<video src="screenshots/demo-gen3d.mp4" controls width="640">
-  <a href="screenshots/demo-gen3d.mp4">Download the Gen3D demo video</a>
-</video>
-
-YouTube mirror: https://youtu.be/uU80d-P8o0o
-
-### Small Town Demo
-<video src="screenshots/demo-small-town.mp4" controls width="640">
-  <a href="screenshots/demo-small-town.mp4">Download the small town demo video</a>
-</video>
-
-YouTube mirror: https://youtu.be/k96TUdKqpR8
+- [Gen3D demo](https://youtu.be/uU80d-P8o0o)
+- [Small town demo](https://youtu.be/k96TUdKqpR8)
 
 ## Docs
 
