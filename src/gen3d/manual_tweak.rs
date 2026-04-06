@@ -2,7 +2,7 @@ use bevy::asset::AssetId;
 use bevy::camera::primitives::MeshAabb;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
+use bevy::window::{Ime, PrimaryWindow};
 
 use crate::object::visuals::VisualPartId;
 use crate::types::BuildScene;
@@ -11,6 +11,11 @@ use super::ai::Gen3dAiJob;
 use super::preview;
 use super::state::{
     Gen3dDraft, Gen3dManualTweakButton, Gen3dManualTweakButtonText, Gen3dManualTweakState,
+    Gen3dManualTweakColorPickerApplyButton, Gen3dManualTweakColorPickerPalette,
+    Gen3dManualTweakColorPickerPaletteSelector, Gen3dManualTweakColorPickerPreviewSwatch,
+    Gen3dManualTweakColorPickerRecentSwatch, Gen3dManualTweakColorPickerRgbField,
+    Gen3dManualTweakColorPickerRgbFieldText, Gen3dManualTweakColorPickerRoot,
+    Gen3dManualTweakColorPickerValue, Gen3dManualTweakColorPickerValueSelector,
     Gen3dPreviewAnimationDropdownButton, Gen3dPreviewAnimationDropdownList, Gen3dPreviewCamera,
     Gen3dPreviewExplodeToggleButton, Gen3dPreviewExportButton, Gen3dPreviewPanel,
     Gen3dSidePanelRoot, Gen3dSidePanelToggleButton, Gen3dTweakSelectedFrame,
@@ -31,20 +36,12 @@ const MANUAL_TWEAK_SCALE_STEP_PRECISE: f32 = 1.01;
 const MANUAL_TWEAK_SCALE_MIN: f32 = 0.01;
 const MANUAL_TWEAK_SCALE_MAX: f32 = 50.0;
 
-const MANUAL_TWEAK_COLOR_PALETTE_RGBA: &[[f32; 4]] = &[
-    [0.92, 0.18, 0.22, 1.0], // red
-    [0.95, 0.55, 0.18, 1.0], // orange
-    [0.95, 0.82, 0.24, 1.0], // yellow
-    [0.20, 0.76, 0.35, 1.0], // green
-    [0.08, 0.62, 0.85, 1.0], // cyan
-    [0.18, 0.42, 0.92, 1.0], // blue
-    [0.62, 0.28, 0.88, 1.0], // purple
-    [0.94, 0.40, 0.68, 1.0], // pink
-    [0.85, 0.87, 0.90, 1.0], // light gray
-    [0.35, 0.38, 0.42, 1.0], // dark gray
-    [0.30, 0.20, 0.12, 1.0], // brown
-    [0.75, 0.75, 0.75, 1.0], // neutral
-];
+const MANUAL_TWEAK_COLOR_PICKER_RECENT_LIMIT: usize = 12;
+const MANUAL_TWEAK_COLOR_PICKER_PALETTE_TEX_SIZE_PX: u32 = 256;
+const MANUAL_TWEAK_COLOR_PICKER_VALUE_TEX_WIDTH_PX: u32 = 16;
+const MANUAL_TWEAK_COLOR_PICKER_VALUE_TEX_HEIGHT_PX: u32 = 256;
+const MANUAL_TWEAK_COLOR_PICKER_UI_PALETTE_SIZE_PX: f32 = 180.0;
+const MANUAL_TWEAK_COLOR_PICKER_UI_VALUE_HEIGHT_PX: f32 = 180.0;
 
 fn active_session_is_queued(task_queue: &Gen3dTaskQueue) -> bool {
     task_queue
@@ -86,6 +83,8 @@ pub(crate) fn gen3d_manual_tweak_button(
         tweak.selected_part_id = None;
         tweak.deform_mode = false;
         tweak.deform_selected_index = None;
+        tweak.color_picker_open = false;
+        tweak.color_picker_rgb_focused = false;
     }
 
     let label = if tweak.enabled {
@@ -128,6 +127,8 @@ pub(crate) fn gen3d_manual_tweak_button(
                     tweak.selected_part_id = None;
                     tweak.deform_mode = false;
                     tweak.deform_selected_index = None;
+                    tweak.color_picker_open = false;
+                    tweak.color_picker_rgb_focused = false;
                     workshop.error = None;
                     workshop.status = if tweak.enabled {
                         "Manual tweak enabled. Click a part in the preview to select it.".into()
@@ -399,6 +400,7 @@ pub(crate) fn gen3d_manual_tweak_pick_part(
     build_scene: Res<State<BuildScene>>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     ui: ManualTweakPickUi,
+    color_picker_root: Query<(&ComputedNode, &UiGlobalTransform, &Visibility), With<Gen3dManualTweakColorPickerRoot>>,
     parts: Query<(&GlobalTransform, &VisualPartId, &Mesh3d)>,
     meshes: Res<Assets<Mesh>>,
     mut tweak: ResMut<Gen3dManualTweakState>,
@@ -432,8 +434,20 @@ pub(crate) fn gen3d_manual_tweak_pick_part(
     );
 
     if mouse_buttons.just_pressed(MouseButton::Left) {
+        let mut in_color_picker = false;
+        if tweak.color_picker_open {
+            if let Ok((node, transform, vis)) = color_picker_root.single() {
+                if let Some(cursor) = window.physical_cursor_position() {
+                    if !matches!(*vis, Visibility::Hidden)
+                        && node.contains_point(*transform, cursor)
+                    {
+                        in_color_picker = true;
+                    }
+                }
+            }
+        }
         click_state.pressed_cursor_physical = window.physical_cursor_position();
-        click_state.pressed_in_preview = hovered;
+        click_state.pressed_in_preview = hovered && !in_color_picker;
     }
 
     if !mouse_buttons.just_released(MouseButton::Left) {
@@ -613,6 +627,131 @@ fn primitive_deform_to_draft_ops_json(
 fn color_to_rgba(color: Color) -> [f32; 4] {
     let c = color.to_srgba();
     [c.red, c.green, c.blue, c.alpha]
+}
+
+fn rgb_u8_to_color(r: u8, g: u8, b: u8) -> Color {
+    Color::srgb(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0)
+}
+
+fn format_rgb_text(color: Color) -> String {
+    let c = color.to_srgba();
+    let r = (c.red.clamp(0.0, 1.0) * 255.0).round() as u32;
+    let g = (c.green.clamp(0.0, 1.0) * 255.0).round() as u32;
+    let b = (c.blue.clamp(0.0, 1.0) * 255.0).round() as u32;
+    format!("{r},{g},{b}")
+}
+
+fn srgb_to_hsv(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    let r = r.clamp(0.0, 1.0);
+    let g = g.clamp(0.0, 1.0);
+    let b = b.clamp(0.0, 1.0);
+
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let delta = max - min;
+
+    let v = max;
+    if delta <= 1e-6 || max <= 1e-6 {
+        return (0.0, 0.0, v);
+    }
+
+    let s = if max <= 1e-6 { 0.0 } else { delta / max };
+
+    let mut h = if (max - r).abs() <= 1e-6 {
+        (g - b) / delta
+    } else if (max - g).abs() <= 1e-6 {
+        2.0 + (b - r) / delta
+    } else {
+        4.0 + (r - g) / delta
+    };
+    h /= 6.0;
+    if h < 0.0 {
+        h += 1.0;
+    }
+    (h.clamp(0.0, 1.0), s.clamp(0.0, 1.0), v.clamp(0.0, 1.0))
+}
+
+fn hsv_to_srgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
+    let h = h.rem_euclid(1.0);
+    let s = s.clamp(0.0, 1.0);
+    let v = v.clamp(0.0, 1.0);
+
+    if s <= 1e-6 {
+        return (v, v, v);
+    }
+
+    let hf = h * 6.0;
+    let i = hf.floor() as i32;
+    let f = hf - i as f32;
+    let p = v * (1.0 - s);
+    let q = v * (1.0 - s * f);
+    let t = v * (1.0 - s * (1.0 - f));
+
+    match i.rem_euclid(6) {
+        0 => (v, t, p),
+        1 => (q, v, p),
+        2 => (p, v, t),
+        3 => (p, q, v),
+        4 => (t, p, v),
+        _ => (v, p, q),
+    }
+}
+
+fn parse_rgb_text(text: &str) -> Option<(u8, u8, u8)> {
+    let raw = text.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    let hex = raw.strip_prefix('#').unwrap_or(raw).trim();
+    if hex.len() == 6 && hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+        let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+        let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+        return Some((r, g, b));
+    }
+
+    let parts: Vec<&str> = raw
+        .split(|ch: char| ch == ',' || ch == ' ' || ch == '\t' || ch == ';' || ch == '/')
+        .filter(|v| !v.trim().is_empty())
+        .collect();
+    if parts.len() != 3 {
+        return None;
+    }
+
+    let mut values = [0u8; 3];
+    for (idx, part) in parts.iter().enumerate() {
+        let part = part.trim();
+        if part.is_empty() {
+            return None;
+        }
+        if let Ok(int_val) = part.parse::<i32>() {
+            values[idx] = int_val.clamp(0, 255) as u8;
+            continue;
+        }
+        let float_val = part.parse::<f32>().ok()?;
+        if !float_val.is_finite() {
+            return None;
+        }
+        let scaled = (float_val.clamp(0.0, 1.0) * 255.0).round() as i32;
+        values[idx] = scaled.clamp(0, 255) as u8;
+    }
+
+    Some((values[0], values[1], values[2]))
+}
+
+fn color_picker_current_color(tweak: &Gen3dManualTweakState) -> Color {
+    let (r, g, b) = hsv_to_srgb(tweak.color_picker_h, tweak.color_picker_s, tweak.color_picker_v);
+    Color::srgb(r, g, b)
+}
+
+fn color_picker_set_from_color(tweak: &mut Gen3dManualTweakState, color: Color) {
+    let rgba = color_to_rgba(color);
+    let (h, s, v) = srgb_to_hsv(rgba[0], rgba[1], rgba[2]);
+    tweak.color_picker_h = h;
+    tweak.color_picker_s = s;
+    tweak.color_picker_v = v;
+    tweak.color_picker_rgb_text = format_rgb_text(color);
 }
 
 fn build_set_transform_json(transform: Transform) -> serde_json::Value {
@@ -860,6 +999,10 @@ pub(crate) fn gen3d_manual_tweak_hotkeys(
 
     }
 
+    if tweak.color_picker_open {
+        return;
+    }
+
     if keys.just_pressed(KeyCode::KeyV) {
         tweak.deform_mode = !tweak.deform_mode;
         tweak.deform_selected_index = None;
@@ -873,11 +1016,37 @@ pub(crate) fn gen3d_manual_tweak_hotkeys(
         return;
     }
 
+    if keys.just_pressed(KeyCode::KeyC) {
+        let color = if let Some(recent) = tweak.color_picker_recent_rgba.first().copied() {
+            Color::srgba(recent[0], recent[1], recent[2], recent[3])
+        } else if let Some(part_id) = tweak.selected_part_id {
+            find_selected_primitive_part(&draft, part_id)
+                .map(|(_component, _before, primitive)| match &primitive {
+                    crate::object::registry::PrimitiveVisualDef::Primitive { color, .. } => *color,
+                    _ => Color::srgb(0.85, 0.87, 0.90),
+                })
+                .unwrap_or(Color::srgb(1.0, 1.0, 1.0))
+        } else {
+            Color::srgb(1.0, 1.0, 1.0)
+        };
+
+        color_picker_set_from_color(&mut tweak, color);
+        tweak.color_picker_rgb_focused = false;
+        tweak.color_picker_open = true;
+        workshop.error = None;
+        workshop.status = if tweak.selected_part_id.is_some() {
+            "Color picker opened.".into()
+        } else {
+            "Color picker opened. Select a part to apply.".into()
+        };
+        return;
+    }
+
     let Some(part_id) = tweak.selected_part_id else {
         return;
     };
 
-    let Some((component, before_transform, primitive)) =
+    let Some((component, before_transform, _primitive)) =
         find_selected_primitive_part(&draft, part_id)
     else {
         tweak.selected_part_id = None;
@@ -928,8 +1097,6 @@ pub(crate) fn gen3d_manual_tweak_hotkeys(
         requested_scale *= scale_step;
     }
 
-    let recolor_requested = keys.just_pressed(KeyCode::KeyC);
-
     if !requested_move.is_finite() || !requested_rot_deg.is_finite() || !requested_scale.is_finite()
     {
         return;
@@ -968,29 +1135,7 @@ pub(crate) fn gen3d_manual_tweak_hotkeys(
         }
     }
 
-    let mut set_primitive = None;
-    if recolor_requested {
-        if MANUAL_TWEAK_COLOR_PALETTE_RGBA.is_empty() {
-            return;
-        }
-        let len = MANUAL_TWEAK_COLOR_PALETTE_RGBA.len();
-        if modifier_shift {
-            tweak.color_palette_index = tweak.color_palette_index.wrapping_add(len - 1) % len;
-        } else {
-            tweak.color_palette_index = tweak.color_palette_index.wrapping_add(1) % len;
-        }
-        let rgba = MANUAL_TWEAK_COLOR_PALETTE_RGBA[tweak.color_palette_index];
-        let color = Color::srgba(rgba[0], rgba[1], rgba[2], rgba[3]);
-        match build_set_primitive_json(&primitive, color) {
-            Ok(value) => set_primitive = Some(value),
-            Err(err) => {
-                workshop.error = Some(err);
-                return;
-            }
-        }
-    }
-
-    if set_transform.is_none() && set_primitive.is_none() {
+    if set_transform.is_none() {
         return;
     }
 
@@ -998,15 +1143,7 @@ pub(crate) fn gen3d_manual_tweak_hotkeys(
         component.as_str(),
         part_id,
         set_transform.map(|_| before_transform),
-        if set_primitive.is_some() {
-            let before_color = match &primitive {
-                crate::object::registry::PrimitiveVisualDef::Primitive { color, .. } => *color,
-                _ => Color::srgb(0.85, 0.87, 0.90),
-            };
-            build_set_primitive_json(&primitive, before_color).ok()
-        } else {
-            None
-        },
+        None,
     );
 
     let after_transform = set_transform.unwrap_or(before_transform);
@@ -1014,14 +1151,10 @@ pub(crate) fn gen3d_manual_tweak_hotkeys(
         component.as_str(),
         part_id,
         Some(after_transform),
-        set_primitive.clone(),
+        None,
     );
 
-    let label = if recolor_requested && requested_move.length_squared() > 1e-6 {
-        "Transform + recolor".to_string()
-    } else if recolor_requested {
-        "Recolor".to_string()
-    } else if requested_rot_deg.abs() > 1e-6 {
+    let label = if requested_rot_deg.abs() > 1e-6 {
         "Rotate".to_string()
     } else if (requested_scale - 1.0).abs() > 1e-6 {
         "Scale".to_string()
@@ -1197,7 +1330,7 @@ pub(crate) fn gen3d_manual_tweak_update_selected_overlay(
         let display_component = component_label.as_deref().filter(|v| !v.trim().is_empty());
 
         let mut info_text = format!(
-            "Manual Tweak\nSelected: {}\nPart: {}\n\nMove: arrows | PgUp/PgDn (Shift=big, Ctrl=precision)\nRotate: ,/. (Shift=45°, Ctrl=precision)\nScale: -/= (Shift=big, Ctrl=precision)\nRecolor: C (Shift=prev)\nUndo/Redo: Ctrl/Cmd+Z/Y",
+            "Manual Tweak\nSelected: {}\nPart: {}\n\nMove: arrows | PgUp/PgDn (Shift=big, Ctrl=precision)\nRotate: ,/. (Shift=45°, Ctrl=precision)\nScale: -/= (Shift=big, Ctrl=precision)\nRecolor: C (open picker)\nUndo/Redo: Ctrl/Cmd+Z/Y",
             display_component.unwrap_or("unknown"),
             primitive_label.unwrap_or_else(|| "primitive".to_string()),
         );
@@ -1221,7 +1354,7 @@ pub(crate) fn gen3d_manual_tweak_update_selected_overlay(
         }
         info_text
     } else {
-        "Manual Tweak\nClick a part in the preview to select it.\n\nMove: arrows | PgUp/PgDn (Shift=big, Ctrl=precision)\nRotate: ,/. (Shift=45°, Ctrl=precision)\nScale: -/= (Shift=big, Ctrl=precision)\nRecolor: C (Shift=prev)\nUndo/Redo: Ctrl/Cmd+Z/Y\n\nEsc: exit tweak".to_string()
+        "Manual Tweak\nClick a part in the preview to select it.\n\nMove: arrows | PgUp/PgDn (Shift=big, Ctrl=precision)\nRotate: ,/. (Shift=45°, Ctrl=precision)\nScale: -/= (Shift=big, Ctrl=precision)\nRecolor: C (open picker)\nUndo/Redo: Ctrl/Cmd+Z/Y\n\nEsc: exit tweak".to_string()
     };
 
     for (frame_marker, card_marker, mut node, mut vis) in &mut overlay_nodes {
@@ -1532,6 +1665,10 @@ pub(crate) fn gen3d_manual_tweak_ffd_drag(
         return;
     }
     if !tweak.enabled || !tweak.deform_mode {
+        drag.reset();
+        return;
+    }
+    if tweak.color_picker_open {
         drag.reset();
         return;
     }
@@ -1961,5 +2098,640 @@ pub(crate) fn gen3d_manual_tweak_update_ffd_handles(
             ))
             .id();
         commands.entity(part_entity).add_child(entity);
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct ManualTweakColorPickerDragState {
+    palette: bool,
+    value: bool,
+}
+
+fn manual_tweak_push_recent_color(tweak: &mut Gen3dManualTweakState, color: Color) {
+    let rgba = color_to_rgba(color);
+    let same_rgb = |a: &[f32; 4], b: &[f32; 4]| {
+        (a[0] - b[0]).abs() <= 1.0 / 255.0
+            && (a[1] - b[1]).abs() <= 1.0 / 255.0
+            && (a[2] - b[2]).abs() <= 1.0 / 255.0
+            && (a[3] - b[3]).abs() <= 1.0 / 255.0
+    };
+
+    tweak.color_picker_recent_rgba.retain(|v| !same_rgb(v, &rgba));
+    tweak.color_picker_recent_rgba.insert(0, rgba);
+    if tweak.color_picker_recent_rgba.len() > MANUAL_TWEAK_COLOR_PICKER_RECENT_LIMIT {
+        tweak.color_picker_recent_rgba
+            .truncate(MANUAL_TWEAK_COLOR_PICKER_RECENT_LIMIT);
+    }
+}
+
+pub(crate) fn gen3d_manual_tweak_color_picker_rgb_field_focus(
+    build_scene: Res<State<BuildScene>>,
+    mut tweak: ResMut<Gen3dManualTweakState>,
+    mut fields: Query<&Interaction, (Changed<Interaction>, With<Gen3dManualTweakColorPickerRgbField>)>,
+) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        return;
+    }
+    if !tweak.enabled || !tweak.color_picker_open {
+        return;
+    }
+
+    for interaction in &mut fields {
+        if *interaction == Interaction::Pressed {
+            tweak.color_picker_rgb_focused = true;
+        }
+    }
+}
+
+pub(crate) fn gen3d_manual_tweak_color_picker_rgb_defocus_on_click_outside(
+    build_scene: Res<State<BuildScene>>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    mut tweak: ResMut<Gen3dManualTweakState>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    fields: Query<(&ComputedNode, &UiGlobalTransform), With<Gen3dManualTweakColorPickerRgbField>>,
+) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        return;
+    }
+    if !tweak.color_picker_open || !tweak.color_picker_rgb_focused {
+        return;
+    }
+    if !mouse_buttons.just_pressed(MouseButton::Left) {
+        return;
+    }
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let Some(cursor) = window.physical_cursor_position() else {
+        return;
+    };
+    let Ok((node, transform)) = fields.single() else {
+        return;
+    };
+    if node.contains_point(*transform, cursor) {
+        return;
+    }
+
+    tweak.color_picker_rgb_focused = false;
+}
+
+pub(crate) fn gen3d_manual_tweak_color_picker_rgb_text_input(
+    build_scene: Res<State<BuildScene>>,
+    mut tweak: ResMut<Gen3dManualTweakState>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut keyboard: bevy::ecs::message::MessageReader<bevy::input::keyboard::KeyboardInput>,
+    mut ime_events: bevy::ecs::message::MessageReader<Ime>,
+) {
+    let accept_input =
+        matches!(build_scene.get(), BuildScene::Preview) && tweak.color_picker_rgb_focused;
+
+    for event in ime_events.read() {
+        let Ime::Commit { value, .. } = event else {
+            continue;
+        };
+        if !accept_input || value.is_empty() {
+            continue;
+        }
+        for ch in value.chars() {
+            if ch.is_control() || ch == '\n' {
+                continue;
+            }
+            if ch.is_ascii_digit() || ch == '#' || ch == ',' || ch == ' ' || ch == '\t' {
+                if tweak.color_picker_rgb_text.len() < 32 {
+                    tweak.color_picker_rgb_text.push(ch);
+                }
+            }
+        }
+    }
+
+    let mut changed = false;
+    for event in keyboard.read() {
+        if event.state != bevy::input::ButtonState::Pressed {
+            continue;
+        }
+        if !accept_input {
+            continue;
+        }
+
+        match event.key_code {
+            KeyCode::Backspace => {
+                changed |= tweak.color_picker_rgb_text.pop().is_some();
+            }
+            KeyCode::Enter | KeyCode::NumpadEnter => {
+                tweak.color_picker_rgb_focused = false;
+            }
+            KeyCode::Escape => {
+                tweak.color_picker_rgb_focused = false;
+            }
+            KeyCode::KeyV => {
+                let modifier = keys.pressed(KeyCode::ControlLeft)
+                    || keys.pressed(KeyCode::ControlRight)
+                    || keys.pressed(KeyCode::SuperLeft)
+                    || keys.pressed(KeyCode::SuperRight);
+                if modifier {
+                    if let Some(text) = crate::clipboard::read_text() {
+                        for ch in text.chars() {
+                            if ch.is_control() || ch == '\n' {
+                                continue;
+                            }
+                            if ch.is_ascii_digit()
+                                || ch == '#'
+                                || ch == ','
+                                || ch == ' '
+                                || ch == '\t'
+                            {
+                                if tweak.color_picker_rgb_text.len() >= 32 {
+                                    break;
+                                }
+                                tweak.color_picker_rgb_text.push(ch);
+                                changed = true;
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                if let Some(text) = &event.text {
+                    for ch in text.chars() {
+                        if ch.is_control() || ch == '\n' {
+                            continue;
+                        }
+                        if ch.is_ascii_digit() || ch == '#' || ch == ',' || ch == ' ' || ch == '\t'
+                        {
+                            if tweak.color_picker_rgb_text.len() < 32 {
+                                tweak.color_picker_rgb_text.push(ch);
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {
+                let Some(text) = &event.text else {
+                    continue;
+                };
+                for ch in text.chars() {
+                    if ch.is_control() || ch == '\n' {
+                        continue;
+                    }
+                    if ch.is_ascii_digit() || ch == '#' || ch == ',' || ch == ' ' || ch == '\t' {
+                        if tweak.color_picker_rgb_text.len() < 32 {
+                            tweak.color_picker_rgb_text.push(ch);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if changed {
+        if let Some((r, g, b)) = parse_rgb_text(&tweak.color_picker_rgb_text) {
+            let color = rgb_u8_to_color(r, g, b);
+            let rgba = color_to_rgba(color);
+            let (h, s, v) = srgb_to_hsv(rgba[0], rgba[1], rgba[2]);
+            tweak.color_picker_h = h;
+            tweak.color_picker_s = s;
+            tweak.color_picker_v = v;
+        }
+    }
+}
+
+pub(crate) fn gen3d_manual_tweak_color_picker_drag(
+    build_scene: Res<State<BuildScene>>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut tweak: ResMut<Gen3dManualTweakState>,
+    palettes: Query<(&ComputedNode, &UiGlobalTransform), With<Gen3dManualTweakColorPickerPalette>>,
+    values: Query<(&ComputedNode, &UiGlobalTransform), With<Gen3dManualTweakColorPickerValue>>,
+    mut drag: Local<ManualTweakColorPickerDragState>,
+) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        drag.palette = false;
+        drag.value = false;
+        return;
+    }
+    if !tweak.enabled || !tweak.color_picker_open {
+        drag.palette = false;
+        drag.value = false;
+        return;
+    }
+
+    if !mouse_buttons.pressed(MouseButton::Left) {
+        drag.palette = false;
+        drag.value = false;
+        return;
+    }
+
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let Some(cursor) = window.physical_cursor_position() else {
+        return;
+    };
+
+    let mouse_just_pressed = mouse_buttons.just_pressed(MouseButton::Left);
+    if mouse_just_pressed {
+        drag.palette = false;
+        drag.value = false;
+
+        if let Ok((node, transform)) = palettes.single() {
+            if node.contains_point(*transform, cursor) {
+                drag.palette = true;
+            }
+        }
+        if !drag.palette {
+            if let Ok((node, transform)) = values.single() {
+                if node.contains_point(*transform, cursor) {
+                    drag.value = true;
+                }
+            }
+        }
+    }
+
+    if drag.palette {
+        let Ok((node, transform)) = palettes.single() else {
+            return;
+        };
+        let Some(local) = transform
+            .try_inverse()
+            .map(|t| t.transform_point2(cursor))
+        else {
+            return;
+        };
+        let scale = node.inverse_scale_factor();
+        let w = node.size.x.max(1.0) * scale;
+        let h = node.size.y.max(1.0) * scale;
+        let x = (local.x + node.size.x * 0.5) * scale;
+        let y = (local.y + node.size.y * 0.5) * scale;
+        let u = (x / w).clamp(0.0, 1.0);
+        let v = (y / h).clamp(0.0, 1.0);
+        tweak.color_picker_h = u;
+        tweak.color_picker_s = (1.0 - v).clamp(0.0, 1.0);
+    } else if drag.value {
+        let Ok((node, transform)) = values.single() else {
+            return;
+        };
+        let Some(local) = transform
+            .try_inverse()
+            .map(|t| t.transform_point2(cursor))
+        else {
+            return;
+        };
+        let scale = node.inverse_scale_factor();
+        let h = node.size.y.max(1.0) * scale;
+        let y = (local.y + node.size.y * 0.5) * scale;
+        let t = (y / h).clamp(0.0, 1.0);
+        tweak.color_picker_v = (1.0 - t).clamp(0.0, 1.0);
+    }
+}
+
+pub(crate) fn gen3d_manual_tweak_color_picker_recent_swatches(
+    build_scene: Res<State<BuildScene>>,
+    mut tweak: ResMut<Gen3dManualTweakState>,
+    mut buttons: Query<
+        (&Interaction, &Gen3dManualTweakColorPickerRecentSwatch),
+        (Changed<Interaction>, With<Button>),
+    >,
+) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        return;
+    }
+    if !tweak.enabled || !tweak.color_picker_open {
+        return;
+    }
+
+    for (interaction, swatch) in &mut buttons {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        let index = swatch.index();
+        let Some(rgba) = tweak.color_picker_recent_rgba.get(index).copied() else {
+            continue;
+        };
+        let color = Color::srgba(rgba[0], rgba[1], rgba[2], rgba[3]);
+        color_picker_set_from_color(&mut tweak, color);
+        tweak.color_picker_rgb_focused = false;
+    }
+}
+
+pub(crate) fn gen3d_manual_tweak_color_picker_apply_button(
+    build_scene: Res<State<BuildScene>>,
+    task_queue: Res<Gen3dTaskQueue>,
+    mut job: ResMut<Gen3dAiJob>,
+    mut draft: ResMut<Gen3dDraft>,
+    mut workshop: ResMut<Gen3dWorkshop>,
+    mut tweak: ResMut<Gen3dManualTweakState>,
+    mut last_interaction: Local<Option<Interaction>>,
+    mut buttons: Query<(&Interaction, &mut BackgroundColor, &mut BorderColor), With<Gen3dManualTweakColorPickerApplyButton>>,
+) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        *last_interaction = None;
+        return;
+    }
+    if !tweak.enabled || !tweak.color_picker_open {
+        *last_interaction = None;
+        return;
+    }
+    if job.is_running() || active_session_is_queued(&task_queue) {
+        *last_interaction = None;
+        return;
+    }
+
+    let Ok((interaction, mut bg, mut border)) = buttons.single_mut() else {
+        *last_interaction = None;
+        return;
+    };
+
+    let enabled = tweak.selected_part_id.is_some();
+    if !enabled {
+        *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.11, 0.55));
+        *border = BorderColor::all(Color::srgba(0.30, 0.30, 0.34, 0.70));
+        *last_interaction = Some(*interaction);
+        return;
+    }
+
+    match *interaction {
+        Interaction::None => {
+            *bg = BackgroundColor(Color::srgba(0.08, 0.14, 0.10, 0.85));
+            *border = BorderColor::all(Color::srgb(0.25, 0.80, 0.45));
+        }
+        Interaction::Hovered => {
+            *bg = BackgroundColor(Color::srgba(0.10, 0.18, 0.12, 0.92));
+            *border = BorderColor::all(Color::srgb(0.30, 0.90, 0.52));
+        }
+        Interaction::Pressed => {
+            *bg = BackgroundColor(Color::srgba(0.12, 0.22, 0.14, 0.96));
+            *border = BorderColor::all(Color::srgb(0.35, 1.00, 0.60));
+
+            let was_pressed = matches!(*last_interaction, Some(Interaction::Pressed));
+            if was_pressed {
+                return;
+            }
+
+            let Some(part_id) = tweak.selected_part_id else {
+                workshop.status = "Select a part before applying color.".into();
+                *last_interaction = Some(*interaction);
+                return;
+            };
+            let Some((component, _before_transform, primitive)) =
+                find_selected_primitive_part(&draft, part_id)
+            else {
+                tweak.selected_part_id = None;
+                workshop.error = Some("Selected part no longer exists in the draft.".into());
+                workshop.status = "Recolor failed.".into();
+                *last_interaction = Some(*interaction);
+                return;
+            };
+
+            let color = color_picker_current_color(&tweak);
+
+            let before_color = match &primitive {
+                crate::object::registry::PrimitiveVisualDef::Primitive { color, .. } => *color,
+                _ => Color::srgb(0.85, 0.87, 0.90),
+            };
+            let before_prim_json = match build_set_primitive_json(&primitive, before_color) {
+                Ok(value) => value,
+                Err(err) => {
+                    workshop.error = Some(err);
+                    workshop.status = "Recolor failed.".into();
+                    *last_interaction = Some(*interaction);
+                    return;
+                }
+            };
+            let after_prim_json = match build_set_primitive_json(&primitive, color) {
+                Ok(value) => value,
+                Err(err) => {
+                    workshop.error = Some(err);
+                    workshop.status = "Recolor failed.".into();
+                    *last_interaction = Some(*interaction);
+                    return;
+                }
+            };
+
+            let before_args = build_update_primitive_part_args(
+                component.as_str(),
+                part_id,
+                None,
+                Some(before_prim_json),
+            );
+            let after_args = build_update_primitive_part_args(
+                component.as_str(),
+                part_id,
+                None,
+                Some(after_prim_json),
+            );
+
+            let apply_args = patch_apply_draft_ops_args(after_args.clone(), job.assembly_rev());
+            match super::gen3d_apply_draft_ops_from_api(&mut job, &mut draft, apply_args) {
+                Ok(_) => {
+                    workshop.error = None;
+                    workshop.status = "Tweak: Recolor".into();
+                    push_undo_entry(
+                        &mut tweak,
+                        super::state::Gen3dManualTweakUndoEntry {
+                            label: "Recolor".to_string(),
+                            undo_args_json: before_args,
+                            redo_args_json: after_args,
+                        },
+                    );
+                    tweak.redo.clear();
+                    manual_tweak_push_recent_color(&mut tweak, color);
+                    tweak.color_picker_open = false;
+                    tweak.color_picker_rgb_focused = false;
+                }
+                Err(err) => {
+                    workshop.error = Some(err);
+                    workshop.status = "Recolor failed.".into();
+                }
+            }
+        }
+    }
+
+    *last_interaction = Some(*interaction);
+}
+
+pub(crate) fn gen3d_manual_tweak_color_picker_update_ui(
+    build_scene: Res<State<BuildScene>>,
+    mut tweak: ResMut<Gen3dManualTweakState>,
+    mut nodes: ParamSet<(
+        Query<(&mut Node, &mut Visibility), With<Gen3dManualTweakColorPickerRoot>>,
+        Query<&mut Node, With<Gen3dManualTweakColorPickerPaletteSelector>>,
+        Query<&mut Node, With<Gen3dManualTweakColorPickerValueSelector>>,
+        Query<
+            (
+                &Gen3dManualTweakColorPickerRecentSwatch,
+                &mut BackgroundColor,
+                &mut BorderColor,
+                &mut Node,
+            ),
+            (
+                With<Button>,
+                With<Gen3dManualTweakColorPickerRecentSwatch>,
+                Without<Gen3dManualTweakColorPickerRgbField>,
+                Without<Gen3dManualTweakColorPickerPreviewSwatch>,
+            ),
+        >,
+    )>,
+    mut rgb_fields: Query<
+        (&mut BackgroundColor, &mut BorderColor),
+        (
+            With<Gen3dManualTweakColorPickerRgbField>,
+            Without<Gen3dManualTweakColorPickerRecentSwatch>,
+            Without<Gen3dManualTweakColorPickerPreviewSwatch>,
+        ),
+    >,
+    mut rgb_texts: Query<&mut Text, With<Gen3dManualTweakColorPickerRgbFieldText>>,
+    mut preview_swatches: Query<
+        &mut BackgroundColor,
+        (
+            With<Gen3dManualTweakColorPickerPreviewSwatch>,
+            Without<Gen3dManualTweakColorPickerRgbField>,
+            Without<Gen3dManualTweakColorPickerRecentSwatch>,
+        ),
+    >,
+) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        if let Ok((mut node, mut vis)) = nodes.p0().single_mut() {
+            node.display = Display::None;
+            *vis = Visibility::Hidden;
+        }
+        return;
+    }
+
+    let open = tweak.enabled && tweak.color_picker_open;
+    if let Ok((mut node, mut vis)) = nodes.p0().single_mut() {
+        node.display = if open { Display::Flex } else { Display::None };
+        *vis = if open {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+    if !open {
+        return;
+    }
+
+    let color = color_picker_current_color(&tweak);
+    for mut bg in &mut preview_swatches {
+        *bg = BackgroundColor(color);
+    }
+
+    if !tweak.color_picker_rgb_focused {
+        tweak.color_picker_rgb_text = format_rgb_text(color);
+    }
+    for mut text in &mut rgb_texts {
+        **text = tweak.color_picker_rgb_text.clone().into();
+    }
+    for (mut bg, mut border) in &mut rgb_fields {
+        let focused = tweak.color_picker_rgb_focused;
+        let alpha = if focused { 0.88 } else { 0.80 };
+        *bg = BackgroundColor(Color::srgba(0.02, 0.02, 0.03, alpha));
+        *border = BorderColor::all(if focused {
+            Color::srgb(0.30, 0.55, 0.95)
+        } else {
+            Color::srgba(0.25, 0.25, 0.30, 0.75)
+        });
+    }
+
+    let selector_r = 6.0;
+    let max = (MANUAL_TWEAK_COLOR_PICKER_UI_PALETTE_SIZE_PX - selector_r * 2.0).max(1.0);
+    let h = tweak.color_picker_h.clamp(0.0, 1.0);
+    let s = tweak.color_picker_s.clamp(0.0, 1.0);
+    let x = selector_r + h * max;
+    let y = selector_r + (1.0 - s) * max;
+    for mut node in &mut nodes.p1() {
+        node.left = Val::Px((x - selector_r).round());
+        node.top = Val::Px((y - selector_r).round());
+    }
+
+    let v = tweak.color_picker_v.clamp(0.0, 1.0);
+    let selector_h = 4.0;
+    let h_max = (MANUAL_TWEAK_COLOR_PICKER_UI_VALUE_HEIGHT_PX - selector_h).max(1.0);
+    let top = ((1.0 - v) * h_max).round();
+    for mut node in &mut nodes.p2() {
+        node.top = Val::Px(top);
+    }
+
+    for (swatch, mut bg, mut border, mut node) in &mut nodes.p3() {
+        let index = swatch.index();
+        let Some(rgba) = tweak.color_picker_recent_rgba.get(index).copied() else {
+            node.display = Display::None;
+            continue;
+        };
+        node.display = Display::Flex;
+        *bg = BackgroundColor(Color::srgba(rgba[0], rgba[1], rgba[2], rgba[3]));
+        *border = BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.75));
+    }
+}
+
+pub(crate) fn gen3d_manual_tweak_color_picker_update_images(
+    build_scene: Res<State<BuildScene>>,
+    tweak: Res<Gen3dManualTweakState>,
+    mut images: ResMut<Assets<Image>>,
+    mut last: Local<Option<(f32, f32, f32)>>,
+) {
+    if !matches!(build_scene.get(), BuildScene::Preview) {
+        *last = None;
+        return;
+    }
+    if !tweak.enabled || !tweak.color_picker_open {
+        *last = None;
+        return;
+    }
+
+    let h = tweak.color_picker_h;
+    let s = tweak.color_picker_s;
+    let v = tweak.color_picker_v;
+    let needs_update = match *last {
+        Some((ph, ps, pv)) => (ph - h).abs() > 1e-4 || (ps - s).abs() > 1e-4 || (pv - v).abs() > 1e-4,
+        None => true,
+    };
+    if !needs_update {
+        return;
+    }
+    *last = Some((h, s, v));
+
+    if let Some(image) = images.get_mut(&tweak.color_picker_palette_image) {
+        let size = MANUAL_TWEAK_COLOR_PICKER_PALETTE_TEX_SIZE_PX as usize;
+        if let Some(data) = image.data.as_mut() {
+            if data.len() == size * size * 4 {
+                for y in 0..size {
+                    let s_y = 1.0 - (y as f32 / (size - 1).max(1) as f32);
+                    for x in 0..size {
+                        let h_x = x as f32 / (size - 1).max(1) as f32;
+                        let (r, g, b) = hsv_to_srgb(h_x, s_y, v);
+                        let idx = (y * size + x) * 4;
+                        data[idx] = (r.clamp(0.0, 1.0) * 255.0).round() as u8;
+                        data[idx + 1] = (g.clamp(0.0, 1.0) * 255.0).round() as u8;
+                        data[idx + 2] = (b.clamp(0.0, 1.0) * 255.0).round() as u8;
+                        data[idx + 3] = 255;
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(image) = images.get_mut(&tweak.color_picker_value_image) {
+        let w = MANUAL_TWEAK_COLOR_PICKER_VALUE_TEX_WIDTH_PX as usize;
+        let h_px = MANUAL_TWEAK_COLOR_PICKER_VALUE_TEX_HEIGHT_PX as usize;
+        if let Some(data) = image.data.as_mut() {
+            if data.len() == w * h_px * 4 {
+                for y in 0..h_px {
+                    let v_y = 1.0 - (y as f32 / (h_px - 1).max(1) as f32);
+                    let (r, g, b) = hsv_to_srgb(h, s, v_y);
+                    let ru8 = (r.clamp(0.0, 1.0) * 255.0).round() as u8;
+                    let gu8 = (g.clamp(0.0, 1.0) * 255.0).round() as u8;
+                    let bu8 = (b.clamp(0.0, 1.0) * 255.0).round() as u8;
+                    for x in 0..w {
+                        let idx = (y * w + x) * 4;
+                        data[idx] = ru8;
+                        data[idx + 1] = gu8;
+                        data[idx + 2] = bu8;
+                        data[idx + 3] = 255;
+                    }
+                }
+            }
+        }
     }
 }

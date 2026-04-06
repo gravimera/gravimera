@@ -119,11 +119,20 @@ pub(crate) struct Gen3dExitButton;
 pub(crate) struct Gen3dManualTweakState {
     pub(crate) enabled: bool,
     pub(crate) selected_part_id: Option<u128>,
-    pub(crate) color_palette_index: usize,
     pub(crate) deform_mode: bool,
     pub(crate) deform_selected_index: Option<usize>,
     pub(crate) undo: Vec<Gen3dManualTweakUndoEntry>,
     pub(crate) redo: Vec<Gen3dManualTweakUndoEntry>,
+
+    pub(crate) color_picker_open: bool,
+    pub(crate) color_picker_h: f32,
+    pub(crate) color_picker_s: f32,
+    pub(crate) color_picker_v: f32,
+    pub(crate) color_picker_rgb_text: String,
+    pub(crate) color_picker_rgb_focused: bool,
+    pub(crate) color_picker_palette_image: Handle<Image>,
+    pub(crate) color_picker_value_image: Handle<Image>,
+    pub(crate) color_picker_recent_rgba: Vec<[f32; 4]>,
 }
 
 #[derive(Clone, Debug)]
@@ -360,6 +369,51 @@ pub(crate) struct Gen3dManualTweakSaveButton;
 
 #[derive(Component)]
 pub(crate) struct Gen3dManualTweakSaveButtonText;
+
+#[derive(Component)]
+pub(crate) struct Gen3dManualTweakColorPickerRoot;
+
+#[derive(Component)]
+pub(crate) struct Gen3dManualTweakColorPickerPalette;
+
+#[derive(Component)]
+pub(crate) struct Gen3dManualTweakColorPickerPaletteSelector;
+
+#[derive(Component)]
+pub(crate) struct Gen3dManualTweakColorPickerValue;
+
+#[derive(Component)]
+pub(crate) struct Gen3dManualTweakColorPickerValueSelector;
+
+#[derive(Component)]
+pub(crate) struct Gen3dManualTweakColorPickerRgbField;
+
+#[derive(Component)]
+pub(crate) struct Gen3dManualTweakColorPickerRgbFieldText;
+
+#[derive(Component)]
+pub(crate) struct Gen3dManualTweakColorPickerPreviewSwatch;
+
+#[derive(Component)]
+pub(crate) struct Gen3dManualTweakColorPickerApplyButton;
+
+#[derive(Component)]
+pub(crate) struct Gen3dManualTweakColorPickerApplyButtonText;
+
+#[derive(Component)]
+pub(crate) struct Gen3dManualTweakColorPickerRecentSwatch {
+    index: usize,
+}
+
+impl Gen3dManualTweakColorPickerRecentSwatch {
+    pub(crate) fn new(index: usize) -> Self {
+        Self { index }
+    }
+
+    pub(crate) fn index(&self) -> usize {
+        self.index
+    }
+}
 
 #[derive(Component)]
 pub(crate) struct Gen3dCancelQueueButton;

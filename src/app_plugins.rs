@@ -682,6 +682,12 @@ impl Plugin for RenderedGen3dPlugin {
                 crate::gen3d::gen3d_side_panel_toggle_button
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_side_tab_buttons.run_if(crate::automation::local_input_enabled),
+            )
+                .run_if(in_gen3d_ui_scene),
+        );
+        app.add_systems(
+            Update,
+            (
                 crate::gen3d::gen3d_preview_animation_dropdown_button
                     .run_if(crate::automation::local_input_enabled),
                 crate::gen3d::gen3d_preview_explode_toggle_button
@@ -719,6 +725,43 @@ impl Plugin for RenderedGen3dPlugin {
                     .run_if(crate::monitor_mode::local_world_mutations_allowed),
                 crate::gen3d::gen3d_manual_tweak_save_button
                     .after(crate::gen3d::gen3d_manual_tweak_hotkeys)
+                    .before(crate::gen3d::gen3d_apply_draft_to_preview)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(in_state(BuildScene::Preview))
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+            )
+                .run_if(in_gen3d_ui_scene),
+        );
+        app.add_systems(
+            Update,
+            (
+                crate::gen3d::gen3d_manual_tweak_color_picker_rgb_field_focus
+                    .after(crate::gen3d::gen3d_manual_tweak_save_button)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(in_state(BuildScene::Preview))
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::gen3d::gen3d_manual_tweak_color_picker_rgb_defocus_on_click_outside
+                    .after(crate::gen3d::gen3d_manual_tweak_color_picker_rgb_field_focus)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(in_state(BuildScene::Preview))
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::gen3d::gen3d_manual_tweak_color_picker_rgb_text_input
+                    .after(crate::gen3d::gen3d_manual_tweak_color_picker_rgb_defocus_on_click_outside)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(in_state(BuildScene::Preview))
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::gen3d::gen3d_manual_tweak_color_picker_drag
+                    .after(crate::gen3d::gen3d_manual_tweak_color_picker_rgb_text_input)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(in_state(BuildScene::Preview))
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::gen3d::gen3d_manual_tweak_color_picker_recent_swatches
+                    .after(crate::gen3d::gen3d_manual_tweak_color_picker_drag)
+                    .run_if(crate::automation::local_input_enabled)
+                    .run_if(in_state(BuildScene::Preview))
+                    .run_if(crate::monitor_mode::local_world_mutations_allowed),
+                crate::gen3d::gen3d_manual_tweak_color_picker_apply_button
+                    .after(crate::gen3d::gen3d_manual_tweak_color_picker_recent_swatches)
                     .before(crate::gen3d::gen3d_apply_draft_to_preview)
                     .run_if(crate::automation::local_input_enabled)
                     .run_if(in_state(BuildScene::Preview))
@@ -1025,6 +1068,23 @@ impl Plugin for RenderedGen3dPlugin {
             crate::gen3d::gen3d_manual_tweak_update_selected_overlay
                 .after(crate::gen3d::gen3d_manual_tweak_pick_part)
                 .after(crate::gen3d::gen3d_manual_tweak_update_ffd_handles)
+                .after(crate::gen3d::gen3d_update_preview_panel_image_fit)
+                .in_set(UiSystems::Content)
+                .run_if(in_gen3d_ui_scene),
+        );
+        app.add_systems(
+            PostUpdate,
+            crate::gen3d::gen3d_manual_tweak_color_picker_update_images
+                .after(crate::gen3d::gen3d_manual_tweak_update_selected_overlay)
+                .after(crate::gen3d::gen3d_update_preview_panel_image_fit)
+                .in_set(UiSystems::Content)
+                .run_if(in_gen3d_ui_scene),
+        );
+        app.add_systems(
+            PostUpdate,
+            crate::gen3d::gen3d_manual_tweak_color_picker_update_ui
+                .after(crate::gen3d::gen3d_manual_tweak_color_picker_update_images)
+                .after(crate::gen3d::gen3d_manual_tweak_update_selected_overlay)
                 .after(crate::gen3d::gen3d_update_preview_panel_image_fit)
                 .in_set(UiSystems::Content)
                 .run_if(in_gen3d_ui_scene),

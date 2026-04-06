@@ -3290,6 +3290,8 @@ pub(crate) fn model_library_open_preview_panel(
                         ..default()
                     },
                     scene.target.clone(),
+                    Handle::default(),
+                    Handle::default(),
                     |_preview| {},
                 );
             });

@@ -116,7 +116,11 @@ Enter/exit the Gen3D workshop from Build mode via the top-left workspace dropdow
   - Move: arrow keys (XZ) and `PgUp`/`PgDn` (Y). `Shift` = bigger step. `Ctrl` = precision.
   - Rotate: `,` / `.` (around Y). `Shift` = 45°. `Ctrl` = precision.
   - Scale: `-` / `=` (uniform). `Shift` = bigger step. `Ctrl` = precision.
-  - Recolor: `C` (cycle palette), `Shift+C` (previous).
+  - Recolor: `C` (open color picker).
+    - Pick: drag the small circle in the palette; use the brightness strip to adjust value.
+    - Precise: type `R,G,B` (0..255) or `#RRGGBB`.
+    - History: last 12 applied colors; click a swatch to reuse it.
+    - Apply: click `Apply` to recolor the selected part and close the picker.
   - Sculpt (FFD): `V` (toggle). Drag a control point handle with `LMB` to deform the selected primitive part (`Shift` = big, `Ctrl` = precision). Drag empty space with `LMB` to orbit the preview camera.
   - Undo/Redo: `Ctrl/Cmd+Z` / `Ctrl/Cmd+Y`.
   - Exit tweak: `Esc` (when the prompt box is not focused).

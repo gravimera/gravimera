@@ -1165,6 +1165,11 @@ pub(crate) fn gen3d_preview_orbit_controls(
     if !super::gen3d_ui_scene(build_scene.get()) {
         return;
     }
+    if tweak.color_picker_open {
+        drag_state.lmb_started_on_ffd_handle = false;
+        for _ in mouse_wheel.read() {}
+        return;
+    }
     let Ok(mut window) = orbit_ui.windows.single_mut() else {
         return;
     };

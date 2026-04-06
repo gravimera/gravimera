@@ -1,6 +1,7 @@
 use bevy::ecs::hierarchy::{ChildOf, ChildSpawnerCommands};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::window::{Ime, PrimaryWindow};
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -54,6 +55,8 @@ pub(crate) fn spawn_gen3d_preview_panel<F>(
     parent: &mut ChildSpawnerCommands,
     node: Node,
     target: Handle<Image>,
+    color_picker_palette: Handle<Image>,
+    color_picker_value: Handle<Image>,
     extra_children: F,
 ) -> Entity
 where
@@ -395,6 +398,238 @@ where
                                 Gen3dTweakSelectedInfoText,
                             ));
                         });
+
+                    if color_picker_palette != Handle::default()
+                        && color_picker_value != Handle::default()
+                    {
+                        overlay.spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Px(8.0),
+                                top: Val::Px(8.0),
+                                width: Val::Px(420.0),
+                                padding: UiRect::all(Val::Px(10.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(8.0),
+                                display: Display::None,
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.96)),
+                            BorderColor::all(Color::srgba(0.30, 0.55, 0.95, 0.92)),
+                            Visibility::Hidden,
+                            ZIndex(20),
+                            Gen3dManualTweakColorPickerRoot,
+                        ))
+                        .with_children(|picker| {
+                            picker
+                                .spawn((
+                                    Node {
+                                        flex_direction: FlexDirection::Row,
+                                        column_gap: Val::Px(10.0),
+                                        align_items: AlignItems::FlexStart,
+                                        ..default()
+                                    },
+                                    BackgroundColor(Color::NONE),
+                                ))
+                                .with_children(|row| {
+                                    row.spawn((
+                                        Node {
+                                            width: Val::Px(180.0),
+                                            height: Val::Px(180.0),
+                                            border: UiRect::all(Val::Px(1.0)),
+                                            ..default()
+                                        },
+                                        BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.85)),
+                                        BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.75)),
+                                        Gen3dManualTweakColorPickerPalette,
+                                    ))
+                                    .with_children(|palette| {
+                                        palette.spawn((
+                                            ImageNode::new(color_picker_palette.clone()),
+                                            Node {
+                                                width: Val::Percent(100.0),
+                                                height: Val::Percent(100.0),
+                                                ..default()
+                                            },
+                                        ));
+                                        palette.spawn((
+                                            Node {
+                                                position_type: PositionType::Absolute,
+                                                left: Val::Px(0.0),
+                                                top: Val::Px(0.0),
+                                                width: Val::Px(12.0),
+                                                height: Val::Px(12.0),
+                                                border: UiRect::all(Val::Px(2.0)),
+                                                border_radius: BorderRadius::all(Val::Px(999.0)),
+                                                ..default()
+                                            },
+                                            BackgroundColor(Color::NONE),
+                                            BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.95)),
+                                            ZIndex(21),
+                                            Gen3dManualTweakColorPickerPaletteSelector,
+                                        ));
+                                    });
+
+                                    row.spawn((
+                                        Node {
+                                            width: Val::Px(18.0),
+                                            height: Val::Px(180.0),
+                                            border: UiRect::all(Val::Px(1.0)),
+                                            ..default()
+                                        },
+                                        BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.85)),
+                                        BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.75)),
+                                        Gen3dManualTweakColorPickerValue,
+                                    ))
+                                    .with_children(|value| {
+                                        value.spawn((
+                                            ImageNode::new(color_picker_value.clone()),
+                                            Node {
+                                                width: Val::Percent(100.0),
+                                                height: Val::Percent(100.0),
+                                                ..default()
+                                            },
+                                        ));
+                                        value.spawn((
+                                            Node {
+                                                position_type: PositionType::Absolute,
+                                                left: Val::Px(0.0),
+                                                top: Val::Px(0.0),
+                                                width: Val::Px(18.0),
+                                                height: Val::Px(4.0),
+                                                ..default()
+                                            },
+                                            BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.95)),
+                                            ZIndex(21),
+                                            Gen3dManualTweakColorPickerValueSelector,
+                                        ));
+                                    });
+
+                                    row.spawn((
+                                        Node {
+                                            width: Val::Px(190.0),
+                                            flex_direction: FlexDirection::Column,
+                                            row_gap: Val::Px(8.0),
+                                            ..default()
+                                        },
+                                        BackgroundColor(Color::NONE),
+                                    ))
+                                    .with_children(|col| {
+                                        col.spawn((
+                                            Node {
+                                                width: Val::Px(72.0),
+                                                height: Val::Px(28.0),
+                                                border: UiRect::all(Val::Px(1.0)),
+                                                ..default()
+                                            },
+                                            BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 1.0)),
+                                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.75)),
+                                            Gen3dManualTweakColorPickerPreviewSwatch,
+                                        ));
+
+                                        col.spawn((
+                                            Text::new("RGB"),
+                                            TextFont {
+                                                font_size: 13.0,
+                                                ..default()
+                                            },
+                                            TextColor(Color::srgb(0.85, 0.85, 0.90)),
+                                        ));
+
+                                        col.spawn((
+                                            Button,
+                                            Node {
+                                                width: Val::Px(190.0),
+                                                height: Val::Px(30.0),
+                                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                                justify_content: JustifyContent::FlexStart,
+                                                align_items: AlignItems::Center,
+                                                border: UiRect::all(Val::Px(1.0)),
+                                                ..default()
+                                            },
+                                            BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.80)),
+                                            BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.75)),
+                                            Gen3dManualTweakColorPickerRgbField,
+                                        ))
+                                        .with_children(|field| {
+                                            field.spawn((
+                                                Text::new(""),
+                                                TextFont {
+                                                    font_size: 14.0,
+                                                    ..default()
+                                                },
+                                                TextColor(Color::srgb(0.92, 0.92, 0.96)),
+                                                Gen3dManualTweakColorPickerRgbFieldText,
+                                            ));
+                                        });
+
+                                        col.spawn((
+                                            Button,
+                                            Node {
+                                                width: Val::Px(190.0),
+                                                height: Val::Px(34.0),
+                                                justify_content: JustifyContent::Center,
+                                                align_items: AlignItems::Center,
+                                                border: UiRect::all(Val::Px(1.0)),
+                                                ..default()
+                                            },
+                                            BackgroundColor(Color::srgba(0.08, 0.14, 0.10, 0.85)),
+                                            BorderColor::all(Color::srgb(0.25, 0.80, 0.45)),
+                                            Gen3dManualTweakColorPickerApplyButton,
+                                        ))
+                                        .with_children(|button| {
+                                            button.spawn((
+                                                Text::new("Apply"),
+                                                TextFont {
+                                                    font_size: 14.0,
+                                                    ..default()
+                                                },
+                                                TextColor(Color::srgb(0.70, 1.0, 0.82)),
+                                                Gen3dManualTweakColorPickerApplyButtonText,
+                                            ));
+                                        });
+                                    });
+                                });
+
+                            picker.spawn((
+                                Text::new("Recent"),
+                                TextFont {
+                                    font_size: 13.0,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.85, 0.85, 0.90)),
+                            ));
+
+                            picker
+                                .spawn((
+                                    Node {
+                                        flex_direction: FlexDirection::Row,
+                                        flex_wrap: FlexWrap::Wrap,
+                                        column_gap: Val::Px(6.0),
+                                        row_gap: Val::Px(6.0),
+                                        ..default()
+                                    },
+                                    BackgroundColor(Color::NONE),
+                                ))
+                                .with_children(|history| {
+                                    for index in 0..12usize {
+                                        history.spawn((
+                                            Button,
+                                            Node {
+                                                width: Val::Px(20.0),
+                                                height: Val::Px(20.0),
+                                                border: UiRect::all(Val::Px(1.0)),
+                                                ..default()
+                                            },
+                                            BackgroundColor(Color::srgba(0.10, 0.10, 0.11, 0.55)),
+                                            BorderColor::all(Color::srgba(0.30, 0.30, 0.34, 0.70)),
+                                            Gen3dManualTweakColorPickerRecentSwatch::new(index),
+                                        ));
+                                    }
+                                });
+                        });
+                    }
                     overlay
                         .spawn((
                             Node {
@@ -564,6 +799,8 @@ pub(crate) fn enter_gen3d_mode(
     workshop.side_panel_open = false;
     tweak.enabled = false;
     tweak.selected_part_id = None;
+    tweak.color_picker_open = false;
+    tweak.color_picker_rgb_focused = false;
     preview_state.animation_channel = "idle".to_string();
     preview_state.animation_channels.clear();
     preview_state.animation_dropdown_open = false;
@@ -601,6 +838,39 @@ pub(crate) fn enter_gen3d_mode(
             )
         })
     };
+
+    if tweak.color_picker_palette_image == Handle::default() {
+        let size: u32 = 256;
+        let data = vec![255u8; (size * size * 4) as usize];
+        tweak.color_picker_palette_image = images.add(Image::new(
+            Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            data,
+            TextureFormat::Rgba8UnormSrgb,
+            bevy::asset::RenderAssetUsages::default(),
+        ));
+    }
+
+    if tweak.color_picker_value_image == Handle::default() {
+        let width: u32 = 16;
+        let height: u32 = 256;
+        let data = vec![255u8; (width * height * 4) as usize];
+        tweak.color_picker_value_image = images.add(Image::new(
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            data,
+            TextureFormat::Rgba8UnormSrgb,
+            bevy::asset::RenderAssetUsages::default(),
+        ));
+    }
 
     commands
         .spawn((
@@ -682,6 +952,8 @@ pub(crate) fn enter_gen3d_mode(
                     BorderColor::all(Color::srgba(0.25, 0.25, 0.30, 0.65)),
                 ))
                 .with_children(|panel| {
+                    let color_picker_palette = tweak.color_picker_palette_image.clone();
+                    let color_picker_value = tweak.color_picker_value_image.clone();
                     spawn_gen3d_preview_panel(
                         panel,
                         Node {
@@ -694,6 +966,8 @@ pub(crate) fn enter_gen3d_mode(
                             ..default()
                         },
                         target.clone(),
+                        color_picker_palette,
+                        color_picker_value,
                         |preview| {
                             preview
                                 .spawn((
@@ -2151,6 +2425,13 @@ pub(crate) fn gen3d_exit_on_escape(
         return;
     }
     if workshop.prompt_focused {
+        return;
+    }
+    if tweak.color_picker_open {
+        tweak.color_picker_open = false;
+        tweak.color_picker_rgb_focused = false;
+        workshop.error = None;
+        workshop.status = "Color picker closed.".into();
         return;
     }
     if tweak.enabled {

@@ -160,6 +160,11 @@ pub(crate) use images::{
 };
 pub(crate) use manual_tweak::{
     gen3d_manual_tweak_button, gen3d_manual_tweak_ffd_drag, gen3d_manual_tweak_hotkeys,
+    gen3d_manual_tweak_color_picker_apply_button, gen3d_manual_tweak_color_picker_drag,
+    gen3d_manual_tweak_color_picker_recent_swatches,
+    gen3d_manual_tweak_color_picker_rgb_defocus_on_click_outside,
+    gen3d_manual_tweak_color_picker_rgb_field_focus, gen3d_manual_tweak_color_picker_rgb_text_input,
+    gen3d_manual_tweak_color_picker_update_images, gen3d_manual_tweak_color_picker_update_ui,
     gen3d_manual_tweak_pick_part, gen3d_manual_tweak_update_ffd_handles,
     gen3d_manual_tweak_update_selected_overlay,
 };
