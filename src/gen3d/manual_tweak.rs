@@ -519,8 +519,8 @@ fn tweak_mod_shift(keys: &ButtonInput<KeyCode>) -> bool {
     keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight)
 }
 
-fn tweak_mod_alt(keys: &ButtonInput<KeyCode>) -> bool {
-    keys.pressed(KeyCode::AltLeft) || keys.pressed(KeyCode::AltRight)
+fn tweak_mod_precision(keys: &ButtonInput<KeyCode>) -> bool {
+    keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight)
 }
 
 fn tweak_mod_cmd(keys: &ButtonInput<KeyCode>) -> bool {
@@ -815,7 +815,7 @@ pub(crate) fn gen3d_manual_tweak_hotkeys(
 
     let modifier_cmd = tweak_mod_cmd(&keys);
     let modifier_shift = tweak_mod_shift(&keys);
-    let modifier_alt = tweak_mod_alt(&keys);
+    let modifier_precision = tweak_mod_precision(&keys);
 
     if modifier_cmd {
         let redo_requested = (keys.just_pressed(KeyCode::KeyZ) && modifier_shift)
@@ -858,7 +858,6 @@ pub(crate) fn gen3d_manual_tweak_hotkeys(
             return;
         }
 
-        return;
     }
 
     if keys.just_pressed(KeyCode::KeyV) {
@@ -866,7 +865,7 @@ pub(crate) fn gen3d_manual_tweak_hotkeys(
         tweak.deform_selected_index = None;
         workshop.error = None;
         workshop.status = if tweak.deform_mode {
-            "Sculpt (FFD) enabled. Drag a control point in the preview (Shift=big, Alt=precision)."
+            "Sculpt (FFD) enabled. Drag a control point in the preview (Shift=big, Ctrl=precision)."
                 .into()
         } else {
             "Sculpt (FFD) exited.".into()
@@ -915,7 +914,7 @@ pub(crate) fn gen3d_manual_tweak_hotkeys(
     }
 
     let mut requested_scale: f32 = 1.0;
-    let scale_step = if modifier_alt {
+    let scale_step = if modifier_precision {
         MANUAL_TWEAK_SCALE_STEP_PRECISE
     } else if modifier_shift {
         MANUAL_TWEAK_SCALE_STEP_FAST
@@ -941,7 +940,7 @@ pub(crate) fn gen3d_manual_tweak_hotkeys(
         || requested_rot_deg.abs() > 1e-6
         || (requested_scale - 1.0).abs() > 1e-6
     {
-        let step = if modifier_alt {
+        let step = if modifier_precision {
             MANUAL_TWEAK_MOVE_STEP_PRECISE_M
         } else if modifier_shift {
             MANUAL_TWEAK_MOVE_STEP_FAST_M
@@ -950,7 +949,7 @@ pub(crate) fn gen3d_manual_tweak_hotkeys(
         };
         let delta = requested_move * step;
 
-        let rot_step_deg = if modifier_alt {
+        let rot_step_deg = if modifier_precision {
             MANUAL_TWEAK_ROT_STEP_PRECISE_DEG
         } else if modifier_shift {
             MANUAL_TWEAK_ROT_STEP_FAST_DEG
@@ -1198,11 +1197,11 @@ pub(crate) fn gen3d_manual_tweak_update_selected_overlay(
         let display_component = component_label.as_deref().filter(|v| !v.trim().is_empty());
 
         let mut info_text = format!(
-            "Manual Tweak\nSelected: {}\nPart: {}\n\nMove: arrows | PgUp/PgDn (Shift=big, Alt=precision)\nRotate: ,/. (Shift=45°, Alt=precision)\nScale: -/= (Shift=big, Alt=precision)\nRecolor: C (Shift=prev)\nUndo/Redo: Ctrl/Cmd+Z/Y",
+            "Manual Tweak\nSelected: {}\nPart: {}\n\nMove: arrows | PgUp/PgDn (Shift=big, Ctrl=precision)\nRotate: ,/. (Shift=45°, Ctrl=precision)\nScale: -/= (Shift=big, Ctrl=precision)\nRecolor: C (Shift=prev)\nUndo/Redo: Ctrl/Cmd+Z/Y",
             display_component.unwrap_or("unknown"),
             primitive_label.unwrap_or_else(|| "primitive".to_string()),
         );
-        info_text.push_str("\nSculpt (FFD): V (toggle), LMB drag handle (Shift=big, Alt=precision)");
+        info_text.push_str("\nSculpt (FFD): V (toggle), LMB drag handle (Shift=big, Ctrl=precision)");
         if tweak.deform_mode {
             info_text.push_str("\nSculpt: ON (LMB drag empty space to orbit)");
         }
@@ -1222,7 +1221,7 @@ pub(crate) fn gen3d_manual_tweak_update_selected_overlay(
         }
         info_text
     } else {
-        "Manual Tweak\nClick a part in the preview to select it.\n\nMove: arrows | PgUp/PgDn (Shift=big, Alt=precision)\nRotate: ,/. (Shift=45°, Alt=precision)\nScale: -/= (Shift=big, Alt=precision)\nRecolor: C (Shift=prev)\nUndo/Redo: Ctrl/Cmd+Z/Y\n\nEsc: exit tweak".to_string()
+        "Manual Tweak\nClick a part in the preview to select it.\n\nMove: arrows | PgUp/PgDn (Shift=big, Ctrl=precision)\nRotate: ,/. (Shift=45°, Ctrl=precision)\nScale: -/= (Shift=big, Ctrl=precision)\nRecolor: C (Shift=prev)\nUndo/Redo: Ctrl/Cmd+Z/Y\n\nEsc: exit tweak".to_string()
     };
 
     for (frame_marker, card_marker, mut node, mut vis) in &mut overlay_nodes {
@@ -1704,7 +1703,7 @@ pub(crate) fn gen3d_manual_tweak_ffd_drag(
             .unwrap_or(drag.start_hit_world);
 
             let mut delta_world = current_hit_world - drag.start_hit_world;
-            if tweak_mod_alt(&keys) {
+            if tweak_mod_precision(&keys) {
                 delta_world *= 0.25;
             } else if tweak_mod_shift(&keys) {
                 delta_world *= 4.0;
@@ -1768,7 +1767,7 @@ pub(crate) fn gen3d_manual_tweak_ffd_drag(
         .unwrap_or(drag.start_hit_world);
 
         let mut delta_world = current_hit_world - drag.start_hit_world;
-        if tweak_mod_alt(&keys) {
+        if tweak_mod_precision(&keys) {
             delta_world *= 0.25;
         } else if tweak_mod_shift(&keys) {
             delta_world *= 4.0;
