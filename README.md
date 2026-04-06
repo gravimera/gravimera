@@ -44,6 +44,22 @@ cargo run --release # or without --release if you are debuging
 <img src="screenshots/ss2.png" width="640" height="374" alt="ss2.png" />
 <img src="screenshots/ss3.png" width="640" height="374" alt="ss3.png" />
 
+## Example Videos
+
+### Gen3D Demo
+<video src="screenshots/demo-gen3d.mp4" controls width="640">
+  <a href="screenshots/demo-gen3d.mp4">Download the Gen3D demo video</a>
+</video>
+
+YouTube mirror: https://youtu.be/uU80d-P8o0o
+
+### Small Town Demo
+<video src="screenshots/demo-small-town.mp4" controls width="640">
+  <a href="screenshots/demo-small-town.mp4">Download the small town demo video</a>
+</video>
+
+YouTube mirror: https://youtu.be/k96TUdKqpR8
+
 ## Docs
 
 - Developer onboarding: [docs/developer_onboarding.md](docs/developer_onboarding.md)
