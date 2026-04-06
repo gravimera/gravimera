@@ -181,6 +181,7 @@ pub(crate) use save::gen3d_auto_save_when_done;
 pub(crate) use save::gen3d_prefab_thumbnail_capture_poll;
 pub(crate) use save::gen3d_request_prefab_thumbnail_capture;
 pub(crate) use save::gen3d_save_button;
+pub(crate) use save::gen3d_manual_tweak_save_button;
 pub(crate) use save::gen3d_save_current_draft_seed_aware_from_api;
 pub(crate) use save::Gen3dPrefabThumbnailCaptureRuntime;
 pub(crate) use state::*;

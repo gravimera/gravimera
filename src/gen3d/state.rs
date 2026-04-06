@@ -356,6 +356,12 @@ pub(crate) struct Gen3dManualTweakButton;
 pub(crate) struct Gen3dManualTweakButtonText;
 
 #[derive(Component)]
+pub(crate) struct Gen3dManualTweakSaveButton;
+
+#[derive(Component)]
+pub(crate) struct Gen3dManualTweakSaveButtonText;
+
+#[derive(Component)]
 pub(crate) struct Gen3dCancelQueueButton;
 
 #[derive(Component)]

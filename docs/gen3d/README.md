@@ -125,8 +125,8 @@ Key properties:
 - Undo/Redo: `Ctrl/Cmd+Z` and `Ctrl/Cmd+Y` apply deterministic DraftOps to reverse/reapply changes.
 - Determinism: edits are applied via `apply_draft_ops_v1` (`update_primitive_part`), not by direct
   mutation from UI code.
-- Persistence: edits affect the in-memory Gen3D draft; click `Save Snapshot` to persist them into
-  the 3D Models library (and export).
+- Persistence: edits affect the in-memory Gen3D draft; click `Save` (in Manual Tweak) to persist
+  them into the current model, or `Save Snapshot` to save a copy into the 3D Models library.
 
 Current limitations:
 

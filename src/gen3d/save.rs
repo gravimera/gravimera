@@ -18,7 +18,10 @@ use crate::object::registry::{
 use crate::object::visuals;
 
 use super::ai::{Gen3dAiJob, Gen3dDescriptorMetaPolicy};
-use super::state::{Gen3dDraft, Gen3dPreview, Gen3dSaveButton, Gen3dWorkshop};
+use super::state::{
+    Gen3dDraft, Gen3dManualTweakSaveButton, Gen3dManualTweakState, Gen3dPreview, Gen3dSaveButton,
+    Gen3dWorkshop,
+};
 use super::task_queue::Gen3dTaskQueue;
 
 #[derive(SystemParam)]
@@ -1522,6 +1525,137 @@ pub(crate) fn gen3d_save_button(
                 Err(err) => {
                     workshop.error = Some(err);
                     workshop.status = "Save snapshot failed.".into();
+                }
+            }
+        }
+    }
+
+    *last_interaction = Some(*interaction);
+}
+
+pub(crate) fn gen3d_manual_tweak_save_button(
+    env: Gen3dSaveEnv,
+    mut commands: Commands,
+    mut render: Gen3dSaveRenderWorld,
+    mut library: ResMut<ObjectLibrary>,
+    mut prefab_descriptors: ResMut<crate::prefab_descriptors::PrefabDescriptorLibrary>,
+    mut workshop: ResMut<Gen3dWorkshop>,
+    mut model_library: ResMut<crate::model_library_ui::ModelLibraryUiState>,
+    runtime: Gen3dSaveRuntime,
+    draft: Res<Gen3dDraft>,
+    preview: Res<Gen3dPreview>,
+    tweak: Res<Gen3dManualTweakState>,
+    mut last_interaction: Local<Option<Interaction>>,
+    mut buttons: Query<
+        (
+            &Interaction,
+            &mut BackgroundColor,
+            &mut BorderColor,
+            &mut Visibility,
+            &mut Node,
+        ),
+        With<Gen3dManualTweakSaveButton>,
+    >,
+) {
+    if !matches!(env.build_scene.get(), crate::types::BuildScene::Preview) {
+        return;
+    }
+
+    let running = runtime.job.is_running();
+
+    let Ok((interaction, mut bg, mut border, mut vis, mut node)) = buttons.single_mut() else {
+        *last_interaction = None;
+        return;
+    };
+
+    let enabled = draft.root_def().is_some() && draft.total_non_projectile_primitive_parts() > 0;
+    let visible = tweak.enabled && enabled && !running;
+
+    if !visible {
+        node.display = Display::None;
+        *vis = Visibility::Hidden;
+        *bg = BackgroundColor(Color::srgba(0.10, 0.10, 0.11, 0.55));
+        *border = BorderColor::all(Color::srgba(0.30, 0.30, 0.34, 0.70));
+        *last_interaction = None;
+        return;
+    }
+
+    node.display = Display::Flex;
+    *vis = Visibility::Inherited;
+
+    match *interaction {
+        Interaction::None => {
+            *bg = BackgroundColor(Color::srgba(0.08, 0.14, 0.10, 0.80));
+            *border = BorderColor::all(Color::srgb(0.25, 0.80, 0.45));
+        }
+        Interaction::Hovered => {
+            *bg = BackgroundColor(Color::srgba(0.10, 0.18, 0.12, 0.90));
+            *border = BorderColor::all(Color::srgb(0.30, 0.90, 0.52));
+        }
+        Interaction::Pressed => {
+            *bg = BackgroundColor(Color::srgba(0.12, 0.22, 0.14, 0.96));
+            *border = BorderColor::all(Color::srgb(0.35, 1.00, 0.60));
+
+            let was_pressed = matches!(*last_interaction, Some(Interaction::Pressed));
+            if was_pressed {
+                return;
+            }
+
+            let Gen3dSaveRuntime {
+                mut thumbnail_capture,
+                mut job,
+            } = runtime;
+
+            let prev_overwrite = job.save_overwrite_prefab_id();
+            let desired_overwrite = prev_overwrite.or(job.last_saved_prefab_id());
+            if desired_overwrite != prev_overwrite {
+                job.set_save_overwrite_prefab_id(desired_overwrite);
+            }
+
+            let result = gen3d_save_current_draft_seed_aware_from_api(
+                &env.active.realm_id,
+                &env.active.scene_id,
+                &mut library,
+                &mut *prefab_descriptors,
+                &mut workshop,
+                &mut job,
+                &draft,
+                preview.show_collision,
+            );
+
+            if desired_overwrite != prev_overwrite {
+                job.set_save_overwrite_prefab_id(prev_overwrite);
+            }
+
+            match result {
+                Ok(saved) => {
+                    model_library.mark_models_dirty();
+
+                    let thumbnail_path =
+                        crate::realm_prefab_packages::realm_prefab_package_thumbnail_path(
+                            &env.active.realm_id,
+                            saved.prefab_id,
+                        );
+                    if let Err(err) = gen3d_request_prefab_thumbnail_capture(
+                        &mut commands,
+                        &mut *thumbnail_capture,
+                        &mut *render.images,
+                        &render.asset_server,
+                        &render.assets,
+                        &mut *render.meshes,
+                        &mut *render.materials,
+                        &mut *render.material_cache,
+                        &mut *render.mesh_cache,
+                        &*library,
+                        saved.prefab_id,
+                        thumbnail_path,
+                    ) {
+                        warn!("Gen3D: thumbnail capture skipped: {err}");
+                    }
+                }
+                Err(err) => {
+                    workshop.error = Some(err);
+                    workshop.status = "Save failed.".into();
                 }
             }
         }

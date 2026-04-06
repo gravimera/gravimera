@@ -1637,6 +1637,34 @@ pub(crate) fn enter_gen3d_mode(
                                     border: UiRect::all(Val::Px(1.0)),
                                     ..default()
                                 },
+                                BackgroundColor(Color::srgba(0.08, 0.14, 0.10, 0.80)),
+                                BorderColor::all(Color::srgb(0.25, 0.80, 0.45)),
+                                Visibility::Hidden,
+                                Gen3dManualTweakSaveButton,
+                            ))
+                            .with_children(|button| {
+                                button.spawn((
+                                    Text::new("Save"),
+                                    TextFont {
+                                        font_size: 14.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.70, 1.0, 0.82)),
+                                    Gen3dManualTweakSaveButtonText,
+                                ));
+                            });
+
+                        column
+                            .spawn((
+                                Button,
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Px(34.0),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    ..default()
+                                },
                                 BackgroundColor(Color::srgba(0.16, 0.07, 0.06, 0.80)),
                                 BorderColor::all(Color::srgb(0.85, 0.38, 0.30)),
                                 Visibility::Hidden,
