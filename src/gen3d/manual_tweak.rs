@@ -635,10 +635,10 @@ fn rgb_u8_to_color(r: u8, g: u8, b: u8) -> Color {
 
 fn format_rgb_text(color: Color) -> String {
     let c = color.to_srgba();
-    let r = (c.red.clamp(0.0, 1.0) * 255.0).round() as u32;
-    let g = (c.green.clamp(0.0, 1.0) * 255.0).round() as u32;
-    let b = (c.blue.clamp(0.0, 1.0) * 255.0).round() as u32;
-    format!("{r},{g},{b}")
+    let r = (c.red.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let g = (c.green.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let b = (c.blue.clamp(0.0, 1.0) * 255.0).round() as u8;
+    format!("#{r:02X}{g:02X}{b:02X}")
 }
 
 fn srgb_to_hsv(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
@@ -704,40 +704,25 @@ fn parse_rgb_text(text: &str) -> Option<(u8, u8, u8)> {
     }
 
     let hex = raw.strip_prefix('#').unwrap_or(raw).trim();
-    if hex.len() == 6 && hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
-        let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-        let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-        let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-        return Some((r, g, b));
-    }
-
-    let parts: Vec<&str> = raw
-        .split(|ch: char| ch == ',' || ch == ' ' || ch == '\t' || ch == ';' || ch == '/')
-        .filter(|v| !v.trim().is_empty())
-        .collect();
-    if parts.len() != 3 {
-        return None;
-    }
-
-    let mut values = [0u8; 3];
-    for (idx, part) in parts.iter().enumerate() {
-        let part = part.trim();
-        if part.is_empty() {
-            return None;
+    let hex = hex.strip_prefix("0x").unwrap_or(hex).trim();
+    if hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        match hex.len() {
+            6 => {
+                let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+                let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+                let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+                return Some((r, g, b));
+            }
+            3 => {
+                let r = u8::from_str_radix(&hex[0..1], 16).ok()?;
+                let g = u8::from_str_radix(&hex[1..2], 16).ok()?;
+                let b = u8::from_str_radix(&hex[2..3], 16).ok()?;
+                return Some(((r << 4) | r, (g << 4) | g, (b << 4) | b));
+            }
+            _ => {}
         }
-        if let Ok(int_val) = part.parse::<i32>() {
-            values[idx] = int_val.clamp(0, 255) as u8;
-            continue;
-        }
-        let float_val = part.parse::<f32>().ok()?;
-        if !float_val.is_finite() {
-            return None;
-        }
-        let scaled = (float_val.clamp(0.0, 1.0) * 255.0).round() as i32;
-        values[idx] = scaled.clamp(0, 255) as u8;
     }
-
-    Some((values[0], values[1], values[2]))
+    None
 }
 
 fn color_picker_current_color(tweak: &Gen3dManualTweakState) -> Color {

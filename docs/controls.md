@@ -118,7 +118,7 @@ Enter/exit the Gen3D workshop from Build mode via the top-left workspace dropdow
   - Scale: `-` / `=` (uniform). `Shift` = bigger step. `Ctrl` = precision.
   - Recolor: `C` (open color picker).
     - Pick: drag the small circle in the palette; use the brightness strip to adjust value.
-    - Precise: type `R,G,B` (0..255) or `#RRGGBB`.
+    - Precise: type `#RRGGBB`.
     - History: last 12 applied colors; click a swatch to reuse it.
     - Apply: click `Apply` to recolor the selected part and close the picker.
   - Sculpt (FFD): `V` (toggle). Drag a control point handle with `LMB` to deform the selected primitive part (`Shift` = big, `Ctrl` = precision). Drag empty space with `LMB` to orbit the preview camera.

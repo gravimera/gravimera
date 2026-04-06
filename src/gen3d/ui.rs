@@ -405,8 +405,8 @@ where
                         overlay.spawn((
                             Node {
                                 position_type: PositionType::Absolute,
-                                left: Val::Px(8.0),
-                                top: Val::Px(8.0),
+                                right: Val::Px(8.0),
+                                bottom: Val::Px(8.0),
                                 width: Val::Px(420.0),
                                 padding: UiRect::all(Val::Px(10.0)),
                                 border: UiRect::all(Val::Px(1.0)),
@@ -529,7 +529,7 @@ where
                                         ));
 
                                         col.spawn((
-                                            Text::new("RGB"),
+                                            Text::new("#RRGGBB"),
                                             TextFont {
                                                 font_size: 13.0,
                                                 ..default()
