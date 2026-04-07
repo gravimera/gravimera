@@ -79,16 +79,40 @@ function mustGetEl<T extends HTMLElement>(id: string): T {
 }
 
 const canvas = mustGetEl<HTMLCanvasElement>("viewport");
+const uiEl = mustGetEl<HTMLElement>("ui");
 const logEl = mustGetEl<HTMLElement>("log");
 const sceneFileEl = mustGetEl<HTMLInputElement>("sceneFile");
 const terrainFileEl = mustGetEl<HTMLInputElement>("terrainFile");
 const loadBtnEl = mustGetEl<HTMLButtonElement>("loadBtn");
+const togglePanelBtnEl = mustGetEl<HTMLButtonElement>("togglePanelBtn");
+const filePanelEl = mustGetEl<HTMLElement>("filePanel");
+
+const moveFwdBtnEl = mustGetEl<HTMLButtonElement>("moveFwdBtn");
+const moveLeftBtnEl = mustGetEl<HTMLButtonElement>("moveLeftBtn");
+const moveBackBtnEl = mustGetEl<HTMLButtonElement>("moveBackBtn");
+const moveRightBtnEl = mustGetEl<HTMLButtonElement>("moveRightBtn");
+
+const PANEL_COLLAPSED_KEY = "gravimera.web_viewer.panel_collapsed";
+let panelCollapsed = localStorage.getItem(PANEL_COLLAPSED_KEY) === "1";
+
+function applyPanelCollapsedState() {
+  uiEl.classList.toggle("ui-collapsed", panelCollapsed);
+  filePanelEl.hidden = panelCollapsed;
+  togglePanelBtnEl.textContent = panelCollapsed ? "Show Panel" : "Hide Panel";
+}
+
+applyPanelCollapsedState();
+togglePanelBtnEl.addEventListener("click", () => {
+  panelCollapsed = !panelCollapsed;
+  localStorage.setItem(PANEL_COLLAPSED_KEY, panelCollapsed ? "1" : "0");
+  applyPanelCollapsedState();
+});
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
 
 const threeScene = new THREE.Scene();
-threeScene.background = new THREE.Color(0x070a12);
+threeScene.background = new THREE.Color(0xf4f7fb);
 
 const camera = new THREE.PerspectiveCamera(55, 1, 0.01, 5000);
 camera.position.set(8, 6, 10);
@@ -125,6 +149,49 @@ const cameraKeys = new Set<string>([
   "ShiftRight",
 ]);
 const pressedKeys = new Set<string>();
+
+function bindHoldToKey(btn: HTMLButtonElement, keyCode: string) {
+  let activePointer: number | null = null;
+
+  const release = (e?: PointerEvent) => {
+    if (e && activePointer !== null && e.pointerId !== activePointer) return;
+    if (activePointer !== null) {
+      try {
+        btn.releasePointerCapture(activePointer);
+      } catch {
+        // Ignore capture errors (can happen if capture was lost).
+      }
+    }
+    activePointer = null;
+    pressedKeys.delete(keyCode);
+    btn.dataset.active = "0";
+  };
+
+  btn.addEventListener(
+    "pointerdown",
+    (e) => {
+      // Only handle primary action.
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      activePointer = e.pointerId;
+      btn.setPointerCapture(e.pointerId);
+      pressedKeys.add(keyCode);
+      btn.dataset.active = "1";
+      e.preventDefault();
+      e.stopPropagation();
+    },
+    { passive: false },
+  );
+
+  btn.addEventListener("pointerup", release);
+  btn.addEventListener("pointercancel", release);
+  btn.addEventListener("lostpointercapture", () => release());
+  btn.addEventListener("contextmenu", (e) => e.preventDefault());
+}
+
+bindHoldToKey(moveFwdBtnEl, "KeyW");
+bindHoldToKey(moveLeftBtnEl, "KeyA");
+bindHoldToKey(moveBackBtnEl, "KeyS");
+bindHoldToKey(moveRightBtnEl, "KeyD");
 
 window.addEventListener(
   "keydown",
@@ -210,15 +277,16 @@ function applyCameraKeyControls(dtSeconds: number) {
   if (pressedKeys.has("KeyX")) controlsInternal._rotateUp(-rot);
 }
 
-threeScene.add(new THREE.AmbientLight(0xffffff, 0.55));
-const dir = new THREE.DirectionalLight(0xffffff, 0.75);
+threeScene.add(new THREE.AmbientLight(0xffffff, 0.72));
+threeScene.add(new THREE.HemisphereLight(0xffffff, 0xcfd8e3, 0.22));
+const dir = new THREE.DirectionalLight(0xffffff, 0.95);
 dir.position.set(5, 10, 4);
 threeScene.add(dir);
 
 const worldRoot = new THREE.Group();
 threeScene.add(worldRoot);
 
-const grid = new THREE.GridHelper(50, 50, 0x2f405e, 0x1b2536);
+const grid = new THREE.GridHelper(50, 50, 0x95a6bc, 0xd9e0ea);
 grid.position.y = 0.001;
 worldRoot.add(grid);
 

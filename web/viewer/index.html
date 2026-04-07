@@ -8,29 +8,42 @@
   <body>
     <div id="ui">
       <div class="ui-title">
-        <div class="ui-title__name">Gravimera Web Viewer</div>
-        <div class="ui-title__hint">
-          Load <code>scene.grav</code> + <code>terrain.grav</code> and render basic primitives.
+        <div class="ui-title__main">
+          <div class="ui-title__name">Gravimera Web Viewer</div>
+          <div class="ui-title__hint">
+            Load <code>scene.grav</code> + <code>terrain.grav</code> and render basic primitives.
+          </div>
         </div>
+        <button id="togglePanelBtn" class="ui-btn ui-btn--ghost" type="button">Hide Panel</button>
       </div>
 
-      <div class="ui-row">
-        <label class="ui-label">
-          <span>scene.grav</span>
-          <input id="sceneFile" type="file" accept=".grav" />
-        </label>
-        <label class="ui-label">
-          <span>terrain.grav (optional)</span>
-          <input id="terrainFile" type="file" accept=".grav" />
-        </label>
-        <button id="loadBtn" class="ui-btn">Load</button>
-      </div>
+      <div id="filePanel">
+        <div class="ui-row">
+          <label class="ui-label">
+            <span>scene.grav</span>
+            <input id="sceneFile" type="file" accept=".grav" />
+          </label>
+          <label class="ui-label">
+            <span>terrain.grav (optional)</span>
+            <input id="terrainFile" type="file" accept=".grav" />
+          </label>
+          <button id="loadBtn" class="ui-btn">Load</button>
+        </div>
 
-      <pre id="log" class="ui-log"></pre>
+        <pre id="log" class="ui-log"></pre>
+      </div>
+    </div>
+
+    <div id="hud">
+      <div class="hud-pad" aria-label="Move pad">
+        <button id="moveFwdBtn" class="hud-btn" type="button" aria-label="Move forward">^</button>
+        <button id="moveLeftBtn" class="hud-btn" type="button" aria-label="Move left">&lt;</button>
+        <button id="moveBackBtn" class="hud-btn" type="button" aria-label="Move back">v</button>
+        <button id="moveRightBtn" class="hud-btn" type="button" aria-label="Move right">&gt;</button>
+      </div>
     </div>
 
     <canvas id="viewport"></canvas>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
-
