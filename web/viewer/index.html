@@ -6,7 +6,7 @@
     <title>Gravimera Web Viewer</title>
   </head>
   <body>
-    <div id="ui">
+    <div id="ui" class="ui-collapsed">
       <div class="ui-title">
         <div class="ui-title__main">
           <div class="ui-title__name">Gravimera Web Viewer</div>
@@ -14,10 +14,10 @@
             Load <code>scene.grav</code> + <code>terrain.grav</code> and render basic primitives.
           </div>
         </div>
-        <button id="togglePanelBtn" class="ui-btn ui-btn--ghost" type="button">Hide Panel</button>
+        <button id="togglePanelBtn" class="ui-btn ui-btn--ghost" type="button">Show Panel</button>
       </div>
 
-      <div id="filePanel">
+      <div id="filePanel" hidden>
         <div class="ui-row">
           <label class="ui-label">
             <span>scene.grav</span>

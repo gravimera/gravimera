@@ -93,7 +93,9 @@ const moveBackBtnEl = mustGetEl<HTMLButtonElement>("moveBackBtn");
 const moveRightBtnEl = mustGetEl<HTMLButtonElement>("moveRightBtn");
 
 const PANEL_COLLAPSED_KEY = "gravimera.web_viewer.panel_collapsed";
-let panelCollapsed = localStorage.getItem(PANEL_COLLAPSED_KEY) === "1";
+const storedPanelCollapsed = localStorage.getItem(PANEL_COLLAPSED_KEY);
+// Default: panel hidden (better for mobile). If the user previously toggled, honor the preference.
+let panelCollapsed = storedPanelCollapsed === null ? true : storedPanelCollapsed === "1";
 
 function applyPanelCollapsedState() {
   uiEl.classList.toggle("ui-collapsed", panelCollapsed);
