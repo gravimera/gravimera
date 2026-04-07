@@ -68,5 +68,12 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    // The viewer is often served via arbitrary hostnames / IPs (LAN or public server),
+    // so disable Vite's host allowlist.
+    allowedHosts: true,
+  },
+  preview: {
+    // Match the dev server host validation policy.
+    allowedHosts: true,
   },
 });
