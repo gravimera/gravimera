@@ -3,7 +3,7 @@
 
 Defaults:
   - host: 0.0.0.0 (listen on all addresses)
-  - port: 5173
+  - port: 233
 
 The viewer auto-loads the demo build outputs from:
   assets/scene_wasteland/scene.grav
@@ -34,13 +34,24 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--port",
         type=int,
-        default=int(os.environ.get("PORT", "5173")),
-        help="Server port (default: 5173). Can also be set via env PORT.",
+        default=int(os.environ.get("PORT", "233")),
+        help="Server port (default: 233). Can also be set via env PORT.",
     )
     parser.add_argument(
         "--host",
         default=os.environ.get("HOST", "0.0.0.0"),
         help="Server host bind (default: 0.0.0.0). Can also be set via env HOST.",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["preview", "dev"],
+        default=os.environ.get("MODE", "preview"),
+        help="Server mode (default: preview). 'preview' serves the built bundle; 'dev' runs Vite dev server.",
+    )
+    parser.add_argument(
+        "--no-build",
+        action="store_true",
+        help="Skip `npm run build` before previewing (only applies to --mode preview).",
     )
     parser.add_argument(
         "--install",
@@ -56,28 +67,57 @@ def main(argv: list[str]) -> int:
     if args.install or not (VIEWER_DIR / "node_modules").exists():
         _run(["npm", "install"], cwd=VIEWER_DIR)
 
+    try:
+        # Ports below 1024 typically require root/capabilities on Unix-like systems.
+        if args.port < 1024 and hasattr(os, "geteuid") and os.geteuid() != 0:
+            print(
+                f"warning: port {args.port} may require root/cap_net_bind_service on Linux/macOS.",
+                file=sys.stderr,
+            )
+            print("         if it fails to bind, re-run with sudo or use a higher --port.", file=sys.stderr)
+    except Exception:
+        pass
+
     # Best-effort validation: the server can still start without these, but autoload will fail.
     for name in ["scene.grav", "terrain.grav"]:
         path = WASTELAND_DIR / name
         if not path.is_file():
             print(f"warning: missing demo asset: {path}", file=sys.stderr)
 
-    _run(
-        [
-            "npm",
-            "run",
-            "dev",
-            "--",
-            "--host",
-            str(args.host),
-            "--port",
-            str(args.port),
-        ],
-        cwd=VIEWER_DIR,
-    )
+    if args.mode == "preview":
+        if not args.no_build:
+            _run(["npm", "run", "build"], cwd=VIEWER_DIR)
+        _run(
+            [
+                "npm",
+                "run",
+                "preview",
+                "--",
+                "--host",
+                str(args.host),
+                "--port",
+                str(args.port),
+                "--strictPort",
+            ],
+            cwd=VIEWER_DIR,
+        )
+    else:
+        _run(
+            [
+                "npm",
+                "run",
+                "dev",
+                "--",
+                "--host",
+                str(args.host),
+                "--port",
+                str(args.port),
+                "--strictPort",
+            ],
+            cwd=VIEWER_DIR,
+        )
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
-

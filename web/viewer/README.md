@@ -42,10 +42,10 @@ You can also load custom files from your local disk:
 
 ## Run (Server)
 
-To bind to all addresses (LAN) and pick a port:
+To bind to all addresses (LAN) and use the official demo port (233):
 
 ```bash
-python3 tools/run_web_viewer.py --port 5173
+python3 tools/run_web_viewer.py
 ```
 
 Notes:
