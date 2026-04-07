@@ -10,13 +10,12 @@ The viewer auto-loads the demo build outputs from:
   assets/scene_wasteland/terrain.grav
 """
 
-from __future__ import annotations
-
 import argparse
 import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import List
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,12 +23,12 @@ VIEWER_DIR = ROOT / "web" / "viewer"
 WASTELAND_DIR = ROOT / "assets" / "scene_wasteland"
 
 
-def _run(cmd: list[str], *, cwd: Path) -> None:
+def _run(cmd: List[str], *, cwd: Path) -> None:
     print("+", " ".join(cmd))
     subprocess.check_call(cmd, cwd=str(cwd))
 
 
-def main(argv: list[str]) -> int:
+def main(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--port",
