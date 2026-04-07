@@ -780,21 +780,37 @@ loadBtnEl.addEventListener("click", () => {
   void loadFiles();
 });
 
-function resize() {
-  const w = window.innerWidth;
-  const h = window.innerHeight;
+let lastCanvasW = 0;
+let lastCanvasH = 0;
+let lastDpr = 0;
+
+function resizeToCanvasIfNeeded() {
+  // Use the *actual* canvas CSS size instead of `window.innerWidth/innerHeight`.
+  // On some mobile in-app browsers, orientation changes don't reliably fire `resize`,
+  // which can lead to a stretched projection matrix.
+  const w = Math.max(1, Math.floor(canvas.clientWidth));
+  const h = Math.max(1, Math.floor(canvas.clientHeight));
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+
+  if (w === lastCanvasW && h === lastCanvasH && dpr === lastDpr) return;
+  lastCanvasW = w;
+  lastCanvasH = h;
+  lastDpr = dpr;
+
+  renderer.setPixelRatio(dpr);
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
 }
 
-window.addEventListener("resize", resize);
-resize();
+window.addEventListener("resize", resizeToCanvasIfNeeded);
+resizeToCanvasIfNeeded();
 
 void autoLoadWastelandScene();
 
 function animate() {
   requestAnimationFrame(animate);
+  resizeToCanvasIfNeeded();
   applyCameraKeyControls(clock.getDelta());
   controls.update();
   renderer.render(threeScene, camera);

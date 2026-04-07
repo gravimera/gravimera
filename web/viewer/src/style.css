@@ -157,26 +157,25 @@ code {
 }
 
 .hud-pad {
-  --pad-size: 56px;
+  --pad-size: 50px;
   pointer-events: auto;
   touch-action: none;
   display: grid;
   grid-template-columns: var(--pad-size) var(--pad-size) var(--pad-size);
   grid-template-rows: var(--pad-size) var(--pad-size) var(--pad-size);
-  gap: 8px;
+  gap: 6px;
 }
 
 .hud-btn {
   width: var(--pad-size);
   height: var(--pad-size);
-  border-radius: 16px;
-  border: 1px solid rgba(10, 18, 30, 0.28);
-  background: rgba(255, 255, 255, 0.10);
+  border-radius: 14px;
+  border: 1.5px solid rgba(10, 18, 30, 0.42);
+  background: rgba(255, 255, 255, 0.06);
   color: rgba(10, 18, 30, 0.86);
   font-weight: 750;
-  font-size: 18px;
-  backdrop-filter: blur(8px);
-  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.10);
+  font-size: 17px;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.10);
   user-select: none;
   -webkit-user-select: none;
   cursor: pointer;
@@ -221,7 +220,7 @@ code {
   }
 
   #hud .hud-pad {
-    --pad-size: min(18vw, 66px);
-    gap: 10px;
+    --pad-size: clamp(44px, 14vw, 56px);
+    gap: 7px;
   }
 }
