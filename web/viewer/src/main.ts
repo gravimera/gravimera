@@ -120,6 +120,8 @@ camera.position.set(8, 6, 10);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
+// Make orbit drag feel like "grab the scene and move it" (matches Gravimera's in-game camera feel).
+controls.rotateSpeed = -1.0;
 controls.target.set(0, 0.6, 0);
 controls.update();
 
