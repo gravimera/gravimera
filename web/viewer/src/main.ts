@@ -99,6 +99,117 @@ controls.dampingFactor = 0.08;
 controls.target.set(0, 0.6, 0);
 controls.update();
 
+const clock = new THREE.Clock();
+
+function isTextInputTarget(target: EventTarget | null): boolean {
+  if (!target || !(target instanceof HTMLElement)) return false;
+  const tag = target.tagName.toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select") return true;
+  return target.isContentEditable;
+}
+
+const cameraKeys = new Set<string>([
+  "KeyW",
+  "KeyA",
+  "KeyS",
+  "KeyD",
+  "ArrowUp",
+  "ArrowLeft",
+  "ArrowDown",
+  "ArrowRight",
+  "KeyQ",
+  "KeyE",
+  "KeyZ",
+  "KeyX",
+  "ShiftLeft",
+  "ShiftRight",
+]);
+const pressedKeys = new Set<string>();
+
+window.addEventListener(
+  "keydown",
+  (e) => {
+    // Avoid breaking browser/app shortcuts and file inputs.
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    if (isTextInputTarget(e.target)) return;
+    if (!cameraKeys.has(e.code)) return;
+    pressedKeys.add(e.code);
+    e.preventDefault();
+  },
+  { passive: false },
+);
+
+window.addEventListener(
+  "keyup",
+  (e) => {
+    if (!cameraKeys.has(e.code)) return;
+    pressedKeys.delete(e.code);
+    e.preventDefault();
+  },
+  { passive: false },
+);
+
+window.addEventListener("blur", () => {
+  pressedKeys.clear();
+});
+
+// Access OrbitControls' internal delta mutators so we can still call `controls.update()` only once per
+// frame (public `rotateLeft/rotateUp/pan` call `update()` internally and would apply damping twice).
+const controlsInternal = controls as unknown as {
+  _rotateLeft: (angle: number) => void;
+  _rotateUp: (angle: number) => void;
+};
+
+const worldUp = new THREE.Vector3(0, 1, 0);
+const tmpForward = new THREE.Vector3();
+const tmpRight = new THREE.Vector3();
+const tmpDelta = new THREE.Vector3();
+
+function applyCameraKeyControls(dtSeconds: number) {
+  if (pressedKeys.size === 0) return;
+
+  const dt = Math.min(0.05, Math.max(0, dtSeconds));
+  if (dt <= 0) return;
+
+  const boost = pressedKeys.has("ShiftLeft") || pressedKeys.has("ShiftRight") ? 2.5 : 1.0;
+
+  const dist = camera.position.distanceTo(controls.target);
+  const panSpeedUnitsPerSec = Math.min(80, Math.max(0.5, dist * 1.1)) * boost;
+  const rotateSpeedRadPerSec = 1.25 * (boost > 1 ? 1.35 : 1.0);
+
+  let moveRight = 0;
+  let moveForward = 0;
+  if (pressedKeys.has("KeyD") || pressedKeys.has("ArrowRight")) moveRight += 1;
+  if (pressedKeys.has("KeyA") || pressedKeys.has("ArrowLeft")) moveRight -= 1;
+  if (pressedKeys.has("KeyW") || pressedKeys.has("ArrowUp")) moveForward += 1;
+  if (pressedKeys.has("KeyS") || pressedKeys.has("ArrowDown")) moveForward -= 1;
+
+  if (moveRight !== 0 || moveForward !== 0) {
+    camera.getWorldDirection(tmpForward);
+    tmpForward.y = 0;
+    if (tmpForward.lengthSq() < 1e-10) {
+      tmpForward.set(0, 0, -1);
+    }
+    tmpForward.normalize();
+    tmpRight.crossVectors(tmpForward, worldUp).normalize();
+
+    tmpDelta.set(0, 0, 0);
+    tmpDelta.addScaledVector(tmpRight, moveRight);
+    tmpDelta.addScaledVector(tmpForward, moveForward);
+    if (tmpDelta.lengthSq() > 1e-10) {
+      tmpDelta.normalize().multiplyScalar(panSpeedUnitsPerSec * dt);
+      camera.position.add(tmpDelta);
+      controls.target.add(tmpDelta);
+    }
+  }
+
+  const rot = rotateSpeedRadPerSec * dt;
+  if (pressedKeys.has("KeyQ")) controlsInternal._rotateLeft(rot);
+  if (pressedKeys.has("KeyE")) controlsInternal._rotateLeft(-rot);
+  if (pressedKeys.has("KeyZ")) controlsInternal._rotateUp(rot);
+  if (pressedKeys.has("KeyX")) controlsInternal._rotateUp(-rot);
+}
+
 threeScene.add(new THREE.AmbientLight(0xffffff, 0.55));
 const dir = new THREE.DirectionalLight(0xffffff, 0.75);
 dir.position.set(5, 10, 4);
@@ -559,6 +670,7 @@ resize();
 
 function animate() {
   requestAnimationFrame(animate);
+  applyCameraKeyControls(clock.getDelta());
   controls.update();
   renderer.render(threeScene, camera);
 }
