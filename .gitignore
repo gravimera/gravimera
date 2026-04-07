@@ -1,3 +1,4 @@
+/official_site
 /target
 /dist
 /.idea
@@ -12,7 +13,6 @@ node_modules/
 ts/gravimera_proto/dist/
 web/viewer/dist/
 web/viewer/.vite/
-official_site.md
 
 *.log
 *.pyc
