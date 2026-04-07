@@ -11,6 +11,7 @@ fn main() {
     let protos = [
         proto_root.join("gravimera/common/v1/uuid.proto"),
         proto_root.join("gravimera/terrain/v1/terrain.proto"),
+        proto_root.join("gravimera/scene/v1/scene.proto"),
     ];
 
     let proto_includes = [proto_root];

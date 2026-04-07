@@ -122,6 +122,7 @@ Implementation note: for MVP, collision is defined on the root prefab (fast and 
 Goal: efficient load/encode and future extensibility. Use protobuf.
 
 - File: `<root_dir>/realm/<realm_id>/scenes/<scene_id>/build/scene.grav` (active scene build output).
+- Schema: [`proto/gravimera/scene/v1/scene.proto`](/Users/flow/workspace/github/gravimera/proto/gravimera/scene/v1/scene.proto) (overview: [`docs/file_formats/scene_grav.md`](/Users/flow/workspace/github/gravimera/docs/file_formats/scene_grav.md))
 - Save timing: when switching **Build → Play**.
 - Load timing: on game start, try load if present.
 - Errors: log an error and continue the game (do not abort).

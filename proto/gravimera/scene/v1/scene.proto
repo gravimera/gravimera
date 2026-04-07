@@ -1,0 +1,322 @@
+syntax = "proto3";
+
+package gravimera.scene.v1;
+
+import "gravimera/common/v1/uuid.proto";
+
+// `build/scene.grav` (per-scene embedded prefab defs + build instances).
+message SceneDat {
+  uint32 version = 1;
+  uint32 units_per_meter = 2;
+  repeated SceneDatObjectDef defs = 3;
+  repeated SceneDatObjectInstance instances = 4;
+}
+
+message Float32Dat {
+  float value = 1;
+}
+
+message ColorDat {
+  fixed32 rgba = 1;
+}
+
+message EmptyDat {}
+
+message SceneDatObjectInstance {
+  gravimera.common.v1.Uuid128 instance_id = 1;
+  gravimera.common.v1.Uuid128 base_object_id = 2;
+  int32 x_units = 3;
+  int32 y_units = 4;
+  int32 z_units = 5;
+  float rot_x = 6;
+  float rot_y = 7;
+  float rot_z = 8;
+  float rot_w = 9;
+  ColorDat tint = 10;
+  Float32Dat scale_x = 11;
+  Float32Dat scale_y = 12;
+  Float32Dat scale_z = 13;
+  repeated gravimera.common.v1.Uuid128 forms = 14;
+  uint32 active_form = 15;
+
+  // Note: tag gap 16..18 reserved for removed fields.
+  bool is_protagonist = 19;
+}
+
+message SceneDatObjectDef {
+  gravimera.common.v1.Uuid128 object_id = 1;
+  string label = 2;
+  float size_x = 3;
+  float size_y = 4;
+  float size_z = 5;
+  SceneDatCollider collider = 6;
+  SceneDatInteraction interaction = 7;
+  repeated SceneDatPartDef parts = 8;
+  ColorDat minimap_color = 9;
+  Float32Dat health_bar_offset_y = 10;
+  repeated SceneDatAnchorDef anchors = 11;
+  SceneDatMobility mobility = 12;
+  SceneDatProjectile projectile = 13;
+  SceneDatUnitAttack attack = 14;
+  SceneDatAimProfile aim = 15;
+  Float32Dat ground_origin_y = 16;
+}
+
+message SceneDatAimProfile {
+  Float32Dat max_yaw_delta_degrees = 1;
+  repeated gravimera.common.v1.Uuid128 components = 2;
+}
+
+enum SceneDatMobilityMode {
+  GROUND = 0;
+  AIR = 1;
+}
+
+message SceneDatMobility {
+  SceneDatMobilityMode mode = 1;
+  float max_speed = 2;
+}
+
+enum SceneDatProjectileObstacleRule {
+  BULLETS_BLOCKERS = 0;
+  LASER_BLOCKERS = 1;
+}
+
+message SceneDatProjectile {
+  SceneDatProjectileObstacleRule obstacle_rule = 1;
+  float speed = 2;
+  float ttl_secs = 3;
+  int32 damage = 4;
+  bool spawn_energy_impact = 5;
+}
+
+enum SceneDatUnitAttackKind {
+  UNKNOWN = 0;
+  MELEE = 1;
+  RANGED_PROJECTILE = 2;
+}
+
+message SceneDatUnitAttack {
+  SceneDatUnitAttackKind kind = 1;
+  float cooldown_secs = 2;
+  int32 damage = 3;
+  float anim_window_secs = 4;
+  SceneDatMeleeAttack melee = 5;
+  SceneDatRangedAttack ranged = 6;
+}
+
+message SceneDatMeleeAttack {
+  float range = 1;
+  float radius = 2;
+  float arc_degrees = 3;
+}
+
+message SceneDatRangedAttack {
+  gravimera.common.v1.Uuid128 projectile_prefab = 1;
+  SceneDatAnchorRef muzzle = 2;
+}
+
+message SceneDatAnchorRef {
+  gravimera.common.v1.Uuid128 object_id = 1;
+  string anchor = 2;
+}
+
+message SceneDatAnchorDef {
+  string name = 1;
+  SceneDatTransform transform = 2;
+}
+
+message SceneDatCollider {
+  oneof kind {
+    EmptyDat none = 1;
+    SceneDatCircleXz circle_xz = 2;
+    SceneDatAabbXz aabb_xz = 3;
+  }
+}
+
+message SceneDatCircleXz {
+  float radius = 1;
+}
+
+message SceneDatAabbXz {
+  float half_x = 1;
+  float half_z = 2;
+}
+
+message SceneDatInteraction {
+  bool blocks_bullets = 1;
+  bool blocks_laser = 2;
+  SceneDatMovementBlock movement_block = 3;
+  bool supports_standing = 4;
+}
+
+message SceneDatMovementBlock {
+  oneof kind {
+    EmptyDat always = 1;
+    Float32Dat upper_body_fraction = 2;
+  }
+}
+
+message SceneDatPartDef {
+  gravimera.common.v1.Uuid128 part_id = 1;
+  SceneDatTransform transform = 2;
+  oneof kind {
+    gravimera.common.v1.Uuid128 object_ref = 3;
+    SceneDatPrimitive primitive = 4;
+    string model = 5;
+  }
+  SceneDatAttachment attachment = 6;
+  repeated SceneDatPartAnimationSlot animations = 7;
+  SceneDatTransform fallback_basis = 8;
+}
+
+message SceneDatAttachment {
+  string parent_anchor = 1;
+  string child_anchor = 2;
+}
+
+enum SceneDatPartAnimationFamily {
+  BASE = 0;
+  OVERLAY = 1;
+}
+
+message SceneDatPartAnimationSlot {
+  string channel = 1;
+  SceneDatPartAnimation animation = 2;
+  SceneDatPartAnimationFamily family = 3;
+}
+
+enum SceneDatPartAnimationDriver {
+  ALWAYS = 0;
+  MOVE_PHASE = 1;
+  MOVE_DISTANCE = 2;
+  ATTACK_TIME = 3;
+  ACTION_TIME = 4;
+}
+
+enum SceneDatPartAnimationSpinAxisSpace {
+  JOIN = 0;
+  CHILD_LOCAL = 1;
+}
+
+message SceneDatPartAnimation {
+  // NOTE: keep tags disjoint from the non-oneof fields below (driver/speed/time_offset/basis).
+  oneof kind {
+    SceneDatPartAnimationLoop loop = 1;
+    SceneDatPartAnimationSpin spin = 2;
+    SceneDatPartAnimationLoop once = 6;
+    SceneDatPartAnimationLoop ping_pong = 7;
+  }
+  SceneDatPartAnimationDriver driver = 3;
+  float speed_scale = 4;
+  float time_offset_units = 5;
+  SceneDatTransform basis = 8;
+}
+
+message SceneDatPartAnimationLoop {
+  float duration_secs = 1;
+  repeated SceneDatPartAnimationKeyframe keyframes = 2;
+}
+
+message SceneDatPartAnimationSpin {
+  float axis_x = 1;
+  float axis_y = 2;
+  float axis_z = 3;
+  float radians_per_unit = 4;
+  SceneDatPartAnimationSpinAxisSpace axis_space = 5;
+}
+
+message SceneDatPartAnimationKeyframe {
+  float time_secs = 1;
+  SceneDatTransform delta = 2;
+}
+
+message SceneDatTransform {
+  float tx = 1;
+  float ty = 2;
+  float tz = 3;
+  float rx = 4;
+  float ry = 5;
+  float rz = 6;
+  float rw = 7;
+  float sx = 8;
+  float sy = 9;
+  float sz = 10;
+}
+
+message SceneDatPrimitive {
+  oneof kind {
+    SceneDatPrimitiveMeshRef mesh_ref = 1;
+    SceneDatPrimitiveSolid solid = 2;
+  }
+}
+
+message SceneDatPrimitiveMeshRef {
+  SceneDatMeshKey mesh = 1;
+  SceneDatMaterialKey material = 2;
+}
+
+message SceneDatPrimitiveSolid {
+  SceneDatMeshKey mesh = 1;
+  SceneDatPrimitiveParams params = 2;
+  ColorDat color = 3;
+  bool unlit = 4;
+}
+
+enum SceneDatMeshKey {
+  UNIT_CUBE = 0;
+  UNIT_CYLINDER = 1;
+  UNIT_CONE = 2;
+  UNIT_SPHERE = 3;
+  UNIT_PLANE = 4;
+  UNIT_CAPSULE = 5;
+  UNIT_CONICAL_FRUSTUM = 6;
+  UNIT_TORUS = 7;
+  UNIT_TRIANGLE = 8;
+  UNIT_TETRAHEDRON = 9;
+  TREE_TRUNK = 10;
+  TREE_CONE = 11;
+}
+
+message SceneDatMaterialKey {
+  oneof kind {
+    SceneDatBuildBlock build_block = 1;
+    EmptyDat fence_stake = 2;
+    EmptyDat fence_stick = 3;
+    SceneDatTreeVariant tree_trunk = 4;
+    SceneDatTreeVariant tree_main = 5;
+    SceneDatTreeVariant tree_crown = 6;
+  }
+}
+
+message SceneDatBuildBlock {
+  uint32 index = 1;
+}
+
+message SceneDatTreeVariant {
+  uint32 variant = 1;
+}
+
+message SceneDatPrimitiveParams {
+  oneof kind {
+    SceneDatCapsuleParams capsule = 1;
+    SceneDatConicalFrustumParams conical_frustum = 2;
+    SceneDatTorusParams torus = 3;
+  }
+}
+
+message SceneDatCapsuleParams {
+  float radius = 1;
+  float half_length = 2;
+}
+
+message SceneDatConicalFrustumParams {
+  float radius_top = 1;
+  float radius_bottom = 2;
+  float height = 3;
+}
+
+message SceneDatTorusParams {
+  float minor_radius = 1;
+  float major_radius = 2;
+}
