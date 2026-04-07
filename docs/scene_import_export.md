@@ -28,6 +28,8 @@ Prefab packages are exported by scanning the selected scenes for referenced pref
 
 Terrain packages are exported by reading each selected scene’s terrain selection (`build/terrain.grav` / legacy `build/floor_selection.json`) and then copying each matching realm terrain package directory into `terrain/<terrain_uuid>/...`.
 
+Note: `build/terrain.grav` is protobuf and may embed the full terrain definition for rendering, but export bundling currently keys off the `terrain_id` selection when present. Details: [`docs/file_formats/terrain_grav.md`](/Users/flow/workspace/github/gravimera/docs/file_formats/terrain_grav.md)
+
 ## Import Rules
 
 - Paths are validated to prevent traversal or absolute paths.
@@ -56,6 +58,6 @@ For `Keep Both`:
 - Conflicting bundled prefab packages are imported under fresh prefab ids.
 - Conflicting bundled terrain packages are imported under fresh terrain ids.
 - Imported scene files are rewritten so `build/scene.grav`, `build/scene.build.grav`, `src/meta.json`, portal targets, pinned prefab references, and form prefab references all point at the new ids.
-- Imported scene terrain selection (`build/terrain.grav`) is rewritten to point at any newly imported terrain ids.
+- Imported scene terrain selection (`build/terrain.grav`) is rewritten to point at any newly imported terrain ids (the `terrain_id` field; embedded defs remain valid as-is).
 
 The toast summary now reports imported, replaced, kept-both, and invalid counts separately for scenes, prefabs, and terrain.

@@ -42,6 +42,7 @@ mod player;
 mod prefab_descriptors;
 mod prefab_glb;
 mod prefab_zip;
+mod proto;
 mod realm;
 mod realm_floor_packages;
 mod realm_prefab_packages;

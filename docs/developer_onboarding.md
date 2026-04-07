@@ -113,7 +113,7 @@ Gravimera stores runtime data under `<root_dir>` (default: `~/.gravimera/`):
 - `<root_dir>/realm/` (realms + scenes)
 - `<root_dir>/realm/active.json` (active realm/scene selection)
 - `<root_dir>/realm/<realm_id>/scenes/<scene_id>/build/scene.grav` (saved scene)
-- `<root_dir>/realm/<realm_id>/scenes/<scene_id>/build/terrain.grav` (per-scene terrain selection)
+- `<root_dir>/realm/<realm_id>/scenes/<scene_id>/build/terrain.grav` (per-scene terrain selection; protobuf, embeds the active terrain def)
 - `<root_dir>/realm/<realm_id>/terrain/` (realm terrain packages; GenFloor saves terrain here)
 - `<root_dir>/realm/<realm_id>/prefabs/` (realm prefab packages; Gen3D saves prefabs here; layout spec `docs/gamedesign/39_realm_prefab_packages_v1.md`)
 - `<root_dir>/cache/` (Gen3D artifacts, logs, screenshots)

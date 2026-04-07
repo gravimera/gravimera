@@ -1,0 +1,119 @@
+syntax = "proto3";
+
+package gravimera.terrain.v1;
+
+import "gravimera/common/v1/uuid.proto";
+
+// `build/terrain.grav` (per-scene terrain selection + embedded terrain def).
+message SceneTerrainDat {
+  // v1: terrain_id only
+  // v2: terrain_id + embedded terrain_def
+  uint32 format_version = 1;
+
+  // Optional: the realm terrain package id. Omitted for Default Terrain.
+  gravimera.common.v1.Uuid128 terrain_id = 2;
+
+  // Optional: embedded terrain definition so the scene can render without the realm package.
+  TerrainDefV1 terrain_def = 3;
+}
+
+// Canonical terrain definition (mirrors `terrain_def_v1.json` / `FloorDefV1`).
+message TerrainDefV1 {
+  uint32 format_version = 1;
+  optional string label = 2;
+  TerrainMeshV1 mesh = 3;
+  TerrainMaterialV1 material = 4;
+  TerrainColoringV1 coloring = 5;
+  TerrainReliefV1 relief = 6;
+  TerrainAnimationV1 animation = 7;
+}
+
+enum TerrainMeshKind {
+  TERRAIN_MESH_KIND_GRID = 0;
+}
+
+message TerrainMeshV1 {
+  TerrainMeshKind kind = 1;
+  float size_x_m = 2;
+  float size_z_m = 3;
+  uint32 subdiv_x = 4;
+  uint32 subdiv_z = 5;
+  float thickness_m = 6;
+  float uv_tiling_x = 7;
+  float uv_tiling_z = 8;
+}
+
+message TerrainMaterialV1 {
+  float base_color_r = 1;
+  float base_color_g = 2;
+  float base_color_b = 3;
+  float base_color_a = 4;
+  float metallic = 5;
+  float roughness = 6;
+  bool unlit = 7;
+}
+
+enum TerrainColoringMode {
+  TERRAIN_COLORING_MODE_SOLID = 0;
+  TERRAIN_COLORING_MODE_CHECKER = 1;
+  TERRAIN_COLORING_MODE_STRIPES = 2;
+  TERRAIN_COLORING_MODE_GRADIENT = 3;
+  TERRAIN_COLORING_MODE_NOISE = 4;
+}
+
+message TerrainNoiseV1 {
+  uint32 seed = 1;
+  float frequency = 2;
+  uint32 octaves = 3;
+  float lacunarity = 4;
+  float gain = 5;
+}
+
+message TerrainColorRgba {
+  float r = 1;
+  float g = 2;
+  float b = 3;
+  float a = 4;
+}
+
+message TerrainColoringV1 {
+  TerrainColoringMode mode = 1;
+  repeated TerrainColorRgba palette = 2;
+  float scale_x = 3;
+  float scale_z = 4;
+  float angle_deg = 5;
+  TerrainNoiseV1 noise = 6;
+}
+
+enum TerrainReliefMode {
+  TERRAIN_RELIEF_MODE_NONE = 0;
+  TERRAIN_RELIEF_MODE_NOISE = 1;
+}
+
+message TerrainReliefV1 {
+  TerrainReliefMode mode = 1;
+  float amplitude = 2;
+  TerrainNoiseV1 noise = 3;
+}
+
+enum TerrainAnimationMode {
+  TERRAIN_ANIMATION_MODE_NONE = 0;
+  TERRAIN_ANIMATION_MODE_CPU = 1;
+  TERRAIN_ANIMATION_MODE_GPU = 2;
+}
+
+message TerrainWaveV1 {
+  float amplitude = 1;
+  float wavelength = 2;
+  float direction_x = 3;
+  float direction_z = 4;
+  float speed = 5;
+  float phase = 6;
+}
+
+message TerrainAnimationV1 {
+  TerrainAnimationMode mode = 1;
+  repeated TerrainWaveV1 waves = 2;
+  float normal_strength = 3;
+}
+

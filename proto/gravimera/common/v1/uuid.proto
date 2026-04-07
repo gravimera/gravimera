@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package gravimera.common.v1;
+
+// A UUID stored as two u64 words (big-endian when reassembled into u128).
+message Uuid128 {
+  fixed64 hi = 1;
+  fixed64 lo = 2;
+}
+

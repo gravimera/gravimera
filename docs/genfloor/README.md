@@ -31,6 +31,9 @@ Per-scene terrain selection is stored here:
 realm/<realm_id>/scenes/<scene_id>/build/terrain.grav
 ```
 
+`terrain.grav` is protobuf and embeds the selected terrain definition so the scene build can render
+without loading the realm terrain package. Details: [`docs/file_formats/terrain_grav.md`](/Users/flow/workspace/github/gravimera/docs/file_formats/terrain_grav.md)
+
 ## Terrain Definition (`FloorDefV1`)
 
 `terrain_def_v1.json` is a JSON object with these top-level fields:

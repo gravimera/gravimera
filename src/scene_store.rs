@@ -723,32 +723,17 @@ pub(crate) fn apply_scene_floor_selection(
     active_floor: &mut ActiveWorldFloor,
     floor_library: &mut FloorLibraryUiState,
 ) {
-    let loaded = match crate::scene_floor_selection::load_scene_floor_selection(realm_id, scene_id)
-    {
-        Ok(floor_id) => floor_id,
+    let mut selected_floor_id = None;
+    match crate::scene_floor_selection::load_scene_floor_selection(realm_id, scene_id) {
+        Ok(selection) => {
+            selected_floor_id = selection.terrain_id;
+            set_active_world_floor(active_floor, selection.terrain_id, selection.def);
+        }
         Err(err) => {
             warn!("{err}");
-            None
+            let _ = crate::scene_floor_selection::save_scene_floor_selection(realm_id, scene_id, None);
+            set_active_world_floor(active_floor, None, FloorDefV1::default_world());
         }
-    };
-
-    let mut selected_floor_id = None;
-    if let Some(floor_id) = loaded {
-        match crate::realm_floor_packages::load_realm_floor_def(realm_id, floor_id) {
-            Ok(def) => {
-                set_active_world_floor(active_floor, Some(floor_id), def);
-                selected_floor_id = Some(floor_id);
-            }
-            Err(err) => {
-                warn!("{err}");
-                let _ = crate::scene_floor_selection::save_scene_floor_selection(
-                    realm_id, scene_id, None,
-                );
-                set_active_world_floor(active_floor, None, FloorDefV1::default_world());
-            }
-        }
-    } else {
-        set_active_world_floor(active_floor, None, FloorDefV1::default_world());
     }
 
     let list_id = selected_floor_id.unwrap_or(DEFAULT_FLOOR_ID);
