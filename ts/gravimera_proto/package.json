@@ -12,7 +12,8 @@
   "scripts": {
     "gen": "node scripts/gen.mjs",
     "check": "tsc -p tsconfig.json",
-    "build": "npm run gen && tsc -p tsconfig.build.json"
+    "build": "tsc -p tsconfig.build.json",
+    "regen": "npm run gen && npm run build"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.11.0"

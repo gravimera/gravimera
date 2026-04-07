@@ -35,29 +35,23 @@ The `.proto` files under [`proto/`](/Users/flow/workspace/github/gravimera/proto
 
 Rust:
 
-- `build.rs` runs `prost-build` at compile time and writes generated Rust into `$OUT_DIR`.
-- [`src/proto.rs`](/Users/flow/workspace/github/gravimera/src/proto.rs) `include!()`s the generated modules for use in the runtime.
-- The build uses `protoc-bin-vendored`, so a system `protoc` is not required for `cargo build`.
+- Generated Rust modules are checked in under [`src/proto_gen/`](/Users/flow/workspace/github/gravimera/src/proto_gen).
+- [`src/proto.rs`](/Users/flow/workspace/github/gravimera/src/proto.rs) `include!()`s these modules for use in the runtime.
 
 TypeScript:
 
-- TS decoding code is generated with `protoc-gen-es` into `ts/gravimera_proto/src/gen/`.
-- From repo root:
+- Generated TS sources live under `ts/gravimera_proto/src/gen/` and are checked in.
+- The compiled JS output under `ts/gravimera_proto/dist/` is also checked in, so consumers do not
+  need to run protobuf generation or TypeScript compilation.
+- From repo root (no `protoc` required):
 
 ```bash
 cd ts/gravimera_proto
 npm install
-npm run gen
-npm run check
-```
-
-This requires `protoc` (the protobuf compiler) to be installed and available on your `PATH`.
-
-If you need emitted JavaScript output (for bundlers/runtime), run:
-
-```bash
-cd ts/gravimera_proto
 npm run build
 ```
+
+If you modify `.proto` files and need to regenerate the TS sources, run `npm run regen` in
+`ts/gravimera_proto` (this requires `protoc` to be installed and available on your `PATH`).
 
 Note: `fixed64` fields (like `Uuid128.hi/lo`) are generated as `bigint` in TypeScript because JavaScript numbers cannot represent 64-bit integers safely.

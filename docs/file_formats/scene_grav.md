@@ -34,26 +34,23 @@ version), the startup rebuild is skipped to avoid overwriting it.
 
 Rust:
 
-- `build.rs` runs `prost-build` at compile time and writes generated Rust into `$OUT_DIR`.
-- [`src/proto.rs`](/Users/flow/workspace/github/gravimera/src/proto.rs) `include!()`s the generated modules for use in the runtime.
+- Generated Rust modules are checked in under [`src/proto_gen/`](/Users/flow/workspace/github/gravimera/src/proto_gen).
+- [`src/proto.rs`](/Users/flow/workspace/github/gravimera/src/proto.rs) `include!()`s these modules for use in the runtime.
+
+If you modify `.proto` files, regenerate the checked-in Rust sources and commit the result.
 
 TypeScript:
 
-- TS decoding code is generated with `protoc-gen-es` into `ts/gravimera_proto/src/gen/`.
-- From repo root:
+- Generated TS sources live under `ts/gravimera_proto/src/gen/` and are checked in.
+- The compiled JS output under `ts/gravimera_proto/dist/` is also checked in, so consumers do not
+  need to run protobuf generation or TypeScript compilation.
+- From repo root (no `protoc` required):
 
 ```bash
 cd ts/gravimera_proto
 npm install
-npm run gen
-npm run check
-```
-
-This requires `protoc` (the protobuf compiler) to be installed and available on your `PATH`.
-
-If you need emitted JavaScript output (for bundlers/runtime), run:
-
-```bash
-cd ts/gravimera_proto
 npm run build
 ```
+
+If you modify `.proto` files and need to regenerate the TS sources, run `npm run regen` in
+`ts/gravimera_proto` (this requires `protoc` to be installed and available on your `PATH`).
