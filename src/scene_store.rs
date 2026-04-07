@@ -1584,6 +1584,7 @@ pub(crate) fn load_scene_dat(
     mut library: ResMut<ObjectLibrary>,
     mut active_floor: ResMut<ActiveWorldFloor>,
     mut floor_library: ResMut<FloorLibraryUiState>,
+    mut save_requests: MessageWriter<SceneSaveRequest>,
 ) {
     // Reset library to builtins only. `scene.grav` must contain all defs needed to spawn.
     *library = ObjectLibrary::default();
@@ -1597,6 +1598,17 @@ pub(crate) fn load_scene_dat(
         &mut active_floor,
         &mut floor_library,
     );
+
+    // Ensure `build/terrain.grav` is self-contained (embeds the full terrain definition) so
+    // external tools like the web viewer can render the scene without loading realm packages.
+    if let Err(err) = crate::scene_floor_selection::save_scene_floor_selection_embedded(
+        &active.realm_id,
+        &active.scene_id,
+        active_floor.floor_id,
+        &active_floor.def,
+    ) {
+        warn!("{err}");
+    }
 
     let path = workspace_scene_dat_path(&active, workspace_ui.tab);
     match load_scene_dat_from_path(
@@ -1618,6 +1630,20 @@ pub(crate) fn load_scene_dat(
         Err(err) => {
             error!("{err}");
         }
+    }
+
+    // Rebuild `build/scene.grav` once at startup so it is canonical (v9) and self-contained,
+    // but avoid overwriting an existing file that we couldn't decode (corrupt or unknown version).
+    let has_scene_file = path.exists()
+        || (path.extension() == Some(OsStr::new("grav")) && path.with_extension("dat").exists());
+    let decoded_scene = decode_scene_dat_from_path(&path).ok().flatten().is_some();
+    if !has_scene_file || decoded_scene {
+        save_requests.write(SceneSaveRequest::new("startup rebuild build/scene.grav"));
+    } else {
+        warn!(
+            "Skipping startup rebuild of {}: on-disk scene could not be decoded.",
+            path.display()
+        );
     }
 }
 

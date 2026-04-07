@@ -23,6 +23,13 @@ The schema includes data-driven:
 - Interaction + simple collider profiles
 - Optional mobility/projectile/attack/aim profiles
 
+## Runtime Behavior
+
+On rendered startup, Gravimera queues a one-shot save to rewrite `build/scene.grav` in the current
+canonical format (v9). This keeps the build output self-contained and stable for external tools
+(like the web viewer). If an existing on-disk scene file cannot be decoded (corrupt or unknown
+version), the startup rebuild is skipped to avoid overwriting it.
+
 ## Code Generation
 
 Rust:

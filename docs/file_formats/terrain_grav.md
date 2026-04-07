@@ -27,6 +27,7 @@ The runtime loader is tolerant of old inputs and will upgrade to the current for
 
 - Legacy `build/floor_selection.json` is migrated to `build/terrain.grav` and removed.
 - `format_version = 1` protobuf files (selection-only) are upgraded to `format_version = 2` by embedding the referenced terrain definition (or Default Terrain if no id is selected).
+- On rendered startup, the runtime rewrites `build/terrain.grav` in `format_version = 2` embedding the currently active terrain definition so the build output is self-contained for viewers/export.
 
 ## Code Generation
 

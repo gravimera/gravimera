@@ -45,6 +45,24 @@ pub(crate) fn save_scene_floor_selection(
     save_scene_floor_selection_to_paths(&realm_id, &path, &legacy_path, floor_id)
 }
 
+pub(crate) fn save_scene_floor_selection_embedded(
+    realm_id: &str,
+    scene_id: &str,
+    floor_id: Option<u128>,
+    def: &crate::genfloor::defs::FloorDefV1,
+) -> Result<(), String> {
+    let realm_id = crate::realm::sanitize_id(realm_id)
+        .ok_or_else(|| "scene terrain selection: invalid realm id".to_string())?;
+    let scene_id = crate::realm::sanitize_id(scene_id)
+        .ok_or_else(|| "scene terrain selection: invalid scene id".to_string())?;
+    let path = crate::paths::scene_floor_selection_path(&realm_id, &scene_id);
+    let legacy_path = crate::paths::legacy_scene_floor_selection_path(&realm_id, &scene_id);
+    let terrain_id = floor_id.filter(|id| *id != crate::floor_library_ui::DEFAULT_FLOOR_ID);
+    let mut canonical = def.clone();
+    canonical.canonicalize_in_place();
+    save_scene_terrain_dat_to_paths(&path, &legacy_path, terrain_id, &canonical)
+}
+
 pub(crate) fn migrate_legacy_scene_floor_selection_files() -> Result<(), String> {
     let realms_dir = crate::paths::realms_dir();
     if !realms_dir.exists() {
