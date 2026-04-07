@@ -4,10 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "npm --prefix ../../ts/gravimera_proto run build && vite",
-    "build": "npm --prefix ../../ts/gravimera_proto run build && vite build",
+    "dev": "vite",
+    "build": "vite build",
     "preview": "vite preview",
-    "check": "npm --prefix ../../ts/gravimera_proto run build && tsc -p tsconfig.json"
+    "check": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.11.0",

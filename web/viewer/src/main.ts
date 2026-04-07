@@ -583,6 +583,71 @@ function frameCameraToObject(obj: THREE.Object3D) {
   controls.update();
 }
 
+function renderScene(sceneDat: SceneDat, terrainDef: TerrainDefV1 | undefined) {
+  clearWorld();
+  renderTerrain(terrainDef, worldRoot);
+
+  const defsById = new Map<bigint, SceneDatObjectDef>();
+  for (const def of sceneDat.defs) {
+    const id = uuidToU128(def.objectId);
+    if (id !== null) defsById.set(id, def);
+  }
+
+  const unitsPerMeter = Math.max(1, sceneDat.unitsPerMeter || 100);
+  const anchorCacheById = new Map<bigint, AnchorCache>();
+  const stack = new Set<bigint>();
+
+  let count = 0;
+  for (const inst of sceneDat.instances) {
+    const baseId = uuidToU128(inst.baseObjectId);
+    if (baseId === null) continue;
+
+    const forms =
+      inst.forms.length > 0
+        ? inst.forms.map(uuidToU128).filter((x): x is bigint => x !== null)
+        : [];
+    if (forms.length === 0) forms.push(baseId);
+    const active = inst.activeForm >= 0 && inst.activeForm < forms.length ? inst.activeForm : 0;
+    const prefabId = forms[active] ?? baseId;
+
+    const root = new THREE.Object3D();
+    worldRoot.add(root);
+
+    const pos = new THREE.Vector3(
+      inst.xUnits / unitsPerMeter,
+      inst.yUnits / unitsPerMeter,
+      inst.zUnits / unitsPerMeter,
+    );
+    const rot = new THREE.Quaternion(inst.rotX, inst.rotY, inst.rotZ, inst.rotW);
+    const scl = new THREE.Vector3(
+      inst.scaleX?.value ?? 1,
+      inst.scaleY?.value ?? 1,
+      inst.scaleZ?.value ?? 1,
+    );
+    root.position.copy(pos);
+    root.quaternion.copy(rot);
+    root.scale.copy(scl);
+
+    const tint = inst.tint ? rgbaFromColorDat(inst.tint) : { r: 1, g: 1, b: 1, a: 1 };
+    renderObjectDef(prefabId, defsById, root, tint, stack, anchorCacheById, 0);
+    count += 1;
+  }
+
+  frameCameraToObject(worldRoot);
+  logLine(
+    logEl,
+    `Loaded scene: defs=${sceneDat.defs.length}, instances=${count}, units_per_meter=${unitsPerMeter}`,
+  );
+}
+
+async function fetchBytes(url: string): Promise<Uint8Array> {
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+  }
+  return new Uint8Array(await resp.arrayBuffer());
+}
+
 async function loadFiles() {
   const sceneFile = sceneFileEl.files?.[0];
   if (!sceneFile) {
@@ -611,46 +676,32 @@ async function loadFiles() {
     }
   }
 
-  clearWorld();
-  renderTerrain(terrainDef, worldRoot);
+  renderScene(sceneDat, terrainDef);
+}
 
-  const defsById = new Map<bigint, SceneDatObjectDef>();
-  for (const def of sceneDat.defs) {
-    const id = uuidToU128(def.objectId);
-    if (id !== null) defsById.set(id, def);
+async function autoLoadWastelandScene() {
+  const sceneUrl = "/assets/scene_wasteland/scene.grav";
+  const terrainUrl = "/assets/scene_wasteland/terrain.grav";
+
+  logLine(logEl, `Auto-loading default scene from ${sceneUrl} ...`);
+
+  let sceneDat: SceneDat;
+  try {
+    sceneDat = fromBinary(SceneDatSchema, await fetchBytes(sceneUrl));
+  } catch (err) {
+    logLine(logEl, `Auto-load failed: could not load ${sceneUrl}: ${String(err)}`);
+    return;
   }
 
-  const unitsPerMeter = Math.max(1, sceneDat.unitsPerMeter || 100);
-  const anchorCacheById = new Map<bigint, AnchorCache>();
-  const stack = new Set<bigint>();
-
-  let count = 0;
-  for (const inst of sceneDat.instances) {
-    const baseId = uuidToU128(inst.baseObjectId);
-    if (baseId === null) continue;
-
-    const forms = inst.forms.length > 0 ? inst.forms.map(uuidToU128).filter((x): x is bigint => x !== null) : [];
-    if (forms.length === 0) forms.push(baseId);
-    const active = inst.activeForm >= 0 && inst.activeForm < forms.length ? inst.activeForm : 0;
-    const prefabId = forms[active] ?? baseId;
-
-    const root = new THREE.Object3D();
-    worldRoot.add(root);
-
-    const pos = new THREE.Vector3(inst.xUnits / unitsPerMeter, inst.yUnits / unitsPerMeter, inst.zUnits / unitsPerMeter);
-    const rot = new THREE.Quaternion(inst.rotX, inst.rotY, inst.rotZ, inst.rotW);
-    const scl = new THREE.Vector3(inst.scaleX?.value ?? 1, inst.scaleY?.value ?? 1, inst.scaleZ?.value ?? 1);
-    root.position.copy(pos);
-    root.quaternion.copy(rot);
-    root.scale.copy(scl);
-
-    const tint = inst.tint ? rgbaFromColorDat(inst.tint) : { r: 1, g: 1, b: 1, a: 1 };
-    renderObjectDef(prefabId, defsById, root, tint, stack, anchorCacheById, 0);
-    count += 1;
+  let terrainDef: TerrainDefV1 | undefined = undefined;
+  try {
+    const terrainDat = fromBinary(SceneTerrainDatSchema, await fetchBytes(terrainUrl));
+    terrainDef = terrainDat.terrainDef;
+  } catch (err) {
+    logLine(logEl, `Auto-load: could not load ${terrainUrl} (continuing without terrain): ${String(err)}`);
   }
 
-  frameCameraToObject(worldRoot);
-  logLine(logEl, `Loaded scene: defs=${sceneDat.defs.length}, instances=${count}, units_per_meter=${unitsPerMeter}`);
+  renderScene(sceneDat, terrainDef);
 }
 
 loadBtnEl.addEventListener("click", () => {
@@ -667,6 +718,8 @@ function resize() {
 
 window.addEventListener("resize", resize);
 resize();
+
+void autoLoadWastelandScene();
 
 function animate() {
   requestAnimationFrame(animate);

@@ -22,19 +22,28 @@ Prereqs:
 From repo root:
 
 ```bash
-cd ts/gravimera_proto
-npm install
-npm run build
-
-cd ../../web/viewer
+cd web/viewer
 npm install
 npm run dev
 ```
 
-Then open the printed URL and load:
+The viewer will auto-load the default demo scene from:
+
+- `assets/scene_wasteland/scene.grav`
+- `assets/scene_wasteland/terrain.grav`
+
+You can also load custom files from your local disk:
 
 - `<root_dir>/realm/<realm_id>/scenes/<scene_id>/build/scene.grav`
 - `<root_dir>/realm/<realm_id>/scenes/<scene_id>/build/terrain.grav` (optional)
+
+## Run (Server)
+
+To bind to all addresses (LAN) and pick a port:
+
+```bash
+python3 tools/run_web_viewer.py --port 5173
+```
 
 Notes:
 
