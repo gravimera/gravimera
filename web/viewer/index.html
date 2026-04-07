@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gravimera Web Viewer</title>
+  </head>
+  <body>
+    <div id="ui">
+      <div class="ui-title">
+        <div class="ui-title__name">Gravimera Web Viewer</div>
+        <div class="ui-title__hint">
+          Load <code>scene.grav</code> + <code>terrain.grav</code> and render basic primitives.
+        </div>
+      </div>
+
+      <div class="ui-row">
+        <label class="ui-label">
+          <span>scene.grav</span>
+          <input id="sceneFile" type="file" accept=".grav" />
+        </label>
+        <label class="ui-label">
+          <span>terrain.grav (optional)</span>
+          <input id="terrainFile" type="file" accept=".grav" />
+        </label>
+        <button id="loadBtn" class="ui-btn">Load</button>
+      </div>
+
+      <pre id="log" class="ui-log"></pre>
+    </div>
+
+    <canvas id="viewport"></canvas>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
+

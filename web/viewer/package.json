@@ -1,0 +1,22 @@
+{
+  "name": "gravimera-web-viewer",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npm --prefix ../../ts/gravimera_proto run build && vite",
+    "build": "npm --prefix ../../ts/gravimera_proto run build && vite build",
+    "preview": "vite preview",
+    "check": "npm --prefix ../../ts/gravimera_proto run build && tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "2.11.0",
+    "gravimera-proto": "file:../../ts/gravimera_proto",
+    "three": "0.183.2"
+  },
+  "devDependencies": {
+    "@types/three": "0.183.1",
+    "typescript": "6.0.2",
+    "vite": "8.0.7"
+  }
+}

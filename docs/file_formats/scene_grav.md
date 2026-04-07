@@ -44,3 +44,9 @@ npm run check
 
 This requires `protoc` (the protobuf compiler) to be installed and available on your `PATH`.
 
+If you need emitted JavaScript output (for bundlers/runtime), run:
+
+```bash
+cd ts/gravimera_proto
+npm run build
+```

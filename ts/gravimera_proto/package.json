@@ -3,9 +3,16 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
     "gen": "node scripts/gen.mjs",
-    "check": "tsc -p tsconfig.json"
+    "check": "tsc -p tsconfig.json",
+    "build": "npm run gen && tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.11.0"
@@ -15,4 +22,3 @@
     "typescript": "6.0.2"
   }
 }
-

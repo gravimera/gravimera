@@ -1,0 +1,130 @@
+:root {
+  --bg: #0b0f1a;
+  --panel: rgba(10, 14, 25, 0.86);
+  --panel-border: rgba(255, 255, 255, 0.12);
+  --text: rgba(255, 255, 255, 0.92);
+  --muted: rgba(255, 255, 255, 0.72);
+  --accent: #42d1b0;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(1200px 800px at 15% 10%, rgba(66, 209, 176, 0.14), transparent 55%),
+    radial-gradient(900px 600px at 85% 15%, rgba(255, 208, 90, 0.10), transparent 52%),
+    var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji",
+    "Segoe UI Emoji";
+  overflow: hidden;
+}
+
+code {
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  padding: 0.05rem 0.35rem;
+  border-radius: 0.4rem;
+}
+
+#viewport {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  display: block;
+}
+
+#ui {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  right: 14px;
+  z-index: 10;
+  max-width: 980px;
+  padding: 12px 12px 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+}
+
+.ui-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.ui-title__name {
+  font-weight: 720;
+  letter-spacing: 0.01em;
+}
+
+.ui-title__hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ui-row {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+
+.ui-label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ui-label input {
+  color: var(--text);
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.ui-btn {
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(66, 209, 176, 0.45);
+  background: rgba(66, 209, 176, 0.12);
+  color: rgba(255, 255, 255, 0.92);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.ui-btn:hover {
+  background: rgba(66, 209, 176, 0.18);
+}
+
+.ui-log {
+  margin: 8px 0 0 0;
+  max-height: 120px;
+  overflow: auto;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+@media (max-width: 740px) {
+  .ui-title {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  #ui {
+    max-width: unset;
+  }
+}
+
