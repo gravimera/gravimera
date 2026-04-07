@@ -12,6 +12,9 @@ This is a minimal web viewer that:
   - Pan: `W/A/S/D` or `Arrow` keys
   - Rotate: `Q/E` (yaw), `Z/X` (pitch)
   - Hold `Shift` to move/rotate faster
+- Mobile:
+  - Use the on-screen move pad (bottom-left) to move forward/back/left/right.
+  - Use the "Hide Panel" button to collapse the file picker UI and get more screen space.
 
 ## Run
 
