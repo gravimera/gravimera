@@ -42,9 +42,9 @@ code {
 
 #ui {
   position: fixed;
-  top: 14px;
-  left: 14px;
-  right: 14px;
+  top: calc(14px + env(safe-area-inset-top, 0px));
+  left: calc(14px + env(safe-area-inset-left, 0px));
+  right: calc(14px + env(safe-area-inset-right, 0px));
   z-index: 10;
   max-width: 980px;
   padding: 12px 12px 10px 12px;
