@@ -1206,10 +1206,14 @@ pub(super) fn build_gen3d_plan_system_instructions() -> String {
          Return STRICT JSON for a component assembly plan.\n\n\
          - Do NOT output any top-level fields not in the schema (common mistake: `name`).\n\n\
          {schema_keys_contract}\n\
-         Coordinate system:\n\
-         - +Y is up, +X is right, +Z is forward.\n\
+         Coordinate system (IMPORTANT: anatomical left/right):\n\
+         - +Z is front (facing direction), +Y is up, +X is anatomical left.\n\
+           Therefore anatomical right is -X.\n\
+         - When viewing a unit from the front, anatomical right appears on the viewer-left.\n\
+           Do NOT use viewer/screen left-right for component naming.\n\
+         - When naming components like `left_*` / `right_*`, those refer to anatomical sides.\n\
          - Orientations are given as direction vectors (no Euler angles).\n\
-         - Each component has its own LOCAL axes: +X right, +Y up, +Z forward.\n\n\
+         - Each component has its own LOCAL axes: +X left, +Y up, +Z forward.\n\n\
          Assembly model:\n\
          - Components are assembled by aligning named ANCHORS in a TREE of attachments.\n\
          - There is NO absolute component placement in this plan.\n\n\
@@ -2023,7 +2027,7 @@ Review mode:\n",
        If a stance schedule is wrong, fix it; do NOT clear stance just to silence errors.\n\
      - IMPORTANT: For `tweak_component_transform`, `set.pos` / `delta.pos` are expressed in the PARENT ANCHOR join frame (same frame as `attach_to.offset.pos`).\n\
        In that join frame, `pos = [x,y,z]` means:\n\
-       - +X (`pos[0]`) is `join_right_world`\n\
+       - +X (`pos[0]`) is the JOIN-frame X axis (`join_right_world` in the scene graph summary)\n\
        - +Y (`pos[1]`) is `join_up_world`\n\
        - +Z (`pos[2]`) is `join_forward_world` (this is `parent_anchor.forward`, defined to point from the parent toward the child)\n\
        Therefore:\n\
@@ -2459,7 +2463,7 @@ Rules:\n\
 - Coordinate frames:\n\
   - `root_edge` and `attachment_edge` clips animate the corresponding edge offset in JOIN space.\n\
   - `articulation_node` clips animate the node-local frame described in the user text.\n\
-  - JOIN frame axes: +X = join_right, +Y = join_up, +Z = join_forward.\n\
+  - JOIN frame axes: +X = join_x, +Y = join_y, +Z = join_forward.\n\
   - For `clip.kind=loop|once|ping_pong`:\n\
     - `delta` transforms are expressed in the PARENT ANCHOR JOIN FRAME (the same frame as `attach_to.offset`).\n\
     - The engine applies: animated_offset = base_offset * delta(t).\n\
@@ -2671,7 +2675,7 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
     out.push('\n');
 
     out.push_str("Join frame convention (IMPORTANT):\n");
-    out.push_str("- The JOIN frame basis vectors are: +X = join_right_world, +Y = join_up_world, +Z = join_forward_world.\n");
+    out.push_str("- The JOIN frame basis vectors are: +X = join_right_world (JOIN-frame +X axis), +Y = join_up_world, +Z = join_forward_world.\n");
     out.push_str("- For `delta.rot_quat_xyzw=[x,y,z,w]`, the rotation axis is proportional to `[x,y,z]` in the JOIN frame (normalized). You can rotate about any join-frame axis (not just the basis axes).\n");
     out.push('\n');
 

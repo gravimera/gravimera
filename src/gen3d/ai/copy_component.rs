@@ -325,7 +325,7 @@ pub(super) fn copy_component_into(
                 target_mat * inv_target_offset * source_offset_mat * inv_source_anchor;
             let rot_child_anchor_mat = target_mat * inv_source_anchor;
 
-            // Optional mirrored alignment: flip the mount-local right axis (X) to preserve
+            // Optional mirrored alignment: flip the mount-local X axis to preserve
             // the forward/up join convention while mirroring handedness (common for L/R reuse).
             //
             // Mirror alignment is defined in the JOIN frame, so it always uses JOIN alignment math.

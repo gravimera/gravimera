@@ -98,11 +98,15 @@ Each anchor:
 
 All vectors/transforms use a single right-handed coordinate system:
 
-- `+X` is right
+- `+X` is left
 - `+Y` is up
 - `+Z` is forward
 
 This applies to anchor transforms and part transforms alike.
+
+Note: left/right here are **anatomical** when an object faces `+Z` (front). Therefore anatomical
+right is `-X`. Viewer/screen left-right depends on the camera and may appear mirrored in front
+views.
 
 ### `parts`
 

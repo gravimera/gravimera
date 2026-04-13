@@ -5241,6 +5241,55 @@ pub(super) fn build_gen3d_validate_results(
         }
     }
 
+    // Gen3D coordinate / naming sanity: left/right component names should match their assembled X side.
+    //
+    // Convention (anatomical): +Z front, +Y up, +X left (therefore right is -X).
+    // Only enforce when the component name explicitly opts into left/right semantics.
+    const LR_EPS_X: f32 = 1e-3;
+    for c in components {
+        let name = c.name.as_str();
+        let expected_positive_x = if name.starts_with("left_") || name.ends_with("_left") {
+            Some(true)
+        } else if name.starts_with("right_") || name.ends_with("_right") {
+            Some(false)
+        } else {
+            None
+        };
+        let Some(expected_positive_x) = expected_positive_x else {
+            continue;
+        };
+        if !c.pos.is_finite() {
+            continue;
+        }
+        let x = c.pos.x;
+        let ok = if expected_positive_x {
+            x > LR_EPS_X
+        } else {
+            x < -LR_EPS_X
+        };
+        if ok {
+            continue;
+        }
+
+        let (side, expected) = if expected_positive_x {
+            ("left", "x > 0")
+        } else {
+            ("right", "x < 0")
+        };
+        issues.push(serde_json::json!({
+            "severity":"error",
+            "kind":"left_right_component_name_mismatch",
+            "fix_step":"plan",
+            "component": name,
+            "message": format!(
+                "Component name implies anatomical {side}, but resolved pos.x={x:.3} (expected {expected} under Gen3D convention +X=left, -X=right). Rename the component or move it to the correct X side.",
+            ),
+            "evidence": {
+                "resolved_pos": [c.pos.x, c.pos.y, c.pos.z],
+            },
+        }));
+    }
+
     let ok = issues
         .iter()
         .all(|i| i.get("severity").and_then(|v| v.as_str()) != Some("error"));

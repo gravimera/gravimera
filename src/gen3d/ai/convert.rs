@@ -424,7 +424,7 @@ fn quat_from_forward_up_or_identity(
             }
             plan_rotation_from_forward_up_strict(f, u).map_err(|err| {
                 format!(
-                    "{context}: invalid forward basis (inferred up): {err}. Expected non-degenerate basis vectors in component-local axes (+X right, +Y up, +Z forward)."
+                    "{context}: invalid forward basis (inferred up): {err}. Expected non-degenerate basis vectors in component-local axes (+X left, +Y up, +Z forward)."
                 )
             })
         }
@@ -439,13 +439,13 @@ fn quat_from_forward_up_or_identity(
             }
             plan_rotation_from_forward_up_strict(f, u).map_err(|err| {
                 format!(
-                    "{context}: invalid up basis (inferred forward): {err}. Expected non-degenerate basis vectors in component-local axes (+X right, +Y up, +Z forward)."
+                    "{context}: invalid up basis (inferred forward): {err}. Expected non-degenerate basis vectors in component-local axes (+X left, +Y up, +Z forward)."
                 )
             })
         }
         (Some(f), Some(u)) => plan_rotation_from_forward_up_strict(f, u).map_err(|err| {
             format!(
-                "{context}: invalid forward/up basis: {err}. Expected non-degenerate basis vectors in component-local axes (+X right, +Y up, +Z forward)."
+                "{context}: invalid forward/up basis: {err}. Expected non-degenerate basis vectors in component-local axes (+X left, +Y up, +Z forward)."
             )
         }),
     }
@@ -498,7 +498,7 @@ fn anchors_from_ai(
         let up = ai_vec3(anchor.up);
         let rot = plan_rotation_from_forward_up_strict(forward, up).map_err(|err| {
             format!(
-                "AI {source}: anchor `{name}` in component `{component}` has invalid forward/up basis: {err}. Expected non-degenerate basis vectors in component-local axes (+X right, +Y up, +Z forward)."
+                "AI {source}: anchor `{name}` in component `{component}` has invalid forward/up basis: {err}. Expected non-degenerate basis vectors in component-local axes (+X left, +Y up, +Z forward)."
             )
         })?;
 
@@ -1139,7 +1139,7 @@ pub(super) fn ai_plan_to_initial_draft_defs(
                         .transpose()
                         .map_err(|err| {
                             format!(
-                                "AI plan: component `{}` attach_to references invalid parent anchor basis on `{}`.`{}`: {err}. Expected non-degenerate basis vectors in component-local axes (+X right, +Y up, +Z forward).",
+                                "AI plan: component `{}` attach_to references invalid parent anchor basis on `{}`.`{}`: {err}. Expected non-degenerate basis vectors in component-local axes (+X left, +Y up, +Z forward).",
                                 comp.name, parent, parent_anchor
                             )
                         })?
@@ -2016,7 +2016,7 @@ pub(super) fn apply_ai_review_delta_actions(
                                 )
                                 .map_err(|err| {
                                     format!(
-                                        "review_delta_v1: tweak_component_transform set.rot basis is invalid: {err}. Expected non-degenerate basis vectors in component-local axes (+X right, +Y up, +Z forward)."
+                                        "review_delta_v1: tweak_component_transform set.rot basis is invalid: {err}. Expected non-degenerate basis vectors in component-local axes (+X left, +Y up, +Z forward)."
                                     )
                                 })?
                             }
@@ -2174,7 +2174,7 @@ pub(super) fn apply_ai_review_delta_actions(
                         )
                         .map_err(|err| {
                             format!(
-                                "review_delta_v1: tweak_component_resolved_rot_world rot basis is invalid: {err}. Expected non-degenerate basis vectors in WORLD axes (+X right, +Y up, +Z forward)."
+                                "review_delta_v1: tweak_component_resolved_rot_world rot basis is invalid: {err}. Expected non-degenerate basis vectors in WORLD axes (+X left, +Y up, +Z forward)."
                             )
                         })?
                     }
@@ -2248,13 +2248,13 @@ pub(super) fn apply_ai_review_delta_actions(
                         if set.forward.is_some() || set.up.is_some() {
                             let Some(forward) = set.forward else {
                                 return Err(format!(
-                                    "review_delta_v1: tweak_anchor {} ({}) anchor `{}`: `set.up` provided without `set.forward`; provide both `set.forward` and `set.up` (component-local axes +X right, +Y up, +Z forward).",
+                                    "review_delta_v1: tweak_anchor {} ({}) anchor `{}`: `set.up` provided without `set.forward`; provide both `set.forward` and `set.up` (component-local axes +X left, +Y up, +Z forward).",
                                     component_id, component_name, anchor_name
                                 ));
                             };
                             let Some(up) = set.up else {
                                 return Err(format!(
-                                    "review_delta_v1: tweak_anchor {} ({}) anchor `{}`: `set.forward` provided without `set.up`; provide both `set.forward` and `set.up` (component-local axes +X right, +Y up, +Z forward).",
+                                    "review_delta_v1: tweak_anchor {} ({}) anchor `{}`: `set.forward` provided without `set.up`; provide both `set.forward` and `set.up` (component-local axes +X left, +Y up, +Z forward).",
                                     component_id, component_name, anchor_name
                                 ));
                             };
@@ -2262,7 +2262,7 @@ pub(super) fn apply_ai_review_delta_actions(
                             let u = Vec3::new(up[0], up[1], up[2]);
                             let q = plan_rotation_from_forward_up_strict(f, u).map_err(|err| {
                                 format!(
-                                    "review_delta_v1: tweak_anchor {} ({}) anchor `{}` has invalid set.forward/set.up basis: {err}. Expected non-degenerate basis vectors in component-local axes (+X right, +Y up, +Z forward).",
+                                    "review_delta_v1: tweak_anchor {} ({}) anchor `{}` has invalid set.forward/set.up basis: {err}. Expected non-degenerate basis vectors in component-local axes (+X left, +Y up, +Z forward).",
                                     component_id, component_name, anchor_name
                                 )
                             })?;
@@ -2976,7 +2976,7 @@ fn error_if_component_size_mismatch(
 
     let err = size_match_error(measured, planned);
     Err(format!(
-        "AI draft for component `{component_name}` has a large size mismatch vs the plan's target_size. Planned target_size=[{:.3},{:.3},{:.3}] but measured local AABB=[{:.3},{:.3},{:.3}] (rel_err_sum={:.3}, axis_ratio=[{:.2},{:.2},{:.2}]). Regenerate this component and ensure the component-local axes match the plan (+X right, +Y up, +Z forward) and the overall AABB matches target_size per axis (avoid implicit axis swaps via per-part rotations).",
+        "AI draft for component `{component_name}` has a large size mismatch vs the plan's target_size. Planned target_size=[{:.3},{:.3},{:.3}] but measured local AABB=[{:.3},{:.3},{:.3}] (rel_err_sum={:.3}, axis_ratio=[{:.2},{:.2},{:.2}]). Regenerate this component and ensure the component-local axes match the plan (+X left, +Y up, +Z forward) and the overall AABB matches target_size per axis (avoid implicit axis swaps via per-part rotations).",
         planned.x,
         planned.y,
         planned.z,
@@ -2997,7 +2997,7 @@ fn error_if_component_axis_permutation(
 ) -> Result<(), String> {
     // If a component comes back with its AABB dimensions effectively permuted relative to the
     // plan's `size`, we should NOT silently rotate it. The plan is a contract; the AI must obey
-    // local axes conventions (+X right, +Y up, +Z forward).
+    // local axes conventions (+X left, +Y up, +Z forward).
     //
     // We still detect the "likely-permuted axes" case so we can fail fast and trigger regeneration
     // with an explicit, actionable error message.
@@ -3055,7 +3055,7 @@ fn error_if_component_axis_permutation(
     };
 
     Err(format!(
-        "AI draft for component `{component_name}` appears to have permuted local axes ({hint}). Planned target_size=[{:.3},{:.3},{:.3}] but measured local AABB=[{:.3},{:.3},{:.3}] (err_before={:.3}). A permuted AABB `{best_perm}` would match much better: [{:.3},{:.3},{:.3}] (err_after={:.3}). The engine will not auto-rotate components; regenerate this component with correct local axes (+X right, +Y up, +Z forward) and ensure each part's `scale=[x,y,z]` corresponds to those axes (do not swap axes).",
+        "AI draft for component `{component_name}` appears to have permuted local axes ({hint}). Planned target_size=[{:.3},{:.3},{:.3}] but measured local AABB=[{:.3},{:.3},{:.3}] (err_before={:.3}). A permuted AABB `{best_perm}` would match much better: [{:.3},{:.3},{:.3}] (err_after={:.3}). The engine will not auto-rotate components; regenerate this component with correct local axes (+X left, +Y up, +Z forward) and ensure each part's `scale=[x,y,z]` corresponds to those axes (do not swap axes).",
         planned.x,
         planned.y,
         planned.z,

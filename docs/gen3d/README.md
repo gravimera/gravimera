@@ -31,6 +31,17 @@ By default, each Gen3D run writes artifacts under:
   - `attempt_<n>/steps/step_####/...` (per-tool-call artifacts in pipeline order)
   - `info_store_v1/` (KV + events + blobs metadata)
 
+## Coordinate convention (anatomical left/right)
+
+Gen3D treats “left/right” as **anatomical** (from the unit’s perspective), not viewer/screen
+left-right.
+
+- `+Z` is front (the facing direction)
+- `+Y` is up
+- `+X` is anatomical left (therefore anatomical right is `-X`)
+
+In a front view, anatomical right often appears on the viewer-left; this is expected.
+
 ## Reference images
 
 When the player provides reference photos, the engine:

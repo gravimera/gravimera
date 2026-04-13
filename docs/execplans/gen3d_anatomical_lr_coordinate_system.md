@@ -21,18 +21,19 @@ You can see it working by generating a simple humanoid with “right hand holdin
 ## Progress
 
 - [x] (2026-04-14) Draft ExecPlan with definitions, scope, and acceptance checks.
-- [ ] Update Gen3D plan/system prompts to use anatomical axes (`+X` = left).
-- [ ] Remove ambiguous “right/left” wording in prompts; prefer axis-based phrasing (`+X/-X`) when describing math frames (JOIN frame, component-local basis).
-- [ ] Add a lightweight validation that flags `left_*` parts placed on `-X` (and `right_*` on `+X`) in the assembled rest pose.
-- [ ] Update docs describing coordinate conventions and run the rendered smoke start; commit.
+- [x] (2026-04-14) Update Gen3D plan/system prompts to use anatomical axes (`+X` = left).
+- [x] (2026-04-14) Remove ambiguous “right/left” wording in prompts; prefer axis-based phrasing (`+X/-X`) when describing math frames (JOIN frame, component-local basis).
+- [x] (2026-04-14) Add a lightweight validation that flags `left_*` parts placed on `-X` (and `right_*` on `+X`) in the assembled rest pose.
+- [x] (2026-04-14) Update docs describing coordinate conventions.
+- [ ] Run the rendered smoke start; commit.
 
 ## Surprises & Discoveries
 
 - Observation: A reported “right hand sword shows on left arm” case was not an engine-side attachment swap. The saved prefab graph attaches the sword under the component named `right_forearm`, but `right_forearm` is positioned on the `+X` side in the assembled pose, which is anatomically “left” under the user’s convention.
   Evidence: Affected prefab edit bundle shows `right_forearm.pos[0] = +4.550124`, `left_forearm.pos[0] = -4.550124`, and `sword.attach_to.parent = "right_forearm"`.
 
-- Observation: Multiple Gen3D prompt strings embed the sentence “`+X` is right”, which makes the LLM systematically produce `right_*` components on `+X`.
-  Evidence: `src/gen3d/ai/prompts.rs` includes `+X is right` and `+X right` in the planning system prompt.
+- Observation: Prior to this change, multiple Gen3D prompt strings embedded the sentence “`+X` is right”, causing the LLM to systematically produce `right_*` components on `+X`.
+  Status: Fixed (2026-04-14) by updating Gen3D prompts to define `+X` as anatomical left and by adding a validation gate that errors on `left_*`/`right_*` placement mismatches.
 
 ## Decision Log
 
@@ -46,8 +47,8 @@ You can see it working by generating a simple humanoid with “right hand holdin
 
 ## Outcomes & Retrospective
 
-- Outcome (draft): A concrete, minimal plan exists to make Gen3D left/right semantics unambiguous and aligned with anatomy.
-- Gap: No implementation yet; prompts/docs/validation still reflect the current `+X is right` wording.
+- Outcome: Gen3D prompts, tool guidance strings, docs, and validation now consistently treat `+X` as anatomical left (therefore `-X` is anatomical right).
+- Remaining: Run rendered smoke start; commit.
 
 ## Context and Orientation
 
@@ -63,10 +64,10 @@ Key files/modules:
 - `docs/gamedesign/34_realm_prefabs_v1.md`: Prefab format spec including a “Coordinate System” section. (This plan expects us to update docs so they don’t contradict Gen3D’s authoring convention.)
 - `src/gen3d/ai/orchestration.rs` (`build_gen3d_validate_results`): A convenient place to add validation warnings/errors about draft/plan mismatches.
 
-Current state summary (before implementation):
+Current state summary:
 
-- Gen3D planning prompts state `+X` is “right”.
-- This produces plans/components where `right_*` parts land on `+X`, which conflicts with the anatomical interpretation used by users in front-facing views.
+- Gen3D planning prompts define `+X` as anatomical left (therefore anatomical right is `-X`).
+- Validation errors when a component name implies left/right (e.g. `left_*`, `*_right`) but its assembled `pos.x` has the wrong sign.
 
 ## Plan of Work
 

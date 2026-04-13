@@ -290,7 +290,7 @@ pub(super) fn setup_preview_scene(
         let axis_len = 1.6;
         let axis_y = 0.012;
 
-        // X axis (+X to the right).
+        // X axis (+X).
         parent.spawn((
             Mesh3d(assets.unit_cube_mesh.clone()),
             MeshMaterial3d(axis_x_material.clone()),

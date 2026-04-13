@@ -2,12 +2,132 @@ use super::{convert, parse};
 use crate::gen3d::state::{
     Gen3dDraft, Gen3dImageRef, Gen3dSideTab, Gen3dSpeedMode, Gen3dStatusLog, Gen3dWorkshop,
 };
-use crate::object::registry::{builtin_object_id, ObjectPartDef, ObjectPartKind};
+use crate::object::registry::{
+    builtin_object_id, ColliderProfile, ObjectDef, ObjectInteraction, ObjectPartDef, ObjectPartKind,
+};
 use bevy::prelude::{Quat, Transform, Vec3};
 use serde_json::json;
 
 fn id_hex32(id: u128) -> String {
     format!("{:032x}", id)
+}
+
+#[test]
+fn gen3d_validate_flags_left_right_component_name_mismatch() {
+    let root_def = ObjectDef {
+        object_id: super::super::gen3d_draft_object_id(),
+        label: "gen3d_root".into(),
+        size: Vec3::ONE,
+        ground_origin_y: None,
+        collider: ColliderProfile::None,
+        interaction: ObjectInteraction::none(),
+        aim: None,
+        mobility: None,
+        anchors: Vec::new(),
+        parts: Vec::new(),
+        minimap_color: None,
+        health_bar_offset_y: None,
+        enemy: None,
+        muzzle: None,
+        projectile: None,
+        attack: None,
+    };
+
+    let left_def = ObjectDef {
+        object_id: builtin_object_id("gravimera/gen3d/component/left_forearm"),
+        label: "left_forearm".into(),
+        size: Vec3::ONE,
+        ground_origin_y: None,
+        collider: ColliderProfile::None,
+        interaction: ObjectInteraction::none(),
+        aim: None,
+        mobility: None,
+        anchors: Vec::new(),
+        parts: Vec::new(),
+        minimap_color: None,
+        health_bar_offset_y: None,
+        enemy: None,
+        muzzle: None,
+        projectile: None,
+        attack: None,
+    };
+    let right_def = ObjectDef {
+        object_id: builtin_object_id("gravimera/gen3d/component/right_forearm"),
+        label: "right_forearm".into(),
+        size: Vec3::ONE,
+        ground_origin_y: None,
+        collider: ColliderProfile::None,
+        interaction: ObjectInteraction::none(),
+        aim: None,
+        mobility: None,
+        anchors: Vec::new(),
+        parts: Vec::new(),
+        minimap_color: None,
+        health_bar_offset_y: None,
+        enemy: None,
+        muzzle: None,
+        projectile: None,
+        attack: None,
+    };
+
+    let draft = Gen3dDraft {
+        defs: vec![root_def, left_def, right_def],
+    };
+
+    let components = vec![
+        super::Gen3dPlannedComponent {
+            display_name: "Left Forearm".into(),
+            name: "left_forearm".into(),
+            purpose: "".into(),
+            modeling_notes: "".into(),
+            pos: Vec3::new(-0.25, 0.0, 0.0),
+            rot: Quat::IDENTITY,
+            planned_size: Vec3::ONE,
+            actual_size: None,
+            anchors: Vec::new(),
+            contacts: Vec::new(),
+            articulation_nodes: Vec::new(),
+            root_animations: Vec::new(),
+            attach_to: None,
+        },
+        super::Gen3dPlannedComponent {
+            display_name: "Right Forearm".into(),
+            name: "right_forearm".into(),
+            purpose: "".into(),
+            modeling_notes: "".into(),
+            pos: Vec3::new(0.25, 0.0, 0.0),
+            rot: Quat::IDENTITY,
+            planned_size: Vec3::ONE,
+            actual_size: None,
+            anchors: Vec::new(),
+            contacts: Vec::new(),
+            articulation_nodes: Vec::new(),
+            root_animations: Vec::new(),
+            attach_to: None,
+        },
+    ];
+
+    let results = super::build_gen3d_validate_results(&components, &draft);
+    let issues = results
+        .get("issues")
+        .and_then(|v| v.as_array())
+        .expect("validate results should include issues[]");
+
+    let mismatches: Vec<&serde_json::Value> = issues
+        .iter()
+        .filter(|issue| {
+            issue.get("kind").and_then(|v| v.as_str())
+                == Some("left_right_component_name_mismatch")
+        })
+        .collect();
+
+    assert_eq!(
+        mismatches.len(),
+        2,
+        "expected 2 left/right mismatch errors, got {}:\n{}",
+        mismatches.len(),
+        serde_json::to_string_pretty(&results).unwrap_or_default()
+    );
 }
 
 fn test_workshop() -> Gen3dWorkshop {
