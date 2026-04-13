@@ -310,11 +310,28 @@ pub(super) fn copy_component_into(
                 .map(|att| att.offset)
                 .unwrap_or(Transform::IDENTITY);
 
-            let source_offset_mat = source_offset.to_matrix();
+            // Alignment deltas should account for offset *rotation* (basis flips) but must not
+            // bake offset translation into the copied component's local geometry/anchors.
+            //
+            // Offset translation is part of placement in the join frame (for example: L/R spacing
+            // on a torso mount). If we cancel it during copy-time alignment, symmetry reuse ends up
+            // shifting internal anchors (e.g. elbow/knee) by the spacing delta, breaking assembly.
+            let source_offset_basis = Transform {
+                translation: Vec3::ZERO,
+                rotation: source_offset.rotation,
+                scale: Vec3::ONE,
+            };
+            let target_offset_basis = Transform {
+                translation: Vec3::ZERO,
+                rotation: target_offset.rotation,
+                scale: Vec3::ONE,
+            };
+
+            let source_offset_mat = source_offset_basis.to_matrix();
             if !source_offset_mat.is_finite() {
                 return Ok(None);
             }
-            let inv_target_offset = target_offset.to_matrix().inverse();
+            let inv_target_offset = target_offset_basis.to_matrix().inverse();
             if !inv_target_offset.is_finite() {
                 return Ok(None);
             }
@@ -1684,6 +1701,94 @@ mod tests {
             (rotor_mount.transform.translation.z - 0.22).abs() < 1e-4,
             "expected rotor_mount to stay at +Z tip, got {:?}",
             rotor_mount.transform.translation
+        );
+    }
+
+    #[test]
+    fn join_frame_mirror_copy_does_not_bake_offset_translation_into_internal_anchors() {
+        // Repro for anatomical L/R limb reuse:
+        // - L and R attachments differ by an offset translation (spacing)
+        // - subtree symmetry reuse uses MirrorMountX in the JOIN frame
+        // - we must NOT bake the spacing delta into internal anchors (elbow/knee), or the limb
+        //   chain will no longer assemble at the intended joints.
+        let mut components = vec![stub_component("arm_L"), stub_component("arm_R")];
+        components[0].actual_size = Some(Vec3::ONE);
+        components[0].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "torso".into(),
+            parent_anchor: "mount_L".into(),
+            child_anchor: "shoulder".into(),
+            offset: Transform::from_translation(Vec3::new(0.2, 0.0, 0.0)),
+            fallback_basis: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+        components[1].attach_to = Some(super::super::Gen3dPlannedAttachment {
+            parent: "torso".into(),
+            parent_anchor: "mount_R".into(),
+            child_anchor: "shoulder".into(),
+            offset: Transform::from_translation(Vec3::new(-0.2, 0.0, 0.0)),
+            fallback_basis: Transform::IDENTITY,
+            joint: None,
+            animations: Vec::new(),
+        });
+
+        let arm_l_id = component_object_id("arm_L");
+        let arm_r_id = component_object_id("arm_R");
+
+        let mut arm_l_def = stub_def(arm_l_id, "arm_L");
+        arm_l_def.anchors = vec![
+            AnchorDef {
+                name: "origin".into(),
+                transform: Transform::IDENTITY,
+            },
+            // Identity basis (forward=+Z, up=+Y) so target_mat * inv_source_anchor cancels.
+            anchor_named("shoulder", Vec3::new(0.0, 0.31, 0.0), Vec3::Z, Vec3::Y),
+            anchor_named("elbow", Vec3::new(0.0, -0.31, 0.0), Vec3::Z, Vec3::Y),
+        ];
+
+        let shoulder_before = anchor_named("shoulder", Vec3::new(0.0, 0.31, 0.0), Vec3::Z, Vec3::Y);
+        let mut arm_r_def = stub_def(arm_r_id, "arm_R");
+        arm_r_def.anchors = vec![
+            AnchorDef {
+                name: "origin".into(),
+                transform: Transform::IDENTITY,
+            },
+            shoulder_before.clone(),
+            anchor_named("elbow", Vec3::new(0.0, -0.31, 0.0), Vec3::Z, Vec3::Y),
+        ];
+        arm_r_def.parts.clear();
+
+        let mut draft = Gen3dDraft::default();
+        draft.defs = vec![arm_l_def, arm_r_def];
+
+        copy_component_into(
+            &mut components,
+            &mut draft,
+            0,
+            1,
+            Gen3dCopyMode::Detached,
+            Gen3dCopyAnchorsMode::PreserveInterfaceAnchors,
+            Gen3dCopyAlignmentMode::MirrorMountX,
+            Gen3dCopyAlignmentFrame::Join,
+            Transform::IDENTITY,
+            None,
+        )
+        .expect("mirror copy ok");
+
+        let arm_r_after = draft.defs.iter().find(|d| d.object_id == arm_r_id).unwrap();
+        let shoulder_after =
+            anchor_transform_from_defs(&arm_r_after.anchors, "shoulder").expect("shoulder anchor");
+        assert_eq!(
+            shoulder_after, shoulder_before.transform,
+            "expected preserve_interfaces to preserve the mount anchor"
+        );
+
+        let elbow_after =
+            anchor_transform_from_defs(&arm_r_after.anchors, "elbow").expect("elbow anchor");
+        assert!(
+            elbow_after.translation.x.abs() < 1e-4,
+            "expected JOIN-frame mirror copy to not shift internal anchors by offset translation; elbow={:?}",
+            elbow_after.translation
         );
     }
 

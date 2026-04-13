@@ -25,7 +25,7 @@ You can see it working by generating a simple humanoid with “right hand holdin
 - [x] (2026-04-14) Remove ambiguous “right/left” wording in prompts/tool outputs; prefer axis-based phrasing (`+X/-X`, `join_x_world`) when describing math frames (JOIN frame, component-local basis).
 - [x] (2026-04-14) Add a lightweight validation that flags `left_*` parts placed on `-X` (and `right_*` on `+X`) in the assembled rest pose.
 - [x] (2026-04-14) Update docs describing coordinate conventions.
-- [ ] Run the rendered smoke start; commit.
+- [x] (2026-04-14) Run the rendered smoke start; commit.
 
 ## Surprises & Discoveries
 
@@ -52,7 +52,7 @@ You can see it working by generating a simple humanoid with “right hand holdin
 ## Outcomes & Retrospective
 
 - Outcome: Gen3D prompts, tool guidance strings, docs, and validation now consistently treat `+X` as anatomical left (therefore `-X` is anatomical right).
-- Remaining: Run rendered smoke start; commit.
+- Outcome: Rendered smoke start verified and changes committed.
 
 ## Context and Orientation
 

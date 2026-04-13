@@ -33,6 +33,10 @@ use super::{
     Gen3dPipelineStage,
 };
 
+// Keep the pipeline resilient to semantic plan failures from real providers.
+// A single re-ask with the previous validation error as QA feedback is usually enough.
+const GEN3D_PIPELINE_PLAN_AUTHORING_ATTEMPTS_MAX: u32 = 3;
+
 fn extract_edit_copy_mirror_ops(
     prompt: &str,
     plan_hash: &str,
@@ -1023,6 +1027,27 @@ fn poll_pipeline_tick(
             }
 
             if !last.ok {
+                // Plan authoring failures are usually model-semantic issues (not engine bugs).
+                // Retry a few times, feeding the previous validation error back into the next
+                // `llm_generate_plan_v1` call via qa_feedback so the model can correct it.
+                if last.tool_id == TOOL_ID_LLM_GENERATE_PLAN
+                    && matches!(job.pipeline.stage, Gen3dPipelineStage::CreatePlan)
+                    && job.pipeline.plan_authoring_attempts
+                        < GEN3D_PIPELINE_PLAN_AUTHORING_ATTEMPTS_MAX
+                {
+                    let err = last.error.as_deref().unwrap_or("").trim();
+                    job.pipeline.pending_plan_qa_feedback =
+                        Some(super::orchestration::truncate_for_ui(err, 1200));
+                    job.pipeline.force_replan = true;
+                    workshop.status = format!(
+                        "Pipeline: planning… (retry {}/{})",
+                        job.pipeline.plan_authoring_attempts + 1,
+                        GEN3D_PIPELINE_PLAN_AUTHORING_ATTEMPTS_MAX
+                    );
+                    job.pipeline.stage = Gen3dPipelineStage::CreatePlan;
+                    return;
+                }
+
                 let stage = format!("{:?}", job.pipeline.stage);
                 let err = last.error.as_deref().unwrap_or("").trim();
                 let first = err.lines().next().unwrap_or("").trim();
