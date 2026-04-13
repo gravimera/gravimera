@@ -890,7 +890,7 @@ fn gen3d_review_delta_prompt_includes_join_axes_and_offset_pos() {
                     "child_anchor": "mount_bottom",
                     "join_forward_world": [0.0, 1.0, 0.0],
                     "join_up_world": [0.0, 0.0, 1.0],
-                    "join_right_world": [-1.0, 0.0, 0.0],
+                    "join_x_world": [-1.0, 0.0, 0.0],
                     "offset": { "pos": [0.0, 0.0, -0.02] },
                     "joint": { "kind": "hinge", "axis_join": [0.0, 1.0, 0.0], "limits_degrees": [-90.0, 90.0] }
                 }
@@ -923,7 +923,7 @@ fn gen3d_review_delta_prompt_includes_join_axes_and_offset_pos() {
         "missing offset.pos(join_frame)= in prompt:\n{text}"
     );
     assert!(
-        text.contains("join_right_world=")
+        text.contains("join_x_world=")
             && text.contains("join_up_world=")
             && text.contains("join_forward_world="),
         "missing join axes in prompt:\n{text}"

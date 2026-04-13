@@ -6,9 +6,9 @@ This document must be maintained in accordance with `PLANS.md` (repository root)
 
 ## Purpose / Big Picture
 
-Today, Gen3D plans and docs describe the coordinate system as `+X` = “right”. When a user asks for a humanoid unit to “hold a sword in its right hand”, they mean **anatomical** right (the unit’s right side). But when a unit is viewed from the front, the unit’s anatomical right appears on the viewer’s left. This has caused repeated “left/right swapped” reports where the plan data is internally consistent but the naming and the user’s mental model disagree.
+Historically, some Gen3D prompts and docs described the coordinate system as `+X` = “right”. When a user asks for a humanoid unit to “hold a sword in its right hand”, they mean **anatomical** right (the unit’s right side). But when a unit is viewed from the front, the unit’s anatomical right appears on the viewer’s left. This caused repeated “left/right swapped” reports where the plan data was internally consistent but the naming and the user’s mental model disagreed.
 
-After this change, Gen3D will use an explicit **anatomical** axis convention for authoring and naming:
+After this change (implemented 2026-04-14), Gen3D uses an explicit **anatomical** axis convention for authoring and naming:
 
 - `+Z` is the unit’s front (where it faces)
 - `+Y` is up
@@ -22,7 +22,7 @@ You can see it working by generating a simple humanoid with “right hand holdin
 
 - [x] (2026-04-14) Draft ExecPlan with definitions, scope, and acceptance checks.
 - [x] (2026-04-14) Update Gen3D plan/system prompts to use anatomical axes (`+X` = left).
-- [x] (2026-04-14) Remove ambiguous “right/left” wording in prompts; prefer axis-based phrasing (`+X/-X`) when describing math frames (JOIN frame, component-local basis).
+- [x] (2026-04-14) Remove ambiguous “right/left” wording in prompts/tool outputs; prefer axis-based phrasing (`+X/-X`, `join_x_world`) when describing math frames (JOIN frame, component-local basis).
 - [x] (2026-04-14) Add a lightweight validation that flags `left_*` parts placed on `-X` (and `right_*` on `+X`) in the assembled rest pose.
 - [x] (2026-04-14) Update docs describing coordinate conventions.
 - [ ] Run the rendered smoke start; commit.
@@ -39,6 +39,10 @@ You can see it working by generating a simple humanoid with “right hand holdin
 
 - Decision: Define Gen3D authoring axes anatomically: `+Z` front, `+Y` up, `+X` anatomical left (therefore anatomical right is `-X`).
   Rationale: Matches user intent for “left/right arm” on a character and removes the recurring confusion between anatomical vs viewer-relative left/right when looking at the unit’s front.
+  Date/Author: 2026-04-14 / Codex
+
+- Decision: Rename join-frame “right” vectors to axis-based naming (`join_x_world`) in Gen3D scene-graph summaries shown to the model.
+  Rationale: The join frame’s `+X` axis is not “right” under the `+X=left` convention, and the raw JSON appears in prompts (so the key name itself can mislead). Axis-based naming keeps the math-frame contract correct and reduces left/right confusion.
   Date/Author: 2026-04-14 / Codex
 
 - Decision: Avoid using “viewer-left/right” as plan requirements. Only mention viewer/screen mapping as explanatory text and always keep the authoritative requirement in anatomical terms or explicit axis signs.
@@ -86,7 +90,7 @@ Make the change as a prompt/docs/validation update only. Avoid engine-wide coord
 
    Search `src/gen3d/ai/prompts.rs` for phrases like `+X is right`, `join_right_world`, or “right axis”, and rewrite them to be axis-based (use `+X` / `-X`, or `join_x_world`) so the text remains correct under the anatomical convention.
 
-   This is purely a prompt clarity change: it should not require any tool schema changes.
+   Note: the scene-graph summary JSON is embedded directly into some prompts (for DraftOps / review delta), so “prompt clarity” includes the field names used in that JSON.
 
 3. Add a validation gate for naming vs placement.
 

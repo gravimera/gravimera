@@ -4617,7 +4617,7 @@ pub(super) fn build_gen3d_scene_graph_summary(
                 let join_up_world = parent_component
                     .zip(parent_anchor.as_ref())
                     .map(|(pc, (_, t))| pc.rot * (t.rotation * Vec3::Y));
-                let join_right_world = join_up_world
+                let join_x_world = join_up_world
                     .zip(join_forward_world)
                     .and_then(|(u, f)| {
                         let v = u.cross(f);
@@ -4733,7 +4733,7 @@ pub(super) fn build_gen3d_scene_graph_summary(
                     "child_anchor_frame": child_anchor.as_ref().map(|(json, _)| json.clone()),
                     "join_forward_world": join_forward_world.map(|v| [v.x, v.y, v.z]),
                     "join_up_world": join_up_world.map(|v| [v.x, v.y, v.z]),
-                    "join_right_world": join_right_world.map(|v| [v.x, v.y, v.z]),
+                    "join_x_world": join_x_world.map(|v| [v.x, v.y, v.z]),
                     "offset": {
                         "pos": [pos.x, pos.y, pos.z],
                         "forward": [forward.x, forward.y, forward.z],

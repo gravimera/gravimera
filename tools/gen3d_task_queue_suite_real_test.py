@@ -350,7 +350,17 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def find_tool_results(run_dir: Path) -> list[Path]:
-    return sorted(run_dir.glob("attempt_*/pass_*/tool_results.jsonl"))
+    # Artifact layout note:
+    # - Pipeline orchestrator: attempt_*/steps/step_*/tool_results.jsonl
+    # - Legacy layouts (older runners): attempt_*/pass_*/tool_results.jsonl
+    patterns = [
+        "attempt_*/steps/step_*/tool_results.jsonl",
+        "attempt_*/pass_*/tool_results.jsonl",
+    ]
+    out: set[Path] = set()
+    for pat in patterns:
+        out.update(run_dir.glob(pat))
+    return sorted(out, key=lambda p: str(p))
 
 
 def analyze_router_strategy(run_dir: Path) -> dict[str, Any]:

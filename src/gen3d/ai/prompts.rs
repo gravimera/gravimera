@@ -2025,16 +2025,16 @@ Review mode:\n",
        - Set stance: `\"stance\": {\"phase_01\": number, \"duty_factor_01\": number}`\n\
        - Clear stance: `\"stance\": null`\n\
        If a stance schedule is wrong, fix it; do NOT clear stance just to silence errors.\n\
-     - IMPORTANT: For `tweak_component_transform`, `set.pos` / `delta.pos` are expressed in the PARENT ANCHOR join frame (same frame as `attach_to.offset.pos`).\n\
+       - IMPORTANT: For `tweak_component_transform`, `set.pos` / `delta.pos` are expressed in the PARENT ANCHOR join frame (same frame as `attach_to.offset.pos`).\n\
        In that join frame, `pos = [x,y,z]` means:\n\
-       - +X (`pos[0]`) is the JOIN-frame X axis (`join_right_world` in the scene graph summary)\n\
+       - +X (`pos[0]`) is the JOIN-frame X axis (`join_x_world` in the scene graph summary)\n\
        - +Y (`pos[1]`) is `join_up_world`\n\
        - +Z (`pos[2]`) is `join_forward_world` (this is `parent_anchor.forward`, defined to point from the parent toward the child)\n\
        Therefore:\n\
        - If a child looks DETACHED and you want to pull it TOWARD its parent, use a NEGATIVE `delta.pos[2]` (decrease `pos[2]`).\n\
        - If you want to push a child further away along the attachment direction, use a POSITIVE `delta.pos[2]` (increase `pos[2]`).\n\
        - If you want to apply a desired WORLD-space translation delta `W = [wx,wy,wz]`, convert it into join-frame deltas:\n\
-         - `delta.pos[0] = dot(W, join_right_world)`\n\
+         - `delta.pos[0] = dot(W, join_x_world)`\n\
          - `delta.pos[1] = dot(W, join_up_world)`\n\
          - `delta.pos[2] = dot(W, join_forward_world)`\n\
      - `tooling_feedback` is for missing tools / tool improvements / tool bugs.\n\
@@ -2258,10 +2258,15 @@ pub(super) fn build_gen3d_review_delta_user_text(
                 .get("attach_to")
                 .and_then(|a| a.get("join_up_world"))
                 .and_then(read_vec3);
-            let join_right_world = c
+            let join_x_world = c
                 .get("attach_to")
-                .and_then(|a| a.get("join_right_world"))
+                .and_then(|a| a.get("join_x_world"))
                 .and_then(read_vec3)
+                .or_else(|| {
+                    c.get("attach_to")
+                        .and_then(|a| a.get("join_right_world"))
+                        .and_then(read_vec3)
+                })
                 .or_else(|| {
                     join_up_world
                         .zip(join_forward_world)
@@ -2333,10 +2338,10 @@ pub(super) fn build_gen3d_review_delta_user_text(
                     }
                 }
                 out.push_str(&format!(
-                    " offset.pos(join_frame)={} offset.rot_quat_xyzw(join_frame)={} join_right_world={} join_up_world={} join_forward_world={} parent_anchor_frame.fwd/up(local)={}/{} child_anchor_frame.fwd/up(local)={}/{}",
+                    " offset.pos(join_frame)={} offset.rot_quat_xyzw(join_frame)={} join_x_world={} join_up_world={} join_forward_world={} parent_anchor_frame.fwd/up(local)={}/{} child_anchor_frame.fwd/up(local)={}/{}",
                     fmt_vec3(offset_pos_join),
                     fmt_vec4(offset_rot_quat_join),
-                    fmt_vec3(join_right_world),
+                    fmt_vec3(join_x_world),
                     fmt_vec3(join_up_world),
                     fmt_vec3(join_forward_world),
                     fmt_vec3(parent_anchor_frame_forward),
@@ -2675,7 +2680,7 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
     out.push('\n');
 
     out.push_str("Join frame convention (IMPORTANT):\n");
-    out.push_str("- The JOIN frame basis vectors are: +X = join_right_world (JOIN-frame +X axis), +Y = join_up_world, +Z = join_forward_world.\n");
+    out.push_str("- The JOIN frame basis vectors are: +X = join_x_world (JOIN-frame +X axis), +Y = join_up_world, +Z = join_forward_world.\n");
     out.push_str("- For `delta.rot_quat_xyzw=[x,y,z,w]`, the rotation axis is proportional to `[x,y,z]` in the JOIN frame (normalized). You can rotate about any join-frame axis (not just the basis axes).\n");
     out.push('\n');
 
@@ -2836,7 +2841,7 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
             .map(|p| anchor_rot_local(p, att.parent_anchor.as_str()))
             .unwrap_or(Quat::IDENTITY);
         let join_rot_world = parent_rot * parent_anchor_rot_local;
-        let join_right_world = join_rot_world * Vec3::X;
+        let join_x_world = join_rot_world * Vec3::X;
         let join_up_world = join_rot_world * Vec3::Y;
         let join_forward_world = join_rot_world * Vec3::Z;
 
@@ -2898,7 +2903,7 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
             .collect();
 
         out.push_str(&format!(
-            "- child={} parent={} parent_anchor={} child_anchor={} base_offset.pos(join)={} base_offset.rot_quat_xyzw(join)={} joint={} join_right_world={} join_up_world={} join_forward_world={} existing_slots={:?}",
+            "- child={} parent={} parent_anchor={} child_anchor={} base_offset.pos(join)={} base_offset.rot_quat_xyzw(join)={} joint={} join_x_world={} join_up_world={} join_forward_world={} existing_slots={:?}",
             child.name.trim(),
             att.parent.trim(),
             att.parent_anchor.trim(),
@@ -2906,7 +2911,7 @@ pub(super) fn build_gen3d_motion_authoring_user_text(
             fmt_vec3(att.offset.translation),
             fmt_quat_xyzw(att.offset.rotation),
             joint_summary,
-            fmt_vec3(join_right_world),
+            fmt_vec3(join_x_world),
             fmt_vec3(join_up_world),
             fmt_vec3(join_forward_world),
             slots,
